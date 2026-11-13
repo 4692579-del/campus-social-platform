@@ -1,0 +1,23 @@
+<view class="cs-page">
+  <view class="cs-error" wx:if="{{error}}">{{error}}</view>
+  <view class="cs-card" wx:if="{{loading}}"><view class="cs-muted">正在读取个人资料…</view></view>
+  <form wx:elif="{{user}}" bindsubmit="save">
+    <view class="cs-card">
+      <view class="cs-title">让同学认识你</view>
+      <view class="cs-muted intro">选择头像，填上你喜欢的昵称。</view>
+      <button class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{saving}}">
+        <image class="edit-avatar" src="{{avatar || '/images/avatar.png'}}" mode="aspectFill" />
+        <view class="avatar-action">更换头像</view>
+      </button>
+      <view class="field-label">昵称</view>
+      <input class="nickname-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving}}" placeholder="请输入昵称" />
+      <view class="cs-muted field-hint">1—20 个字，可以使用微信昵称，也可以自己填写。</view>
+      <view class="status-row"><text>学校认证</text><text class="cs-tag">未认证</text></view>
+    </view>
+    <button class="cs-primary" form-type="submit" loading="{{saving}}" disabled="{{saving}}">{{saving ? '正在保存…' : '保存资料'}}</button>
+  </form>
+  <view wx:else>
+    <button class="cs-primary" bindtap="backToProfile">返回我的页面</button>
+    <button class="cs-secondary retry" bindtap="loadProfile">重新读取</button>
+  </view>
+</view>

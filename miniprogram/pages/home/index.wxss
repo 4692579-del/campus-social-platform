@@ -1,0 +1,18 @@
+.home-page { padding-top: 20rpx; }
+.hero { background: #ffd84d; border-radius: 32rpx; padding: 38rpx 30rpx 48rpx; position: relative; overflow: hidden; margin-bottom: 24rpx; }
+.eyebrow { font-size: 21rpx; letter-spacing: 4rpx; color: #6a5314; margin-bottom: 22rpx; }
+.hero-title { font-size: 49rpx; font-weight: 700; line-height: 1.4; position: relative; z-index: 1; }
+.hero-caption { font-size: 23rpx; margin-top: 26rpx; color: #6a5314; position: relative; z-index: 1; }
+.hero-sticker { position: absolute; right: -12rpx; top: 65rpx; width: 160rpx; height: 160rpx; background: #ffe98e; border: 8rpx solid #fff1b5; border-radius: 50%; transform: rotate(12deg); text-align: center; padding-top: 30rpx; box-sizing: border-box; font-size: 28rpx; color: #785c13; line-height: 1.5; }
+.welcome-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16rpx; }
+.welcome-top .cs-title { flex: 1; min-width: 0; word-break: break-all; }
+.welcome-top .cs-tag { flex-shrink: 0; }
+.welcome-note { margin: 16rpx 0 24rpx; }
+.section-heading { font-size: 32rpx; font-weight: 600; margin: 40rpx 0 24rpx; }
+.module-grid { display: flex; flex-wrap: wrap; justify-content: space-between; }
+.module { box-sizing: border-box; width: 48%; padding: 26rpx; border-radius: 24rpx; background: #fff; margin-bottom: 24rpx; }
+.module-mark { background: #fff4c6; border-radius: 16rpx; width: 64rpx; height: 64rpx; line-height: 64rpx; text-align: center; font-weight: 600; color: #775b10; }
+.module-title { font-size: 29rpx; font-weight: 600; margin-top: 20rpx; }
+.module-description { color: #777; font-size: 23rpx; line-height: 1.7; margin-top: 10rpx; min-height: 78rpx; }
+.coming-soon { color: #999; font-size: 22rpx; margin-top: 16rpx; }
+.home-footer { text-align: center; color: #999; font-size: 23rpx; padding: 24rpx 0 36rpx; }

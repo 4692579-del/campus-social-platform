@@ -1,0 +1,26 @@
+<view class="cs-page home-page">
+  <view class="hero">
+    <view class="eyebrow">HELLO, CAMPUS</view>
+    <view class="hero-title"><view>把校园生活</view><view>过成喜欢的样子</view></view>
+    <view class="hero-caption">认识新朋友 · 分享小日常 · 发现身边的美好</view>
+    <view class="hero-sticker"><view>同学，</view><view>你好呀！</view></view>
+  </view>
+  <view class="cs-card welcome">
+    <view class="welcome-top">
+      <view class="cs-title">{{user ? user.nickname + '，你好' : '欢迎来到你的校园'}}</view>
+      <view class="cs-tag">{{user ? '未认证' : '新同学'}}</view>
+    </view>
+    <view class="cs-muted welcome-note">{{user ? '从完善个人资料开始，让同学认识你。' : '登录并设置昵称和头像，开启校园生活。'}}</view>
+    <button class="cs-primary" bindtap="openProfile">{{user ? '前往我的主页' : '去登录'}}</button>
+  </view>
+  <view class="section-heading">校园里的每一种可能</view>
+  <view class="module-grid">
+    <view class="module" wx:for="{{modules}}" wx:key="title">
+      <view class="module-mark">{{item.mark}}</view>
+      <view class="module-title">{{item.title}}</view>
+      <view class="module-description">{{item.description}}</view>
+      <view class="coming-soon">即将开放</view>
+    </view>
+  </view>
+  <view class="home-footer">让连接发生在身边</view>
+</view>

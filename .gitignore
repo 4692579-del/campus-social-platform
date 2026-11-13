@@ -1,0 +1,18 @@
+# 微信开发者工具的本机配置，不影响公共项目配置。
+project.private.config.json
+
+# 安装或构建生成的依赖；源码和 package-lock.json 仍应提交。
+node_modules/
+miniprogram/miniprogram_npm/
+
+# 本地环境变量与私钥，避免随代码上传。
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 调试日志和系统生成文件。
+*.log
+.DS_Store
+Thumbs.db

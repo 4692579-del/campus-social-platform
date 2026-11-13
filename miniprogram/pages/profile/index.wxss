@@ -1,0 +1,9 @@
+.account-card { display: flex; align-items: center; background: #fff4c6; }
+.account-info { margin-left: 24rpx; flex: 1; min-width: 0; }
+.nickname { font-size: 37rpx; font-weight: 600; word-break: break-all; margin-bottom: 14rpx; }
+.login-card { text-align: center; padding-top: 48rpx; }
+.login-avatar { width: 110rpx; height: 110rpx; line-height: 110rpx; border-radius: 50%; background: #ffd84d; color: #70550c; font-size: 43rpx; font-weight: 600; margin: 0 auto 24rpx; }
+.login-note { margin: 20rpx 0 30rpx; }
+.login-caption { color: #999; font-size: 22rpx; line-height: 1.7; margin-top: 20rpx; }
+.section-note { margin: 18rpx 0 24rpx; }
+.retry { font-size: 24rpx; color: #a44127; margin-top: 10rpx; }

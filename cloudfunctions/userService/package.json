@@ -1,0 +1,8 @@
+{
+  "name": "campus-user-service",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "description": "校园平台第一阶段：当前用户建档与资料维护",
+  "dependencies": { "wx-server-sdk": "~2.4.0" }
+}

@@ -1,0 +1,9 @@
+.intro { margin-top: 16rpx; }
+.avatar-picker { width: 200rpx; padding: 0; margin: 36rpx auto; line-height: normal; background: transparent; }
+.edit-avatar { width: 152rpx; height: 152rpx; border-radius: 50%; background: #f4f4f4; }
+.avatar-action { font-size: 25rpx; color: #8b6810; margin-top: 18rpx; }
+.field-label { font-size: 28rpx; margin-bottom: 18rpx; font-weight: 600; }
+.nickname-input { background: #f6f6f6; border-radius: 16rpx; height: 96rpx; padding: 0 24rpx; font-size: 30rpx; }
+.field-hint { font-size: 23rpx; margin-top: 14rpx; }
+.status-row { margin-top: 40rpx; padding-top: 26rpx; border-top: 1rpx solid #f0f0f0; display: flex; align-items: center; justify-content: space-between; font-size: 28rpx; }
+.retry { margin-top: 20rpx; }

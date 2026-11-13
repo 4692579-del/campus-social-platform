@@ -1,0 +1,38 @@
+/**app.wxss**/
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+} 
+
+button {
+  background: initial;
+}
+
+button:focus{
+  outline: 0;
+}
+
+button::after{
+  border: none;
+}
+
+
+page {
+  background: #f6f6f6;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+/* 校园业务页共用的基础样式。cs 前缀避免影响保留的 QuickStart 页面。 */
+.cs-page { padding: 32rpx; color: #252525; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; }
+.cs-card { background: #fff; border-radius: 28rpx; padding: 32rpx; margin-bottom: 24rpx; }
+.cs-title { font-size: 34rpx; font-weight: 600; }
+.cs-muted { color: #777; font-size: 26rpx; line-height: 1.7; }
+.cs-primary { width: 100%; box-sizing: border-box; background: #ffd84d; color: #352b09; font-size: 30rpx; font-weight: 600; border-radius: 20rpx; margin: 0; }
+.cs-secondary { width: 100%; box-sizing: border-box; background: #f4f4f4; color: #555; font-size: 28rpx; border-radius: 20rpx; margin: 0; }
+.cs-error { padding: 24rpx; background: #fff2ed; color: #a44127; border-radius: 20rpx; font-size: 26rpx; margin-bottom: 24rpx; }
+.cs-tag { display: inline-block; background: #fff4c6; color: #775b10; border-radius: 10rpx; padding: 6rpx 14rpx; font-size: 22rpx; }
+.cs-avatar { width: 112rpx; height: 112rpx; border-radius: 50%; background: #f3f3f3; }
