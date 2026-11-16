@@ -1,0 +1,30 @@
+<view class="cs-page admin-page">
+  <view class="cs-card" wx:if="{{loading}}"><view class="cs-muted">正在确认管理权限…</view></view>
+  <view wx:elif="{{error}}">
+    <view class="cs-error">{{error}}</view>
+    <button class="cs-primary" bindtap="loadDashboard">重新验证</button>
+    <button class="cs-secondary back-button" bindtap="backToProfile">返回我的页面</button>
+  </view>
+  <block wx:elif="{{dashboard}}">
+    <view class="cs-card operator-card">
+      <view class="cs-tag">管理员</view>
+      <view class="cs-title operator-name">{{dashboard.operator.nickname}}，你好</view>
+      <view class="cs-muted">欢迎进入校园平台管理工作台。</view>
+    </view>
+    <view class="cs-card">
+      <view class="cs-title">账号与权限</view>
+      <view class="permission-row"><text>当前身份</text><text>管理员</text></view>
+      <view class="permission-row"><text>访问验证</text><text class="verified">已通过</text></view>
+      <view class="cs-muted permission-note">此入口仅向管理员开放，学生账号在用户端参与校园生活。</view>
+    </view>
+    <view class="cs-card">
+      <view class="module-heading"><view class="cs-title">学校认证审核</view><text class="cs-tag">已开放</text></view>
+      <view class="cs-muted permission-note">查看学生申请与材料，处理通过或驳回，并查看最新审核结果。</view>
+      <button class="cs-primary review-entry" bindtap="openCertifications">进入学校认证审核</button>
+    </view>
+    <view class="cs-card">
+      <view class="module-heading"><view class="cs-title">内容与用户管理</view><text class="cs-tag">后续开放</text></view>
+      <view class="cs-muted">内容审核、举报申诉与用户管理将在对应业务阶段逐步接入。</view>
+    </view>
+  </block>
+</view>

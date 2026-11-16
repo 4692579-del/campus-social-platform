@@ -4,7 +4,7 @@ let pendingLogin = null;
 let pendingRestore = null;
 let sessionVersion = 0;
 
-async function request(action, extra) {
+async function request(action, extra, resultKey = 'user') {
   let response;
   try {
     response = await wx.cloud.callFunction({ name: 'userService', data: { action, ...extra } });
@@ -14,10 +14,12 @@ async function request(action, extra) {
   }
   const result = response.result;
   if (!result || !result.success) {
-    if (result && result.code === 'ACCOUNT_DISABLED') logout();
-    throw new Error((result && result.message) || '服务暂时不可用，请稍后重试');
+    if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) logout();
+    const error = new Error((result && result.message) || '服务暂时不可用，请稍后重试');
+    error.code = (result && result.code) || 'SERVICE_ERROR';
+    throw error;
   }
-  return result.user;
+  return result[resultKey];
 }
 
 function remember(user) {
@@ -61,4 +63,45 @@ function logout() {
   remember(null);
 }
 
-module.exports = { login, restore, updateProfile, logout };
+// 这只是服务入口，访问权限必须由云函数检查，不能由客户端决定。
+function getAdminDashboard() {
+  return request('getAdminDashboard', {}, 'dashboard');
+}
+
+async function certificationRequest(action, application) {
+  const version = sessionVersion;
+  const result = await request(action, application ? { application } : {}, 'certification');
+  if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
+  if (!result || !result.user) throw new Error('认证信息读取失败，请重试');
+  remember(result.user);
+  return result;
+}
+
+function getCertification() { return certificationRequest('getCertification'); }
+function submitCertification(application) { return certificationRequest('submitCertification', application); }
+
+async function reviewRequest(action, data) {
+  if (!wx.getStorageSync(SESSION_KEY)) {
+    const error = new Error('请先到“我的”页面登录');
+    error.code = 'UNAUTHENTICATED';
+    throw error;
+  }
+  const version = sessionVersion;
+  const result = await request(action, data, 'reviewResult');
+  if (version !== sessionVersion) {
+    const error = new Error('登录状态已变更，请重新登录');
+    error.code = 'UNAUTHENTICATED';
+    throw error;
+  }
+  if (!result) throw new Error('审核信息读取失败，请重试');
+  return result;
+}
+function listCertifications(status, offset = 0) { return reviewRequest('listCertifications', { status, offset }); }
+function getCertificationDetail(applicationId) { return reviewRequest('getCertificationDetail', { applicationId }); }
+function getCertificationProof(applicationId, revision) { return reviewRequest('getCertificationProof', { applicationId, revision }); }
+function reviewCertification(applicationId, revision, review) {
+  return reviewRequest('reviewCertification', { applicationId, revision, review });
+}
+
+module.exports = { login, restore, updateProfile, logout, getAdminDashboard, getCertification, submitCertification,
+  listCertifications, getCertificationDetail, getCertificationProof, reviewCertification };

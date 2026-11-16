@@ -1,8 +1,10 @@
 const userService = require('../../services/user');
+const { describeUser } = require('../../utils/user-role');
 
 Page({
   data: {
     user: null,
+    identity: describeUser(null),
     modules: [
       { mark: '聊', title: '校园动态', description: '分享日常，发现同频的朋友' },
       { mark: '闲', title: '二手集市', description: '让闲置遇见新的主人' },
@@ -12,9 +14,10 @@ Page({
   },
   async onShow() {
     try {
-      this.setData({ user: await userService.restore() });
+      const user = await userService.restore();
+      this.setData({ user, identity: describeUser(user) });
     } catch (error) {
-      this.setData({ user: null });
+      this.setData({ user: null, identity: describeUser(null) });
     }
   },
   openProfile() { wx.switchTab({ url: '/pages/profile/index' }); },

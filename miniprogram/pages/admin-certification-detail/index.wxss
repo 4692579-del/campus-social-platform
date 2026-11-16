@@ -1,0 +1,12 @@
+.applicant-name { margin-top: 22rpx; word-break: break-all; }
+.detail-row { display: flex; justify-content: space-between; gap: 24rpx; margin-top: 24rpx; font-size: 26rpx; line-height: 1.7; }
+.detail-label { color: #777; flex-shrink: 0; }
+.detail-value { text-align: right; word-break: break-all; }
+.material-note { margin: 20rpx 0 24rpx; }
+.proof-image { display: block; width: 100%; background: #f6f6f6; margin-bottom: 24rpx; border-radius: 16rpx; }
+.field-input { box-sizing: border-box; width: 100%; height: 92rpx; padding: 0 22rpx; background: #f6f6f6; border-radius: 16rpx; font-size: 28rpx; }
+.reason-input { box-sizing: border-box; width: 100%; height: 210rpx; padding: 22rpx; background: #f6f6f6; border-radius: 16rpx; font-size: 28rpx; }
+.decision-button { margin-top: 26rpx; }
+.rejection { margin-top: 24rpx; color: #a44127; line-height: 1.7; font-size: 26rpx; }
+.notice { padding: 26rpx; border-radius: 20rpx; background: #fff4c6; color: #775b10; font-size: 26rpx; line-height: 1.7; margin-bottom: 24rpx; }
+.back-button { margin-top: 24rpx; }

@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const { createCertificationService, EXPECTED_CODES } = require('./certification');
+const { createCertificationReviewService, REVIEW_ACTIONS, REVIEW_CODES } = require('./certification-review');
 
 function fail(code, message) {
   const error = new Error(message);
@@ -18,8 +20,18 @@ function publicProfile(user) {
     nickname: user.nickname,
     avatarFileID: user.avatarFileID,
     schoolId: user.schoolId,
+    schoolName: user.schoolName || '',
     certificationStatus: user.certificationStatus,
+    role: effectiveRole(user),
   };
+}
+
+// 学生权限同时要求角色、认证结果和学校归属有效；管理员不参与学生认证。
+function effectiveRole(user) {
+  if (user.role === 'admin') return 'admin';
+  if (user.role === 'student' && user.certificationStatus === 'approved' &&
+      typeof user.schoolId === 'string' && user.schoolId.trim()) return 'student';
+  return 'user';
 }
 
 function validateProfile(profile, userId, env) {
@@ -49,8 +61,10 @@ function validateProfile(profile, userId, env) {
   return { nickname, avatarFileID };
 }
 
-function createUserService(db) {
+function createUserService(db, options) {
   const users = db.collection('users');
+  const certificationService = createCertificationService(db, options);
+  const certificationReviewService = createCertificationReviewService(db, options);
   async function findUser(id) {
     const result = await users.where({ _id: id }).get();
     return result.data[0] || null;
@@ -59,7 +73,7 @@ function createUserService(db) {
     try {
       if (!identity || !identity.openid) fail('UNAUTHENTICATED', '请在微信小程序中登录');
       const action = event && event.action;
-      if (!['login', 'getProfile', 'updateProfile'].includes(action)) {
+      if (!['login', 'getProfile', 'updateProfile', 'getAdminDashboard', 'getCertification', 'submitCertification', ...REVIEW_ACTIONS].includes(action)) {
         fail('INVALID_ACTION', '不支持此操作');
       }
       const id = userIdFor(identity.openid);
@@ -73,7 +87,7 @@ function createUserService(db) {
           avatarFileID: '',
           schoolId: '',
           certificationStatus: 'unverified',
-          role: 'student',
+          role: 'user',
           status: 'active',
           createdAt: now,
           updatedAt: now,
@@ -92,6 +106,38 @@ function createUserService(db) {
         fail('NOT_REGISTERED', '请先登录');
       }
       if (user.status !== 'active') fail('ACCOUNT_DISABLED', '当前账号暂不可使用');
+      if (!['user', 'student', 'admin'].includes(user.role)) {
+        fail('INVALID_ROLE', '账号身份异常，请联系管理员');
+      }
+      // 第一阶段曾把未认证账号默认写为 student。只修正这个明确的旧数据组合。
+      // 条件更新可防止查询后账号被设为 admin 时，被迟到的请求覆盖管理员身份。
+      if (user.role === 'student' && user.certificationStatus === 'unverified' && user.schoolId === '') {
+        await users.where({
+          _id: id, role: 'student', certificationStatus: 'unverified', schoolId: '',
+        }).update({ data: { role: 'user', updatedAt: db.serverDate() } });
+        user = await findUser(id);
+        if (!user) fail('NOT_REGISTERED', '请先登录');
+        if (user.status !== 'active') fail('ACCOUNT_DISABLED', '当前账号暂不可使用');
+        if (!['user', 'student', 'admin'].includes(user.role)) fail('INVALID_ROLE', '账号身份异常，请联系管理员');
+      }
+      if (REVIEW_ACTIONS.includes(action)) {
+        const result = await certificationReviewService(action, event, user, identity);
+        return { success: true, reviewResult: result };
+      }
+      if (action === 'getCertification' || action === 'submitCertification') {
+        const application = await certificationService(action, event.application, user);
+        user = await findUser(id);
+        if (!user || user.status !== 'active') fail('ACCOUNT_DISABLED', '当前账号暂不可使用');
+        return { success: true, certification: { user: publicProfile(user), application } };
+      }
+      if (action === 'getAdminDashboard') {
+        // 每次调用都按云端 OpenID 重新读取角色，不相信前端缓存或传入的 role。
+        if (effectiveRole(user) !== 'admin') fail('FORBIDDEN', '仅管理员可以访问管理工作台');
+        return {
+          success: true,
+          dashboard: { operator: publicProfile(user) },
+        };
+      }
       if (action === 'updateProfile') {
         const changes = validateProfile(event.profile, id, identity.env);
         await users.doc(id).update({ data: { ...changes, updatedAt: db.serverDate() } });
@@ -100,8 +146,9 @@ function createUserService(db) {
       return { success: true, user: publicProfile(user) };
     } catch (error) {
       const expected = ['UNAUTHENTICATED', 'INVALID_ACTION', 'INVALID_PROFILE', 'INVALID_NICKNAME',
-        'INVALID_AVATAR', 'NOT_REGISTERED', 'ACCOUNT_DISABLED'].includes(error.code);
-      if (!expected) console.error('userService failed:', error);
+        'INVALID_AVATAR', 'NOT_REGISTERED', 'ACCOUNT_DISABLED', 'INVALID_ROLE', 'FORBIDDEN', ...EXPECTED_CODES, ...REVIEW_CODES].includes(error.code);
+      // 不记录 event、姓名、学号或图片内容，只记录错误类别便于排查。
+      if (!expected) console.error('userService failed:', error.code || 'UNKNOWN_ERROR');
       return {
         success: false,
         code: expected ? error.code : 'SERVICE_ERROR',

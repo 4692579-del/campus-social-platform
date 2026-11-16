@@ -59,6 +59,68 @@ test('退出后迟到的登录响应不能重新登录账号', async () => {
   assert.equal(f.app.globalData.currentUser, null);
 });
 
+test('管理服务返回工作台数据，保留服务端拒绝码用于错误处理', async () => {
+  const f = clientFixture(async () => ({ result: { success: true, dashboard: { operator: { role: 'admin' } } } }));
+  assert.equal((await f.service.getAdminDashboard()).operator.role, 'admin');
+  assert.equal(f.requests[0].data.action, 'getAdminDashboard');
+  const denied = clientFixture(async () => ({ result: { success: false, code: 'FORBIDDEN', message: '仅管理员可访问' } }));
+  await assert.rejects(denied.service.getAdminDashboard(), error => error.code === 'FORBIDDEN');
+});
+
+test('读取时从服务端更新身份，账号封禁时清除本地登录标记', async () => {
+  let disabled = false;
+  const f = clientFixture(async ({ data }) => ({ result: disabled
+    ? { success: false, code: 'ACCOUNT_DISABLED', message: '当前账号暂不可使用' }
+    : { success: true, user: { _id: 'alice', role: data.action === 'login' ? 'admin' : 'user' } } }));
+  await f.service.login();
+  assert.equal(f.app.globalData.currentUser.role, 'admin');
+  assert.equal((await f.service.restore()).role, 'user');
+  disabled = true;
+  await assert.rejects(f.service.restore(), /暂不可使用/);
+  assert.equal(f.app.globalData.currentUser, null);
+  assert.equal(f.storage.size, 0);
+});
+
+test('认证服务使用固定云函数动作，成功后刷新当前用户的待审核状态', async () => {
+  const f = clientFixture(async ({ data }) => ({ result: { success: true, certification: {
+    user: { _id: 'alice', role: 'user', certificationStatus: data.action === 'submitCertification' ? 'pending' : 'unverified' },
+    application: data.action === 'submitCertification' ? { status: 'pending' } : null,
+  } } }));
+  assert.equal((await f.service.getCertification()).application, null);
+  const result = await f.service.submitCertification({ schoolName: '测试大学' });
+  assert.equal(result.application.status, 'pending');
+  assert.equal(f.app.globalData.currentUser.certificationStatus, 'pending');
+  assert.equal(f.requests[1].data.action, 'submitCertification');
+  assert.equal(f.requests[1].data.application.schoolName, '测试大学');
+});
+
+test('退出后迟到的认证响应不恢复登录状态', async () => {
+  let resolve;
+  const f = clientFixture(() => new Promise(done => { resolve = done; }));
+  const request = f.service.getCertification();
+  f.service.logout();
+  resolve({ result: { success: true, certification: { user: { _id: 'alice' }, application: null } } });
+  await assert.rejects(request, /登录状态已变更/);
+  assert.equal(f.app.globalData.currentUser, null);
+  assert.equal(f.storage.size, 0);
+});
+
+test('审核服务未登录不发请求，登录后携带当前申请版本，不接受退出后的迟到响应', async () => {
+  let resolve;
+  const f = clientFixture(({ data }) => data.action === 'login'
+    ? Promise.resolve({ result: { success: true, user: { _id: 'admin', role: 'admin' } } })
+    : new Promise(done => { resolve = done; }));
+  await assert.rejects(f.service.listCertifications('pending'), error => error.code === 'UNAUTHENTICATED');
+  assert.equal(f.requests.length, 0);
+  await f.service.login();
+  const request = f.service.reviewCertification('application-id', 2, { decision: 'rejected', rejectionReason: '材料不清晰' });
+  assert.equal(f.requests[1].data.revision, 2);
+  assert.equal(f.requests[1].data.action, 'reviewCertification');
+  f.service.logout(); resolve({ result: { success: true, reviewResult: { status: 'rejected' } } });
+  await assert.rejects(request, error => error.code === 'UNAUTHENTICATED');
+  assert.equal(f.app.globalData.currentUser, null);
+});
+
 function editFixture({ failSave = false, failUpload = false } = {}) {
   const uploads = [];
   const saves = [];

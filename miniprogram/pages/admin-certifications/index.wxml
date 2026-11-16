@@ -1,0 +1,21 @@
+<view class="cs-page">
+  <view class="filters">
+    <button class="filter {{status === 'pending' ? 'selected' : ''}}" data-status="pending" bindtap="changeStatus" disabled="{{loading || loadingMore}}">待审核</button>
+    <button class="filter {{status === 'approved' ? 'selected' : ''}}" data-status="approved" bindtap="changeStatus" disabled="{{loading || loadingMore}}">已通过</button>
+    <button class="filter {{status === 'rejected' ? 'selected' : ''}}" data-status="rejected" bindtap="changeStatus" disabled="{{loading || loadingMore}}">已驳回</button>
+  </view>
+  <view class="cs-error" wx:if="{{error}}">{{error}}<button class="cs-secondary retry" bindtap="refresh">重新读取</button></view>
+  <view class="cs-card cs-muted" wx:if="{{loading}}">正在读取认证申请…</view>
+  <block wx:elif="{{authorized}}">
+    <view class="cs-card cs-muted" wx:if="{{!items.length}}">{{status === 'pending' ? '当前没有待审核申请。' : '当前没有对应的申请记录。'}}</view>
+    <view class="cs-card application-card" wx:for="{{items}}" wx:key="_id">
+      <view class="card-top"><view class="cs-title applicant-name">{{item.realName}}</view><text class="cs-tag">{{item.statusText}}</text></view>
+      <view class="school">{{item.schoolName}}</view>
+      <view class="cs-muted">提交于 {{item.submittedTime || '时间待确认'}}</view>
+      <button class="cs-secondary detail-button" data-id="{{item._id}}" bindtap="openDetail">查看申请详情</button>
+    </view>
+    <button class="cs-secondary" wx:if="{{hasMore}}" bindtap="loadMore" loading="{{loadingMore}}" disabled="{{loadingMore}}">{{loadingMore ? '正在加载…' : '加载更多'}}</button>
+    <view class="cs-muted end-note" wx:elif="{{items.length}}">已显示当前列表。可下拉刷新查看变化。</view>
+  </block>
+  <button class="cs-secondary back-button" bindtap="backToAdmin">返回管理工作台</button>
+</view>

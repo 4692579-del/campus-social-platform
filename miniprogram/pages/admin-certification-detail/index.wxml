@@ -1,0 +1,39 @@
+<view class="cs-page">
+  <view class="cs-error" wx:if="{{error}}">{{error}}</view>
+  <view class="notice" wx:if="{{notice}}">{{notice}}</view>
+  <view class="cs-card cs-muted" wx:if="{{loading}}">正在读取申请详情…</view>
+  <block wx:elif="{{detail}}">
+    <view class="cs-card">
+      <view class="cs-tag">{{detail.statusText}}</view>
+      <view class="cs-title applicant-name">{{detail.realName}}的认证申请</view>
+      <view class="detail-row"><text class="detail-label">申请学校</text><text class="detail-value">{{detail.schoolName}}</text></view>
+      <view class="detail-row"><text class="detail-label">学号</text><text class="detail-value">{{detail.studentNumber}}</text></view>
+      <view class="detail-row"><text class="detail-label">提交时间</text><text class="detail-value">{{detail.submittedTime}}</text></view>
+      <view class="detail-row" wx:if="{{detail.reviewedTime}}"><text class="detail-label">审核时间</text><text class="detail-value">{{detail.reviewedTime}}</text></view>
+      <view class="detail-row" wx:if="{{detail.approvedSchoolName}}"><text class="detail-label">认证学校</text><text class="detail-value">{{detail.approvedSchoolName}}</text></view>
+      <view class="rejection" wx:if="{{detail.status === 'rejected'}}">驳回原因：{{detail.rejectionReason}}</view>
+    </view>
+    <view class="cs-card">
+      <view class="cs-title">学生认证材料</view>
+      <view class="cs-muted material-note">请核对学校、姓名、学号及在读信息。点击图片可放大查看。</view>
+      <image wx:if="{{proofUrl}}" class="proof-image" src="{{proofUrl}}" data-url="{{proofUrl}}" mode="widthFix" bindload="onProofLoaded" binderror="onProofError" bindtap="previewProof" />
+      <button class="cs-secondary" bindtap="loadProof" loading="{{proofLoading}}" disabled="{{saving || confirming || proofLoading}}">{{proofUrl ? '重新获取材料图片' : '查看认证材料'}}</button>
+    </view>
+    <block wx:if="{{detail.status === 'pending'}}">
+      <form class="cs-card" bindsubmit="approve">
+        <view class="cs-title">通过认证</view>
+        <view class="cs-muted material-note">核对材料后，确认学校全称。同一学校请统一填写全称，避免简称混用。</view>
+        <input class="field-input" name="schoolName" value="{{schoolName}}" bindinput="onSchoolInput" maxlength="60" disabled="{{saving || confirming || reviewBlocked}}" placeholder="请输入核准的学校全称" />
+        <button class="cs-primary decision-button" form-type="submit" loading="{{saving}}" disabled="{{saving || confirming || reviewBlocked || !proofLoaded}}">确认材料后通过认证</button>
+      </form>
+      <form class="cs-card" bindsubmit="reject">
+        <view class="cs-title">驳回申请</view>
+        <view class="cs-muted material-note">请明确说明需要补充或修正的内容，方便用户重新申请。</view>
+        <textarea class="reason-input" name="rejectionReason" value="{{rejectionReason}}" bindinput="onReasonInput" maxlength="200" disabled="{{saving || confirming || reviewBlocked}}" placeholder="请输入 2—200 个字的驳回原因" />
+        <button class="cs-secondary decision-button" form-type="submit" disabled="{{saving || confirming || reviewBlocked}}">填写原因并驳回</button>
+      </form>
+    </block>
+  </block>
+  <button class="cs-secondary" wx:if="{{!loading}}" bindtap="loadDetail" disabled="{{saving || confirming}}">重新读取申请</button>
+  <button class="cs-secondary back-button" bindtap="backToList" disabled="{{saving || confirming}}">返回审核列表</button>
+</view>

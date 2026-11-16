@@ -1,0 +1,10 @@
+.filters { display: flex; gap: 16rpx; margin-bottom: 24rpx; }
+.filter { flex: 1; margin: 0; padding: 0 8rpx; border-radius: 18rpx; background: #fff; color: #777; font-size: 28rpx; }
+.filter.selected { background: #ffd84d; color: #352b09; font-weight: 600; }
+.card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20rpx; }
+.applicant-name { word-break: break-all; flex: 1; }
+.school { font-size: 28rpx; line-height: 1.7; margin: 20rpx 0 10rpx; word-break: break-all; }
+.detail-button { margin-top: 24rpx; }
+.retry { margin-top: 18rpx; }
+.back-button { margin-top: 28rpx; }
+.end-note { text-align: center; font-size: 24rpx; }

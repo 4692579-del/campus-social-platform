@@ -1,0 +1,48 @@
+<view class="cs-page certification-page">
+  <view class="cs-error" wx:if="{{error}}">{{error}}</view>
+  <view class="cs-card" wx:if="{{loading}}"><view class="cs-muted">正在读取认证信息…</view></view>
+  <block wx:elif="{{user}}">
+    <view class="cs-card intro-card">
+      <view class="cs-tag">{{stateText}}</view>
+      <view class="cs-title intro-title">认证，让校园连接更安心</view>
+      <view class="cs-muted" wx:if="{{canApply}}">填写你的在读学校信息，由管理员核对学生身份。</view>
+      <view class="cs-muted" wx:elif="{{stateText === '审核中'}}">申请已保存，等待管理员审核。审核期间无需重复提交。</view>
+      <view class="cs-muted" wx:else>你的学校身份已认证，无需重复申请。</view>
+    </view>
+    <view class="cs-card" wx:if="{{application}}">
+      <view class="cs-title">{{canApply ? '上次申请' : '我的申请'}}</view>
+      <view class="detail-row"><text class="detail-label">学校</text><text class="detail-value">{{application.schoolName}}</text></view>
+      <view class="detail-row" wx:if="{{application.approvedSchoolName}}"><text class="detail-label">认证学校</text><text class="detail-value">{{application.approvedSchoolName}}</text></view>
+      <view class="detail-row"><text class="detail-label">姓名</text><text class="detail-value">{{application.realName}}</text></view>
+      <view class="detail-row"><text class="detail-label">学号</text><text class="detail-value">{{application.studentNumber}}</text></view>
+      <view class="detail-row"><text class="detail-label">认证材料</text><text>{{application.hasProof ? '已提交' : '未提供'}}</text></view>
+      <view class="detail-row" wx:if="{{submittedTime}}"><text class="detail-label">提交时间</text><text>{{submittedTime}}</text></view>
+      <view class="rejection" wx:if="{{application.status === 'rejected'}}">驳回原因：{{application.rejectionReason || '请核对资料后重新提交'}}</view>
+    </view>
+    <form wx:if="{{canApply}}" bindsubmit="submit">
+      <view class="cs-card">
+        <view class="cs-title">{{application ? '重新填写申请' : '学生信息'}}</view>
+        <view class="field-label">学校全称</view>
+        <input class="field-input" name="schoolName" value="{{schoolName}}" data-field="schoolName" bindinput="onFieldInput" maxlength="60" disabled="{{saving}}" placeholder="请填写在读学校的完整名称" />
+        <view class="field-label">姓名</view>
+        <input class="field-input" name="realName" value="{{realName}}" data-field="realName" bindinput="onFieldInput" maxlength="30" disabled="{{saving}}" placeholder="请填写与材料一致的姓名" />
+        <view class="field-label">学号</view>
+        <input class="field-input" name="studentNumber" value="{{studentNumber}}" data-field="studentNumber" bindinput="onFieldInput" maxlength="32" disabled="{{saving}}" placeholder="请填写学号，保留开头的 0" />
+      </view>
+      <view class="cs-card">
+        <view class="cs-title">认证材料</view>
+        <view class="cs-muted material-hint">上传学生证或在读证明，保留学校、姓名、学号和在读信息，遮挡身份证号等无关信息。</view>
+        <image wx:if="{{proofPath}}" class="proof-image" src="{{proofPath}}" mode="aspectFit" bindtap="previewProof" />
+        <button class="cs-secondary" bindtap="chooseProof" loading="{{choosing}}" disabled="{{saving || choosing}}">{{proofPath ? '重新选择图片' : '选择认证图片'}}</button>
+        <view class="cs-muted material-caption">支持 JPG、PNG，将尝试压缩至 1MB 以内。{{application ? '重新申请时需重新选择材料。' : '提交前可点击图片检查清晰度。'}}</view>
+      </view>
+      <checkbox-group bindchange="onAgreementChange">
+        <label class="agreement"><checkbox value="agree" checked="{{agreed}}" disabled="{{saving}}" color="#d6a600" /><text>我确认所填信息真实，并同意将以上资料仅用于学校身份认证审核。</text></label>
+      </checkbox-group>
+      <button class="cs-primary" form-type="submit" loading="{{saving}}" disabled="{{saving || choosing}}">{{saving ? '正在提交…' : '提交认证申请'}}</button>
+    </form>
+    <button wx:else class="cs-primary" bindtap="loadApplication" disabled="{{saving}}">刷新认证状态</button>
+  </block>
+  <button wx:if="{{!loading && !user}}" class="cs-primary" bindtap="loadApplication">重新读取</button>
+  <button class="cs-secondary back-button" bindtap="backToProfile" disabled="{{saving || choosing}}">返回我的页面</button>
+</view>

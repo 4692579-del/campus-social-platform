@@ -2,7 +2,7 @@
   <view class="cs-error" wx:if="{{error}}">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading}}">重新连接</button></view>
   <view class="cs-card account-card" wx:if="{{user}}">
     <image class="cs-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
-    <view class="account-info"><view class="nickname">{{user.nickname}}</view><view class="cs-tag">未认证</view></view>
+    <view class="account-info"><view class="nickname">{{user.nickname}}</view><view class="cs-tag">{{identity.roleText}}</view><view class="identity-note">{{identity.certificationText}}</view></view>
   </view>
   <view class="cs-card login-card" wx:else>
     <view class="login-avatar">Hi</view>
@@ -11,15 +11,22 @@
     <button class="cs-primary" bindtap="login" loading="{{loading}}" disabled="{{loading}}">{{loading ? '正在连接…' : '微信登录'}}</button>
     <view class="login-caption">登录用于建立校园账号；昵称和头像由你自行设置。</view>
   </view>
+  <view class="cs-card" wx:if="{{user.role === 'student' && user.schoolName}}"><view class="cs-tag">认证学校</view><view class="cs-title section-note">{{user.schoolName}}</view></view>
   <view class="cs-card" wx:if="{{user}}">
     <view class="cs-title">个人资料</view>
     <view class="cs-muted section-note">一个喜欢的名字，一张代表你的头像。</view>
     <button class="cs-primary" bindtap="editProfile">编辑昵称与头像</button>
   </view>
-  <view class="cs-card certification">
+  <view class="cs-card admin-entry" wx:if="{{identity.isAdmin}}">
+    <view class="cs-title">管理工作台</view>
+    <view class="cs-muted section-note">使用独立管理员账号，处理校园平台管理事务。</view>
+    <button class="cs-primary" bindtap="openAdmin">进入管理工作台</button>
+  </view>
+  <view class="cs-card certification" wx:else>
     <view class="cs-tag">学校身份</view>
     <view class="cs-title section-note">认证，让校园连接更安心</view>
-    <view class="cs-muted">学校认证尚未开放。后续可选择学校并提交认证申请，审核通过后参与校内互动。</view>
+    <view class="cs-muted section-note">{{!user ? '登录后可提交学校认证申请。' : user.certificationStatus === 'pending' ? '申请已提交，等待管理员审核。' : user.certificationStatus === 'approved' ? '学校身份已认证，可查看认证结果。' : user.certificationStatus === 'rejected' ? '申请已驳回，可查看原因并重新提交。' : '填写学校、姓名和学号，提交材料申请学生认证。'}}</view>
+    <button wx:if="{{user}}" class="cs-primary" bindtap="openCertification">{{user.certificationStatus === 'unverified' ? '申请学校认证' : '查看认证申请'}}</button>
   </view>
   <button wx:if="{{user}}" class="cs-secondary" bindtap="logout" disabled="{{loading}}">退出登录</button>
 </view>

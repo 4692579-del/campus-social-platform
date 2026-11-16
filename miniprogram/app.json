@@ -3,6 +3,10 @@
     "pages/home/index",
     "pages/profile/index",
     "pages/edit-profile/index",
+    "pages/certification/index",
+    "pages/admin/index",
+    "pages/admin-certifications/index",
+    "pages/admin-certification-detail/index",
     "pages/index/index",
     "pages/example/index"
   ],

@@ -12,7 +12,7 @@
       <view class="field-label">昵称</view>
       <input class="nickname-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving}}" placeholder="请输入昵称" />
       <view class="cs-muted field-hint">1—20 个字，可以使用微信昵称，也可以自己填写。</view>
-      <view class="status-row"><text>学校认证</text><text class="cs-tag">未认证</text></view>
+      <view class="status-row"><text>{{user.role === 'admin' ? '账号身份' : '学校认证'}}</text><text class="cs-tag">{{user.role === 'admin' ? '管理员' : user.certificationStatus === 'approved' ? '已认证' : user.certificationStatus === 'pending' ? '待审核' : user.certificationStatus === 'rejected' ? '已驳回' : '未认证'}}</text></view>
     </view>
     <button class="cs-primary" form-type="submit" loading="{{saving}}" disabled="{{saving}}">{{saving ? '正在保存…' : '保存资料'}}</button>
   </form>
