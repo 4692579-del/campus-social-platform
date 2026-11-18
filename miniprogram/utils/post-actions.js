@@ -1,6 +1,6 @@
 const users = require('../services/user');
 const square = require('../services/square');
-const { postPreview, token } = require('./post-view');
+const { postPreview } = require('./post-view');
 
 const reasons = [
   { key: 'spam', label: '垃圾广告' }, { key: 'illegal', label: '违法违规' },
@@ -8,9 +8,9 @@ const reasons = [
 ];
 const popup = (name, options) => new Promise((resolve, reject) => wx[name]({ ...options, success: resolve, fail: reject }));
 function snapshot() { const user = users.getCachedUser(); return { id: user && user._id, version: users.getSessionVersion() }; }
-function current(page, account, visible = true) {
+function current(page, account) {
   const user = users.getCachedUser();
-  return !page._unloaded && (!visible || page._visible !== false) && user && user._id === account.id && users.getSessionVersion() === account.version;
+  return !page._unloaded && page._visible !== false && user && user._id === account.id && users.getSessionVersion() === account.version;
 }
 function find(page, id) {
   return square.cachedPost(id) || [...(page.data.posts || []), ...(page.data.ownPosts || [])].find(post => post._id === id);
@@ -37,13 +37,75 @@ function sync(page, id, removed = false) {
   }
   if (removed) {
     if (page.data.commentPostId === id) values.commentPostId = '';
-    if (page._sharedPostId === id) { page._sharedPostId = ''; page._sharedPost = null; }
   }
   page.setData(values);
   if (removed) syncCommentsTabBar(page);
+  if (removed && typeof page.updatePostCount === 'function') page.updatePostCount();
+}
+function paintLike(page, id, post) {
+  if (!post) return;
+  const values = {}, liked = Boolean(post.liked), count = Math.max(0, Number(post.likeCount) || 0);
+  for (const key of ['posts', 'ownPosts']) if (Array.isArray(page.data[key])) {
+    const index = page.data[key].findIndex(row => row._id === id);
+    if (index < 0) continue;
+    const row = page.data[key][index];
+    if (Boolean(row.liked) !== liked) values[`${key}[${index}].liked`] = liked;
+    if ((Number(row.likeCount) || 0) !== count) values[`${key}[${index}].likeCount`] = count;
+  }
+  if (Object.keys(values).length) page.setData(values);
 }
 
 module.exports = {
+  openPost(event) {
+    if (this._openingPost || this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
+    const id = event.detail.id;
+    if (!/^p_[a-f0-9]{40}$/.test(id || '')) return;
+    this._openingPost = true;
+    wx.navigateTo({ url: `/pages/square-detail/index?id=${encodeURIComponent(id)}`, fail: () => {
+      this._openingPost = false;
+      if (!this._unloaded && this._visible !== false) wx.showToast({ title: '动态打开失败，请重试', icon: 'none' });
+    } });
+  },
+  startPostUpdates() {
+    this.stopPostUpdates();
+    if (typeof square.subscribePost !== 'function') return;
+    this._stopPostUpdates = square.subscribePost(post => {
+      if (current(this, snapshot()) && this.data.user && this.data.user._id === users.getCachedUser()._id) paintLike(this, post._id, post);
+    });
+  },
+  stopPostUpdates() { if (this._stopPostUpdates) this._stopPostUpdates(); this._stopPostUpdates = null; },
+  async reactPost(event) {
+    if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
+    const { id, kind } = event.detail;
+    if (kind !== 'like' || !login(this)) return;
+    const account = snapshot();
+    if (!this.data.user || this.data.user._id !== account.id) return;
+    const post = [...(this.data.posts || []), ...(this.data.ownPosts || [])].find(row => row._id === id);
+    if (!post) return;
+    this._likeClicks = this._likeClicks || new Map();
+    let operation = this._likeClicks.get(id);
+    if (!operation || operation.account.id !== account.id || operation.account.version !== account.version) {
+      operation = { account, original: { ...post }, sequence: 0 };
+      this._likeClicks.set(id, operation);
+    }
+    const sequence = ++operation.sequence, active = !Boolean(post.liked), sourcePost = { ...post };
+    paintLike(this, id, { liked: active, likeCount: Math.max(0, (Number(post.likeCount) || 0) + (active ? 1 : -1)) });
+    const latest = () => this._likeClicks.get(id) === operation && operation.sequence === sequence;
+    try {
+      const confirmed = await square.react(id, 'like', active, sourcePost);
+      if (latest() && current(this, account)) paintLike(this, id, square.cachedPost(id) || confirmed);
+    } catch (error) {
+      if (!latest() || error.code === 'SESSION_CHANGED') return;
+      if (current(this, account)) {
+        paintLike(this, id, square.cachedPost(id) || operation.original);
+        wx.showToast({ title: error.message || '点赞保存失败，请重试', icon: 'none' });
+      } else if (!this._unloaded && this._visible !== false && !users.getCachedUser() && this.data.user && this.data.user._id === account.id) {
+        paintLike(this, id, operation.original);
+        this.applyUser(null);
+        wx.showToast({ title: error.message || '请重新登录', icon: 'none' });
+      }
+    } finally { if (latest()) this._likeClicks.delete(id); }
+  },
   openComments(event) {
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
     if (event.detail.id) { this.setData({ commentPostId: event.detail.id }); syncCommentsTabBar(this); }
@@ -51,7 +113,6 @@ module.exports = {
   closeComments() { if (this.data.commentPostId) this.setData({ commentPostId: '' }); syncCommentsTabBar(this); },
   commentLogin() { if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard(); this.closeComments(); login(this); },
   commentChanged(event) { sync(this, event.detail.id); },
-  prepareShare() { login(this); },
   async managePost(event) {
     if (this._postMenuBusy || this._unloaded || this._visible === false || !login(this)) return;
     const id = event.detail.id, post = find(this, id), user = users.getCachedUser();
@@ -82,20 +143,5 @@ module.exports = {
     } catch (error) {
       if (current(this, account) && !/cancel/.test(error.errMsg || '')) wx.showToast({ title: error.message || '操作失败，请重试', icon: 'none' });
     } finally { this._postMenuBusy = false; }
-  },
-  buildPostShare(options, fallbackId) {
-    const id = options && options.target && options.target.dataset.id || fallbackId;
-    const post = id && find(this, id);
-    if (post && users.getCachedUser()) {
-      const account = snapshot();
-      // 此事件确认的是发起分享，不代表已送达；不使用已废弃的分享成功回调。
-      square.recordShare(id, token()).then(() => {
-        if (current(this, account, false)) sync(this, id);
-      }).catch(error => {
-        if (current(this, account)) wx.showToast({ title: error.message || '分享计数暂未更新', icon: 'none' });
-      });
-    }
-    return id ? { title: post ? post.content.slice(0, 40) : '萃 · 动态广场', path: `/pages/home/index?postId=${encodeURIComponent(id)}` } :
-      { title: '萃 · 动态广场', path: '/pages/home/index' };
   },
 };

@@ -1,18 +1,26 @@
 <template name="actions">
   <view class="post-actions">
-    <button class="post-action {{post.liked ? 'liked' : ''}}" bindtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><image src="/images/interface/heart{{post.liked ? '-active' : '-muted'}}.svg" mode="aspectFit" /><text>{{post.likeCount || 0}}</text></button>
-    <button class="post-action" bindtap="reply" aria-label="查看评论"><image src="/images/interface/message-square-muted.svg" mode="aspectFit" /><text>{{post.replyCount || 0}}</text></button>
-    <button class="post-action {{post.reposted ? 'reposted' : ''}}" bindtap="repost" aria-label="{{post.reposted ? '取消转发' : '转发'}}"><image src="/images/interface/repeat{{post.reposted ? '-active' : '-muted'}}.svg" mode="aspectFit" /><text>{{post.repostCount || 0}}</text></button>
-    <button class="post-action share-action" open-type="{{viewer ? 'share' : ''}}" bindtap="share" data-id="{{post._id}}" aria-label="分享，发起分享{{post.shareCount || 0}}次"><image src="/images/interface/send-muted.svg" mode="aspectFit" /><text>{{post.shareCount || 0}}</text></button>
+    <button class="post-action {{post.liked ? 'liked' : ''}}" catchtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><image src="/images/interface/heart{{post.liked ? '-active' : '-muted'}}.svg" mode="aspectFit" /><text>{{post.likeCount || 0}}</text></button>
+    <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/interface/message-square-muted.svg" mode="aspectFit" /><text>{{post.replyCount || 0}}</text></button>
+    <view class="post-action" catchtap="stopEvent" aria-label="转发，0，暂未开放"><image src="/images/interface/repeat-muted.svg" mode="aspectFit" /><text>0</text></view>
+    <view class="post-action" catchtap="stopEvent" aria-label="转发，0，暂未开放"><image src="/images/interface/paper-plane-muted.svg" mode="aspectFit" /><text>0</text></view>
   </view>
 </template>
-<view class="post-card">
+<view class="post-card {{detail ? 'is-detail' : ''}}" bindtap="open">
   <image class="post-avatar" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
   <view class="post-main">
-    <view class="post-heading"><text class="post-name">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><button class="post-follow" disabled aria-label="关注功能暂未开放">关注</button><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
-    <view wx:if="{{post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</view>
-    <text class="post-text" selectable>{{expanded ? (post.fullContent || post.content) : post.content}}</text>
-    <view wx:if="{{post.truncated}}" class="expand-post" bindtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
-    <template is="actions" data="{{post: post, viewer: viewer}}" />
+    <view class="post-heading"><text class="post-name">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><button wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-follow" catchtap="stopEvent" disabled aria-label="关注功能暂未开放">关注</button><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <text class="post-text" selectable>{{detail || expanded ? (post.fullContent || post.content) : post.content}}</text>
+    <view wx:if="{{post.truncated && !detail}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
+    <view wx:if="{{imageFiles.length}}" class="post-image-gallery" catchtap="stopEvent">
+      <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" bindchange="imageChanged" indicator-dots indicator-color="rgba(255,255,255,.5)" indicator-active-color="#ffffff">
+        <swiper-item wx:for="{{imageFiles}}" wx:key="*this"><image class="post-photo" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" catchtap="previewImage" /></swiper-item>
+      </swiper>
+      <image wx:else class="post-photo" src="{{imageFiles[imageIndex] || imageFiles[0]}}" mode="aspectFill" lazy-load data-index="{{imageIndex}}" catchtap="previewImage" />
+      <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter">{{imageIndex + 1}} / {{imageFiles.length}}</view>
+    </view>
+    <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>
+    <view wx:if="{{detail && post.exactTime}}" class="post-date">{{post.exactTime}}</view>
+    <template is="actions" data="{{post: post}}" />
   </view>
 </view>

@@ -4,27 +4,29 @@ const { menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const square = require('../../services/square');
 const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
+const DEFAULT_AVATAR = '/images/avatar.png';
 
 Page({
   ...postActions,
   data: {
     user: null, identity: describeUser(null), avatarFailed: false,
-    loading: false, error: '', accountHint: '未登录', menuOpen: false, confirmingLogout: false,
+    homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true,
+    loading: false, error: '', accountHint: '未登录', menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: false, loginSheetOpen: false, menuInstant: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72,
     followerCount: 0, followingCount: 0, menuItems, utilityMenuItems,
-    activeTab: 'square', commentPostId: '',
+    activeTab: 'square', tabMenuKey: '', tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
+    tabIndicatorLeft: 43.75, tabIndicatorWidth: 85,
     posts: [], feedLoading: false, feedError: '', feedHasMore: false, feedOffset: 0, feedMoreLoading: false, pullRefreshing: false, skeletons: [1, 2, 3],
     tabs: [
-      { key: 'square', label: '动态广场' },
-      { key: 'following', label: '关注' },
-      { key: 'campus', label: '校园圈' },
+      { key: 'square', label: '动态广场', options: [{ key: 'square', label: '推荐' }, { key: 'following', label: '关注' }] },
+      { key: 'campus', label: '校园圈', options: [{ key: 'campus', label: '推荐' }, { key: 'following', label: '关注' }] },
     ],
   },
-  onLoad(options = {}) {
-    this._sharedPostId = /^p_[a-f0-9]{40}$/.test(options.postId || '') ? options.postId : '';
+  onLoad() {
     try {
       const info = wx.getWindowInfo();
+      this._homeWidth = info.windowWidth || info.screenWidth || 375;
       const capsule = wx.getMenuButtonBoundingClientRect();
       const status = info.statusBarHeight || 0;
       const valid = capsule && capsule.height > 0 && capsule.top >= status;
@@ -32,34 +34,41 @@ Page({
       const navButtonHeight = valid ? capsule.height : 32;
       this.setData({ navTop, navButtonHeight, navHeight: navTop + navButtonHeight + 8 });
     } catch (error) { /* 旧客户端使用默认的顶部留白。 */ }
+    this.setData(this.tabIndicatorState(this.data.activeTab));
     const cached = userService.getCachedUser();
     if (cached) this.applyUser(cached);
     const feed = square.cachedFeed();
     if (feed) this.showFeed(feed);
-    else if (this._sharedPostId && square.cachedPost(this._sharedPostId)) this.showFeed({ items: [], hasMore: true, nextOffset: 0 });
   },
   onShow() {
+    this._openingPost = false;
     this._visible = true;
+    this.startPostUpdates();
     this._viewVersion = (this._viewVersion || 0) + 1;
     this._menuNavigating = false;
     // 返回时直接呈现首页，离开时保留的菜单不再播放收起动画。
-    this.setData({ menuOpen: false, menuInstant: true });
-    if (square.consumePublication()) this.setData({ activeTab: 'square' });
-    this.syncNavigation();
-    this._openingComposer = false;
+    this.setData({ menuInstant: true, tabMenuKey: '' });
+    // 先同步当前账号及头像，再露出首页，避免显示上一账号的图片。
     const account = this.refreshUser(false);
-    if (this.data.activeTab === 'square') this.loadFeed(false);
-    if (this._sharedPostId) this.loadSharedPost();
+    this.setData({ menuOpen: false });
+    if (square.consumePublication()) this.setData({ activeTab: 'square', ...this.tabIndicatorState('square'), tabFilters: { ...this.data.tabFilters, square: 'square' } });
+    this.syncNavigation();
+    this.measureHomeTabs();
+    if (this.isSquareFeed()) this.loadFeed(false);
     return account;
   },
   onHide() {
+    const bar = typeof this.getTabBar === 'function' && this.getTabBar();
+    if (bar) bar.setData({ composerOpen: false });
+    this.stopPostUpdates();
+    this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
+    this.closeTabMenu();
     this.closeComments();
     this.stopHomeRefresh();
     this._visible = false;
     this._refreshing = false;
     this._feedBusy = false;
     this._feedPromise = null;
-    this._sharedRequest = null;
     this._viewVersion = (this._viewVersion || 0) + 1;
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     if (!this._menuNavigating) this.closeMenu();
@@ -68,6 +77,11 @@ Page({
     this.setAuthBlocked(false);
   },
   onUnload() {
+    const bar = typeof this.getTabBar === 'function' && this.getTabBar();
+    if (bar) bar.setData({ composerOpen: false });
+    this.stopPostUpdates();
+    this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
+    this.closeTabMenu();
     this.closeComments();
     this.stopHomeRefresh();
     this._unloaded = true;
@@ -76,18 +90,54 @@ Page({
     this.setMenuTabBarOpen(false);
     this.setAuthBlocked(false);
   },
-  onReady() { this.syncNavigation(); },
+  onReady() { this.syncNavigation(); this.measureHomeTabs(); },
+  onResize(event) {
+    this._homeWidth = event.size.windowWidth || this._homeWidth || 375;
+    this._tabAnchors = null;
+    this.setData(this.tabIndicatorState(this.data.activeTab));
+    this.measureHomeTabs();
+  },
+  tabIndicatorState(key) {
+    const index = key === 'campus' ? 1 : 0, scale = (this._homeWidth || 375) / 750;
+    const measured = this._tabAnchors && this._tabAnchors[index];
+    const labelWidth = (index ? 132 : 164) * scale;
+    const groupWidth = ((this._homeWidth || 375) - 48 * scale) / 2;
+    const left = measured ? measured.left : groupWidth * (index + .5) - labelWidth / 2;
+    return { tabIndicatorLeft: left - 6 * scale, tabIndicatorWidth: (measured ? measured.width : labelWidth) + 6 * scale };
+  },
+  measureHomeTabs() {
+    const version = this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
+    const measure = () => {
+      if (this._unloaded || this._visible === false || version !== this._tabMeasureVersion) return;
+      const query = typeof this.createSelectorQuery === 'function' ? this.createSelectorQuery() :
+        typeof wx.createSelectorQuery === 'function' ? wx.createSelectorQuery().in(this) : null;
+      if (!query) return;
+      query.select('.home-tabs').boundingClientRect();
+      query.selectAll('.home-tab-label').boundingClientRect();
+      query.exec(result => {
+        if (this._unloaded || this._visible === false || version !== this._tabMeasureVersion) return;
+        const [tabs, labels] = result || [];
+        if (!tabs || !labels || labels.length !== 2 || labels.some(label => !label || !label.width)) return;
+        this._tabAnchors = labels.map(label => ({ left: label.left - tabs.left, width: label.width }));
+        const state = this.tabIndicatorState(this.data.activeTab);
+        const changed = Object.fromEntries(Object.entries(state).filter(([key, value]) => this.data[key] !== value));
+        if (Object.keys(changed).length) this.setData(changed);
+      });
+    };
+    if (typeof wx.nextTick === 'function') wx.nextTick(measure);
+    else measure();
+  },
   syncNavigation() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) this.getTabBar().setData({ selected: 0, menuOpen: this.data.menuOpen, menuInstant: this.data.menuInstant, authBlocked: this.interactionBlocked(), commentsOpen: Boolean(this.data.commentPostId) });
+    if (typeof this.getTabBar === 'function' && this.getTabBar()) this.getTabBar().setData({ selected: 0, menuOpen: this.data.menuOpen, menuInstant: this.data.menuInstant, authBlocked: this.interactionBlocked(), commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen) });
   },
   setMenuTabBarOpen(open) {
     const tabBar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (tabBar) tabBar.setData({ menuOpen: open, menuInstant: this.data.menuInstant });
   },
-  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen); },
+  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen); },
   setAuthBlocked(blocked) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (bar) bar.setData({ authBlocked: Boolean(blocked) });
+    if (bar) bar.setData({ authBlocked: Boolean(blocked), composerOpen: Boolean(this.data.composerOpen && this._visible !== false && !this._unloaded) });
   },
   currentView(version) {
     return !this._unloaded && this._visible !== false && version === (this._viewVersion || 0);
@@ -116,9 +166,13 @@ Page({
   applyUser(user, error = '') {
     const previousId = this.data.user && this.data.user._id;
     const accountChanged = Boolean(previousId && previousId !== (user && user._id));
-    if (accountChanged) { this.closeComments(); this._sharedPost = null; this._sharedRequest = null; }
-    this.setData({ user, identity: describeUser(user), avatarFailed: false, error,
-      ...(accountChanged ? { menuOpen: false } : {}),
+    const avatarChanged = previousId !== (user && user._id) ||
+      (this.data.user && this.data.user.avatarFileID || '') !== (user && user.avatarFileID || '');
+    const avatarSource = user && user.avatarFileID || DEFAULT_AVATAR;
+    if (accountChanged) this.closeComments();
+    this.setData({ user, identity: describeUser(user), error,
+      ...(avatarChanged ? { homeAvatarSource: avatarSource, homeAvatarReady: avatarSource === DEFAULT_AVATAR, avatarFailed: false } : {}),
+      ...(accountChanged ? { menuOpen: false, composerOpen: false } : {}),
       authChecking: false, loginSheetOpen: user ? false : this.data.loginSheetOpen,
       accountHint: error ? '账号信息暂不可用' : '未登录', followerCount: 0, followingCount: 0 });
     if (accountChanged) this.setMenuTabBarOpen(false);
@@ -127,14 +181,21 @@ Page({
       this._feedEpoch = (this._feedEpoch || 0) + 1;
       this._feedBusy = false;
       this.setData({ posts: this.data.posts.map(post => ({ ...post, liked: false, reposted: false })) });
-      if (this.data.activeTab === 'square') this.loadFeed(false);
-      if (this._sharedPostId) this.loadSharedPost();
+      if (this.isSquareFeed()) this.loadFeed(false);
     }
   },
-  onAvatarError() { this.setData({ avatarFailed: true }); },
+  onHomeAvatarLoad(event) {
+    if (event && event.currentTarget && event.currentTarget.dataset.source !== this.data.homeAvatarSource) return;
+    if (!this.data.homeAvatarReady) this.setData({ homeAvatarReady: true });
+  },
+  onAvatarError(event) {
+    if (event && event.currentTarget && event.currentTarget.dataset.source !== this.data.homeAvatarSource) return;
+    if (this.data.homeAvatarSource !== DEFAULT_AVATAR) this.setData({ avatarFailed: true, homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true });
+  },
   openMenu() {
-    if (this._unloaded || this._visible === false || this.data.menuOpen) return;
+    if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.composerOpen) return;
     if (this.data.loginSheetOpen) return;
+    this.closeTabMenu();
     if (this.data.loading) {
       this._openAfterRestore = true;
       this.setData({ authChecking: true });
@@ -196,6 +257,15 @@ Page({
       if (!this._unloaded && this._visible !== false) wx.showToast({ title: failureMessage, icon: 'none' });
     } });
   },
+  prepareMenuReturn() {
+    if (this._unloaded) return;
+    // 在子页面仍覆盖首页时恢复底层画面，不在返回动画中收起菜单。
+    this._menuNavigating = false;
+    this.setData({ menuOpen: false, menuInstant: true, tabMenuKey: '' });
+    const cached = userService.getCachedUser();
+    if (cached !== this.data.user) this.applyUser(cached);
+    this.syncNavigation();
+  },
   selectMenuItem(event) {
     if (this._menuNavigating || this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
     const item = [...this.data.menuItems, ...this.data.utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
@@ -236,50 +306,43 @@ Page({
     });
   },
   selectTab(event) {
-    if (this.data.menuOpen || this.interactionBlocked()) return;
+    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
     const key = event.currentTarget.dataset.key;
     if (this.data.tabs.some(tab => tab.key === key)) {
+      if (this.data.activeTab === key) { this.toggleTabMenu(event); return; }
       this.stopHomeRefresh();
-      this.setData({ activeTab: key });
-      if (key === 'square') this.loadFeed(false);
+      this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: '' });
+      if (this.isSquareFeed()) this.loadFeed(false);
     }
+  },
+  isSquareFeed() { return this.data.activeTab === 'square' && this.data.tabFilters.square === 'square'; },
+  toggleTabMenu(event) {
+    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
+    const key = event.currentTarget.dataset.key;
+    if (!this.data.tabs.some(tab => tab.key === key)) return;
+    const switched = this.data.activeTab !== key;
+    this.stopHomeRefresh();
+    this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: this.data.tabMenuKey === key ? '' : key });
+    if (switched && this.isSquareFeed()) this.loadFeed(false);
+  },
+  closeTabMenu() { if (this.data.tabMenuKey) this.setData({ tabMenuKey: '' }); },
+  selectTabFilter(event) {
+    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
+    const { key, filter } = event.currentTarget.dataset;
+    const tab = this.data.tabs.find(item => item.key === key);
+    if (this.data.tabMenuKey !== key || !tab || !tab.options.some(item => item.key === filter)) return;
+    this.stopHomeRefresh();
+    this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: '', tabFilters: { ...this.data.tabFilters, [key]: filter } });
+    if (this.isSquareFeed()) this.loadFeed(false);
   },
   showFeed(result) {
     const items = result.items.map(postPreview);
-    const shared = this._sharedPostId && (square.cachedPost(this._sharedPostId) || this._sharedPost);
-    if (shared) {
-      const preview = postPreview(shared);
-      const index = items.findIndex(post => post._id === shared._id);
-      if (index < 0) items.unshift(preview);
-      else items[index] = preview;
-    }
-    this.setData({ posts: items, feedHasMore: result.hasMore, feedOffset: result.nextOffset });
-  },
-  async loadSharedPost() {
-    if (!this._sharedPostId || this._sharedRequest) return;
-    const request = { id: this._sharedPostId, version: this._viewVersion || 0 };
-    this._sharedRequest = request;
-    const current = () => this._sharedRequest === request && this.currentView(request.version);
-    let retry = false;
-    try {
-      const post = await square.detail(request.id);
-      if (current()) {
-        this._sharedPost = post;
-        this.showFeed({ items: this.data.posts, hasMore: this.data.feedHasMore, nextOffset: this.data.feedOffset });
-      }
-    } catch (error) {
-      if (current() && error.code === 'SESSION_CHANGED') retry = true;
-      else if (current()) {
-        this._sharedPost = null; this._sharedPostId = '';
-        this.setData({ posts: this.data.posts.filter(post => post._id !== request.id) });
-        wx.showToast({ title: error.message || '分享的动态暂不可见', icon: 'none' });
-      }
-    } finally {
-      if (this._sharedRequest === request) {
-        this._sharedRequest = null;
-        if (retry && this.currentView(request.version)) this.loadSharedPost();
-      }
-    }
+    const values = {};
+    // 返回时缓存和后台结果常相同，不重复替换整组图文组件。
+    if (JSON.stringify(items) !== JSON.stringify(this.data.posts)) values.posts = items;
+    if (this.data.feedHasMore !== result.hasMore) values.feedHasMore = result.hasMore;
+    if (this.data.feedOffset !== result.nextOffset) values.feedOffset = result.nextOffset;
+    if (Object.keys(values).length) this.setData(values);
   },
   loadFeed(force = false, append = false) {
     if (this._feedBusy) return this._feedPromise;
@@ -307,7 +370,7 @@ Page({
   retryFeed() { return this.loadFeed(true); },
   refreshFeed() {
     if (this.data.pullRefreshing) return this._pullRefreshPromise;
-    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked() || this.data.activeTab !== 'square') return;
+    if (this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.interactionBlocked() || !this.isSquareFeed()) return;
     const refresh = {};
     this._pullRefresh = refresh;
     this.setData({ pullRefreshing: true });
@@ -329,38 +392,30 @@ Page({
     this._pullRefreshPromise = null;
     if (this.data.pullRefreshing) this.setData({ pullRefreshing: false });
   },
-  loadMoreFeed() { if (!this.data.menuOpen && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.data.activeTab === 'square' && this.data.feedHasMore) return this.loadFeed(false, true); },
+  loadMoreFeed() { if (!this.data.menuOpen && !this.data.tabMenuKey && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.isSquareFeed() && this.data.feedHasMore) return this.loadFeed(false, true); },
   openComposer() {
-    if (this.interactionBlocked() || this.data.menuOpen || this._openingComposer) return;
+    if (this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId) return;
     if (!this.data.user) { this.openMenu(); return; }
-    this._openingComposer = true;
-    wx.navigateTo({ url: '/pages/square-compose/index', fail: () => {
-      this._openingComposer = false; wx.showToast({ title: '发布页面打开失败，请重试', icon: 'none' });
-    } });
+    this.closeTabMenu();
+    this.stopHomeRefresh();
+    this.setData({ composerOpen: true });
+    this.syncNavigation();
   },
-  async reactPost(event) {
-    if (this.interactionBlocked() || this.data.menuOpen) return;
-    if (!this.data.user) { this.openMenu(); return; }
-    const { id, kind } = event.detail;
-    const post = this.data.posts.find(item => item._id === id);
-    this._reactions = this._reactions || new Set();
-    if (!post || this._reactions.has(id)) return;
-    this._reactions.add(id);
-    try {
-      const latest = await square.react(id, kind, !(kind === 'like' ? post.liked : post.reposted));
-      if (!this._unloaded && this._visible !== false) this.setData({ posts: this.data.posts.map(item => item._id === id ? postPreview(latest) : item) });
-    } catch (error) {
-      if (!this._unloaded && this._visible !== false) {
-        wx.showToast({ title: error.message, icon: 'none' });
-        if (!userService.getCachedUser()) { this.applyUser(null); this.openMenu(); }
-      }
-    } finally { this._reactions.delete(id); }
+  closeComposer(event) {
+    this.setData({ composerOpen: false });
+    const user = userService.getCachedUser();
+    if ((user && user._id) !== (this.data.user && this.data.user._id)) this.applyUser(user);
+    if (event.detail.published) {
+      square.consumePublication();
+      this.setData({ activeTab: 'square', ...this.tabIndicatorState('square'), tabFilters: { ...this.data.tabFilters, square: 'square' } });
+      const cached = square.cachedFeed();
+      if (cached) this.showFeed(cached);
+      this.loadFeed(false);
+    }
+    this.syncNavigation();
   },
   openCampusCertification() {
     if (!this.data.user) { this.openMenu(); return; }
     wx.navigateTo({ url: '/pages/certification/index' });
-  },
-  onShareAppMessage(options) {
-    return this.buildPostShare(options);
   },
 });

@@ -13,8 +13,8 @@ function fixture() {
     getCurrentPages: () => pages,
     wx: { switchTab: value => { routes.push(value.url); value.complete(); }, showToast() {} },
   });
-  const bar = { ...definition.methods, data: structuredClone(definition.data) };
-  return { bar, routes, pages };
+  const bar = { ...definition.methods, data: structuredClone(definition.data), setData(values) { Object.assign(this.data, values); } };
+  return { bar, routes, pages, attach: () => definition.lifetimes.attached.call(bar), ready: () => definition.lifetimes.ready.call(bar), show: () => definition.pageLifetimes.show.call(bar) };
 }
 
 test('菜单展开时点导航只收起当前主页菜单，收起后导航正常切换', () => {
@@ -71,4 +71,36 @@ test('评论面板期间底栏不接受迟到的点击事件，收起评论后�
   bar.data.commentsOpen = false;
   bar.switchTab({ currentTarget: { dataset: { index: 4 } } });
   assert.deepEqual(routes, ['/pages/search/index']);
+});
+
+test('发布及其设置面板期间底栏禁止切页，关闭发布后正常恢复', () => {
+  const { bar, routes } = fixture();
+  bar.data.composerOpen = true;
+  bar.switchTab({ currentTarget: { dataset: { index: 4 } } });
+  assert.equal(routes.length, 0);
+  bar.data.composerOpen = false;
+  bar.switchTab({ currentTarget: { dataset: { index: 4 } } });
+  assert.deepEqual(routes, ['/pages/search/index']);
+});
+
+test('相册返回与底栏晚初始化均从当前页面恢复隐藏标记，关闭发布后解除隐藏', () => {
+  const f = fixture();
+  const page = { data: { composerOpen: true } }; f.pages.push(page);
+  f.attach(); assert.equal(f.bar.data.composerOpen, true); assert.equal(f.bar.data.authBlocked, true);
+  f.bar.setData({ composerOpen: false, authBlocked: false }); f.ready();
+  assert.equal(f.bar.data.composerOpen, true);
+  f.bar.setData({ composerOpen: false, authBlocked: false }); f.show();
+  assert.equal(f.bar.data.composerOpen, true);
+  // 即使恢复期间收到迟到点击，也应检查真实页面状态，不能跳去其他页。
+  f.bar.setData({ composerOpen: false, authBlocked: false });
+  f.bar.switchTab({ currentTarget: { dataset: { index: 4 } } }); assert.equal(f.routes.length, 0);
+  page.data.composerOpen = false; f.show();
+  assert.equal(f.bar.data.composerOpen, false); assert.equal(f.bar.data.authBlocked, false);
+  f.bar.switchTab({ currentTarget: { dataset: { index: 4 } } }); assert.deepEqual(f.routes, ['/pages/search/index']);
+});
+
+test('切到其他页面后底栏不沿用发布页的遮挡状态', () => {
+  const f = fixture(); f.pages.push({ data: { composerOpen: true } }); f.attach();
+  f.pages.push({ data: {} }); f.show();
+  assert.equal(f.bar.data.composerOpen, false); assert.equal(f.bar.data.authBlocked, false);
 });

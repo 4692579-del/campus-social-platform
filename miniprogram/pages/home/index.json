@@ -7,5 +7,9 @@
   "backgroundTextStyle": "light",
   "enablePullDownRefresh": false,
   "disableScroll": true,
-  "usingComponents": { "square-post": "/components/square-post/index", "comments-sheet": "/components/comments-sheet/index" }
+  "usingComponents": {
+    "square-post": "/components/square-post/index",
+    "comments-sheet": "/components/comments-sheet/index",
+    "square-composer": "/components/square-composer/index"
+  }
 }

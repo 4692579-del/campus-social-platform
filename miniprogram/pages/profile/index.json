@@ -3,6 +3,11 @@
   "navigationBarTextStyle": "white",
   "navigationBarTitleText": "我的",
   "backgroundColor": "#FFFFFF",
-  "enablePullDownRefresh": true,
-  "usingComponents": { "square-post": "../../components/square-post/index", "comments-sheet": "../../components/comments-sheet/index" }
+  "enablePullDownRefresh": false,
+  "disableScroll": true,
+  "usingComponents": {
+    "square-post": "../../components/square-post/index",
+    "comments-sheet": "../../components/comments-sheet/index",
+    "square-composer": "/components/square-composer/index"
+  }
 }

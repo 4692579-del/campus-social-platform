@@ -12,12 +12,13 @@ function commentGroups(roots, threads) {
     const folded = new Set(thread.items.filter(row => row.folded).map(row => row._id));
     const rows = thread.items.filter(row => !(row.ancestorIds || []).some(id => folded.has(id))).map(rowView);
     const fresh = rows.filter(row => thread.fresh.has(row._id));
+    const remainingCount = Math.max(0, (root.replyCount || 0) - fresh.length);
     return { ...rowView(root), children: !root.folded && thread.open ? rows.filter(row => !thread.fresh.has(row._id)) : [],
       freshChildren: root.folded ? [] : fresh, threadLoading: thread.loading || false, threadError: thread.error || '',
       threadHasMore: thread.hasMore || false, threadOpen: Boolean(thread.open),
-      remainingCount: Math.max(0, (root.replyCount || 0) - fresh.length),
-      showExpand: !root.folded && !thread.open && (root.replyCount || 0) > fresh.length,
-      showCollapse: !root.folded && Boolean(thread.open || fresh.length) };
+      remainingCount,
+      showExpand: !root.folded && !thread.open && remainingCount > 0,
+      showCollapse: !root.folded && Boolean(thread.open || (fresh.length && !remainingCount)) };
   });
 }
 module.exports = { commentGroups };

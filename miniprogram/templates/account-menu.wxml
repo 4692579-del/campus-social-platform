@@ -5,7 +5,7 @@
       <view class="menu-account" style="padding-top: calc({{navHeight}}px + 20rpx);">
         <image class="menu-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" bindtap="openProfile" aria-role="button" aria-label="进入个人主页" />
         <view class="menu-nickname">{{user ? user.nickname : accountHint || '未登录'}}</view>
-        <view wx:if="{{user}}" class="menu-account-id">ID：{{user.accountId || '暂未分配'}}</view>
+        <view wx:if="{{user}}" class="menu-account-id">@{{user.accountId || '暂未分配'}}</view>
         <view class="menu-account-stats"><view><text class="menu-stat-count">{{followerCount}}</text><text>粉丝</text></view><view><text class="menu-stat-count">{{followingCount}}</text><text>关注</text></view></view>
       </view>
       <scroll-view class="menu-scroll" scroll-y="{{menuOpen}}">

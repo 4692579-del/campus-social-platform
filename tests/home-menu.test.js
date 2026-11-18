@@ -1,3 +1,4 @@
+const { loadPostActions, applyPageData } = require('./helpers/post-actions-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,13 +18,12 @@ function fixture(options = {}) {
     login: async () => { requests.push('login'); return options.login ? options.login() : { ...user }; },
     logout: () => requests.push('logout'),
   };
-  const square = { cachedFeed: () => options.cachedFeed || null, cachedPost: () => options.sharedPost || null,
-    detail: async () => options.sharedRead ? options.sharedRead() : options.sharedPost, consumePublication: () => false, list: async args => {
+  const square = { cachedFeed: () => options.cachedFeed || null, consumePublication: () => false, list: async args => {
     feedRequests.push(args); return options.list ? options.list(args) : { items: [], hasMore: false, nextOffset: 0 };
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
-    require: name => name.includes('post-actions') ? require('../miniprogram/utils/post-actions') : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    require: name => name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),
       showToast: value => toasts.push(value.title), showModal: value => modals.push(value) },
@@ -32,6 +32,28 @@ function fixture(options = {}) {
     setData(value) { Object.assign(this.data, value); }, getTabBar: () => ({ setData: value => Object.assign(bar, value) }) };
   return { page, routes, navigation, toasts, modals, requests, feedRequests, bar };
 }
+
+test('图文动态从菜单进入个人主页再返回保留完整卡片，相同缓存不重复写入列表，更新仍正常同步', async () => {
+  const post = { _id: 'p_' + 'a'.repeat(40), content: '图片也有正文', author: { nickname: '真实昵称', accountId: user.accountId },
+    images: ['cloud://test.bucket/square-media/alice/post/photo.png'], isOwn: true, likeCount: 1, liked: true };
+  const cached = { items: [post], hasMore: false, nextOffset: 1 };
+  const f = fixture({ cachedUser: user, cachedFeed: cached, list: () => cached });
+  const updates = [], setData = f.page.setData.bind(f.page);
+  f.page.setData = values => { updates.push(values); setData(values); };
+  f.page.onLoad(); await f.page.onShow();
+  const posts = f.page.data.posts;
+  const initialWrites = updates.filter(value => Object.hasOwn(value, 'posts')).length;
+  for (let i = 0; i < 10; i++) {
+    f.page.openMenu(); f.page.openProfile(); f.page.onHide(); f.page.prepareMenuReturn(); await f.page.onShow();
+    assert.equal(f.page.data.posts, posts);
+    assert.equal(f.page.data.posts[0].author.nickname, '真实昵称'); assert.equal(f.page.data.posts[0].content, '图片也有正文');
+    assert.equal(f.page.data.posts[0].likeCount, 1); assert.equal(f.page.data.posts[0].images.length, 1);
+  }
+  assert.equal(updates.filter(value => Object.hasOwn(value, 'posts')).length, initialWrites);
+  f.page.showFeed({ ...cached, items: [{ ...post, likeCount: 2 }] });
+  assert.equal(f.page.data.posts[0].likeCount, 2); assert.equal(f.page.data.posts[0].content, '图片也有正文');
+  assert.equal(f.page.data.posts[0].images[0], post.images[0]);
+});
 
 test('首页使用已有账号立即开放菜单，后台校验期间不显示等待登录遮罩', async () => {
   let resolve;
@@ -48,7 +70,54 @@ test('首页使用已有账号立即开放菜单，后台校验期间不显示�
   assert.equal(f.page.data.menuOpen, true);
 });
 
-test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动首页底栏并保留三个板块', async () => {
+test('菜单收放及其他页面返回复用已加载头像，不重复写入图片源或重置加载状态', async () => {
+  const options = { cachedUser: { ...user } };
+  options.restore = () => ({ ...options.cachedUser });
+  const f = fixture(options);
+  f.page.onLoad();
+  f.page.onHomeAvatarLoad({ currentTarget: { dataset: { source: user.avatarFileID } } });
+  const avatarWrites = [], setData = f.page.setData.bind(f.page);
+  f.page.setData = value => {
+    if ('homeAvatarSource' in value || 'homeAvatarReady' in value) avatarWrites.push(value);
+    setData(value);
+  };
+  for (let i = 0; i < 3; i++) {
+    await f.page.onShow();
+    f.page.openMenu(); f.page.closeMenu();
+    f.page.openMenu(); f.page.openProfile(); f.page.onHide();
+    await f.page.onShow();
+    assert.equal(f.page.data.homeAvatarReady, true);
+    assert.equal(f.page.data.homeAvatarSource, user.avatarFileID);
+    assert.equal(f.page.data.menuOpen, false);
+  }
+  assert.equal(avatarWrites.length, 0);
+});
+
+test('头像失败不因返回重试闪烁，更新头像或退出时即时切换，旧图片事件不能覆盖新图', async () => {
+  const options = { cachedUser: { ...user } };
+  options.restore = () => ({ ...options.cachedUser });
+  const f = fixture(options); f.page.onLoad();
+  f.page.onAvatarError({ currentTarget: { dataset: { source: user.avatarFileID } } });
+  await f.page.onShow();
+  assert.equal(f.page.data.avatarFailed, true);
+  assert.equal(f.page.data.homeAvatarSource, '/images/avatar.png');
+  options.cachedUser = { ...user, avatarFileID: 'cloud://real/avatar-new.png' };
+  f.page.onHide(); await f.page.onShow();
+  assert.equal(f.page.data.homeAvatarSource, options.cachedUser.avatarFileID);
+  assert.equal(f.page.data.homeAvatarReady, false);
+  assert.equal(f.page.data.avatarFailed, false);
+  f.page.onAvatarError({ currentTarget: { dataset: { source: user.avatarFileID } } });
+  f.page.onHomeAvatarLoad({ currentTarget: { dataset: { source: user.avatarFileID } } });
+  assert.equal(f.page.data.homeAvatarReady, false);
+  assert.equal(f.page.data.homeAvatarSource, options.cachedUser.avatarFileID);
+  f.page.onHomeAvatarLoad({ currentTarget: { dataset: { source: options.cachedUser.avatarFileID } } });
+  assert.equal(f.page.data.homeAvatarReady, true);
+  f.page.applyUser(null);
+  assert.equal(f.page.data.homeAvatarSource, '/images/avatar.png');
+  assert.equal(f.page.data.homeAvatarReady, true);
+});
+
+test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动首页底栏并保留两个板块', async () => {
   const f = fixture();
   f.page.onLoad();
   await f.page.onShow();
@@ -60,35 +129,98 @@ test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动
   assert.equal(f.bar.authBlocked, false);
   assert.equal(f.page.data.followerCount, 0);
   assert.deepEqual(f.page.data.menuItems, menuConfig.menuItems);
-  f.page.selectTab({ currentTarget: { dataset: { key: 'following' } } });
+  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
+  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'following' } } });
   f.page.openMenu();
   assert.equal(f.page.data.menuOpen, true);
   assert.equal(f.bar.menuOpen, true);
   f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
-  assert.equal(f.page.data.activeTab, 'following');
+  assert.equal(f.page.data.activeTab, 'square');
+  assert.equal(f.page.data.tabFilters.square, 'following');
   f.page.closeMenu();
   assert.equal(f.bar.menuOpen, false);
   f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
   assert.equal(f.page.data.activeTab, 'campus');
 });
 
-test('首页三个板块切换保留，头像读取失败时使用默认头像；离开或卸载恢复导航', async () => {
+test('首页两个板块分别保留筛选，关注不读取广场流，离开关闭下拉并恢复导航', async () => {
   const f = fixture();
   await f.page.onShow();
   f.page.onAvatarError();
   assert.equal(f.page.data.avatarFailed, true);
-  for (const key of ['square', 'following', 'campus']) {
-    f.page.selectTab({ currentTarget: { dataset: { key } } });
+  assert.deepEqual(Array.from(f.page.data.tabs, tab => tab.key), ['square', 'campus']);
+  for (const key of ['square', 'campus']) {
+    f.page.toggleTabMenu({ currentTarget: { dataset: { key } } });
+    assert.equal(f.page.data.tabMenuKey, key);
+    f.page.selectTabFilter({ currentTarget: { dataset: { key, filter: 'following' } } });
     assert.equal(f.page.data.activeTab, key);
+    assert.equal(f.page.data.tabFilters[key], 'following');
+    assert.equal(f.page.data.tabMenuKey, '');
   }
+  const calls = f.feedRequests.length;
+  await f.page.refreshFeed(); await f.page.loadMoreFeed();
+  assert.equal(f.feedRequests.length, calls);
+  f.page.selectTab({ currentTarget: { dataset: { key: 'square' } } });
+  assert.equal(f.page.data.tabFilters.square, 'following');
+  f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
   f.page.selectTab({ currentTarget: { dataset: { key: 'unknown' } } });
   assert.equal(f.page.data.activeTab, 'campus');
+  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
+  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'campus' } } });
+  assert.equal(f.page.data.tabMenuKey, 'square');
+  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'square' } } });
+  assert.equal(f.page.isSquareFeed(), true);
+  assert.equal(f.page.data.tabFilters.campus, 'following');
+  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
+  f.page.closeTabMenu(); assert.equal(f.page.data.tabMenuKey, '');
   f.page.openMenu();
   f.page.onHide();
   assert.equal(f.bar.menuOpen, false);
   await f.page.onShow();
   f.page.openMenu(); f.page.onUnload();
   assert.equal(f.bar.menuOpen, false);
+});
+
+test('往返切换同一帧提交板块和蓝条位置，保留已有动态及各板块筛选', async () => {
+  const feed = { items: [{ _id: 'retained', content: '已有动态', author: { nickname: '同学' } }], hasMore: false, nextOffset: 1 };
+  const f = fixture({ cachedFeed: feed, list: () => feed }); f.page.onLoad();
+  const changes = [], setData = f.page.setData.bind(f.page);
+  f.page.setData = value => { if ('activeTab' in value) changes.push(value); setData(value); };
+  const original = f.page.tabIndicatorState('square');
+  f.page.data.tabFilters.campus = 'following';
+  for (const key of ['campus', 'square', 'campus', 'square']) {
+    f.page.selectTab({ currentTarget: { dataset: { key } } });
+    const state = changes.at(-1);
+    assert.equal(state.activeTab, key);
+    assert.equal(state.tabIndicatorLeft, f.page.tabIndicatorState(key).tabIndicatorLeft);
+    assert.equal(state.tabIndicatorWidth, f.page.tabIndicatorState(key).tabIndicatorWidth);
+    assert.equal(f.page.data.posts[0]._id, 'retained');
+    assert.equal(f.page.data.tabFilters.campus, 'following');
+  }
+  assert.equal(f.page.data.tabIndicatorLeft, original.tabIndicatorLeft);
+  assert.equal(f.page.data.tabIndicatorWidth, original.tabIndicatorWidth);
+  assert.equal(changes.length, 4);
+  await Promise.resolve();
+});
+
+test('蓝条按文字与箭头实际位置测量，异步测量使用当前标签且忽略过期页面', () => {
+  const f = fixture(); f.page.onLoad();
+  const reads = [];
+  f.page.createSelectorQuery = () => {
+    const query = { select: () => query, selectAll: () => query, boundingClientRect: () => query, exec: callback => reads.push(callback) };
+    return query;
+  };
+  f.page.measureHomeTabs(); f.page.measureHomeTabs();
+  const rects = [{ left: 12 }, [{ left: 58, width: 82 }, { left: 248, width: 66 }]];
+  reads[0](rects); assert.equal(f.page.data.tabIndicatorLeft, 43.75);
+  f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
+  reads[1](rects);
+  assert.equal(f.page.data.tabIndicatorLeft, 233); assert.equal(f.page.data.tabIndicatorWidth, 69);
+  f.page.onResize({ size: { windowWidth: 430 } });
+  assert.ok(Math.abs(f.page.data.tabIndicatorWidth - 138 * 430 / 750) < .001);
+  const before = f.page.data.tabIndicatorLeft;
+  f.page.onHide(); reads[2](rects);
+  assert.equal(f.page.data.tabIndicatorLeft, before);
 });
 
 test('认证入口连接原有认证页，未登录头像先弹登录，其他菜单保持占位', async () => {
@@ -145,6 +277,23 @@ test('菜单头像与个人资料直接跳转，离开过程保持展开，返�
   assert.deepEqual(f.routes, ['/pages/profile/index', '/pages/profile/index']);
   assert.equal(f.page.data.menuOpen, true);
   assert.equal(f.bar.menuOpen, true);
+});
+
+test('认证页覆盖首页期间可预先恢复菜单与底栏，保留头像且不额外联网或跳页', async () => {
+  const f = fixture({ cachedUser: user }); await f.page.onShow();
+  f.page.onHomeAvatarLoad({ currentTarget: { dataset: { source: user.avatarFileID } } });
+  f.page.openMenu();
+  f.page.selectMenuItem({ currentTarget: { dataset: { key: 'certification' } } });
+  f.page.onHide(); assert.equal(f.page.data.menuOpen, true);
+  const reads = f.feedRequests.length;
+  f.page.prepareMenuReturn();
+  assert.equal(f.page._visible, false);
+  assert.equal(f.page.data.menuOpen, false); assert.equal(f.page.data.menuInstant, true);
+  assert.equal(f.bar.menuOpen, false); assert.equal(f.bar.menuInstant, true);
+  assert.equal(f.page.data.homeAvatarReady, true);
+  assert.equal(f.page.data.homeAvatarSource, user.avatarFileID);
+  assert.equal(f.feedRequests.length, reads);
+  assert.deepEqual(f.routes, ['/pages/certification/index']);
 });
 
 test('菜单跳转期间阻止重复跳转和收起；跳转失败保留菜单并允许重试', async () => {
@@ -393,13 +542,41 @@ test('评论面板打开时隐藏底栏，关闭、离开及重新进入首页�
   f.page.syncNavigation(); assert.equal(f.bar.commentsOpen, false);
 });
 
-test('分享打开首页展示对应动态，没有详情路由；失效链接不留下不可见内容', async () => {
-  const shared = { _id: 'p_' + 'a'.repeat(40), content: '分享的长文'.repeat(100), author: { nickname: '分享者' } };
-  const f = fixture({ sharedPost: shared }); f.page.onLoad({ postId: shared._id });
-  assert.equal(f.page.data.posts[0]._id, shared._id); assert.equal(f.page.data.posts[0].truncated, true);
-  await f.page.loadSharedPost(); assert.equal(f.routes.length, 0);
-  assert.equal(f.page.data.posts[0].fullContent, shared.content);
-  const g = fixture({ sharedRead: () => { throw Object.assign(new Error('动态已删除'), { code: 'POST_NOT_FOUND' }); } });
-  g.page.onLoad({ postId: shared._id }); await g.page.loadSharedPost();
-  assert.equal(g.page._sharedPostId, ''); assert.equal(g.page.data.posts.length, 0); assert.deepEqual(g.toasts, ['动态已删除']);
+test('旧分享参数不再插入指定动态，首页正常显示广场列表', () => {
+  const normal = { _id: 'normal', content: '正常广场动态', author: { nickname: '同学' } };
+  const f = fixture({ cachedFeed: { items: [normal], hasMore: false, nextOffset: 1 } });
+  f.page.onLoad({ postId: 'p_' + 'a'.repeat(40) });
+  assert.equal(f.page.data.posts.length, 1); assert.equal(f.page.data.posts[0]._id, normal._id);
+  assert.equal(f.page.loadSharedPost, undefined); assert.equal(f.page.onShareAppMessage, undefined);
+});
+
+test('首页发布在原位打开面板，不跳转路由；取消后恢复操作并保留原列表', () => {
+  const normal = { _id: 'normal', content: '原列表内容', author: { nickname: '同学' } };
+  const f = fixture({ cachedUser: user, cachedFeed: { items: [normal], hasMore: false, nextOffset: 1 } });
+  f.page.onLoad(); f.page.openComposer();
+  assert.equal(f.page.data.composerOpen, true); assert.equal(f.routes.length, 0);
+  assert.equal(f.bar.composerOpen, true);
+  assert.equal(f.page.interactionBlocked(), true);
+  f.page.openMenu(); assert.equal(f.page.data.menuOpen, false);
+  f.page.openComposer(); assert.equal(f.routes.length, 0);
+  f.page.closeComposer({ detail: { published: false } });
+  assert.equal(f.page.data.composerOpen, false); assert.equal(f.page.interactionBlocked(), false);
+  assert.equal(f.bar.composerOpen, false);
+  assert.equal(f.page.data.posts[0]._id, normal._id); assert.equal(f.feedRequests.length, 0);
+});
+
+test('首页发布面板保留后台草稿时释放底栏标记，返回后恢复遮挡状态', async () => {
+  const f = fixture({ cachedUser: user }); f.page.onLoad(); f.page.openComposer();
+  assert.equal(f.bar.composerOpen, true);
+  f.page.onHide(); assert.equal(f.bar.composerOpen, false);
+  assert.equal(f.page.data.composerOpen, true);
+  await f.page.onShow(); assert.equal(f.bar.composerOpen, true);
+  f.page.closeComposer({ detail: { published: false } }); assert.equal(f.bar.composerOpen, false);
+});
+
+test('发布时账号失效关闭面板，同时清理底栏发布遮挡标记', () => {
+  const f = fixture({ cachedUser: user }); f.page.onLoad(); f.page.openComposer();
+  assert.equal(f.bar.composerOpen, true);
+  f.page.applyUser(null);
+  assert.equal(f.page.data.composerOpen, false); assert.equal(f.bar.composerOpen, false);
 });

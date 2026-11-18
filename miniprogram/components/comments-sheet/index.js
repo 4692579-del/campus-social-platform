@@ -2,9 +2,12 @@ const users = require('../../services/user');
 const square = require('../../services/square');
 const { token } = require('../../utils/post-view');
 const { commentGroups } = require('../../utils/comment-threads');
+const { reactComment: optimisticReaction } = require('../../utils/comment-state');
 
 Component({
-  properties: { postId: String, viewer: Object },
+  options: { multipleSlots: true },
+  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number },
+  observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); } },
   data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0,
     text: '', count: 0, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
     viewportHeight: 812, sheetTop: 260, expanded: false, dragging: false,
@@ -12,13 +15,17 @@ Component({
   lifetimes: {
     attached() {
       this._epoch = 0;
-      this._roots = []; this._threads = new Map(); this._commentBusy = new Set();
+      this._roots = []; this._threads = new Map(); this._commentClicks = new Map();
+      const version = users.getSessionVersion();
+      if (typeof square.subscribeComment === 'function') this._stopComments = square.subscribeComment(row => {
+        if (this.valid(0, version)) this.applyCommentRow(row);
+      });
       this.measureSheet();
       const cached = square.cachedReplies(this.data.postId);
       if (cached) this.showReplies(cached);
       return this.load();
     },
-    detached() { this._dead = true; this._drag = null; this._epoch = (this._epoch || 0) + 1; },
+    detached() { this._dead = true; this._drag = null; this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); },
   },
   pageLifetimes: { resize() { this.measureSheet(); } },
   methods: {
@@ -33,13 +40,14 @@ Component({
         if (capsule && capsule.height > 0 && capsule.top >= (info.statusBarHeight || 0)) capsuleBottom = capsule.top + capsule.height;
       } catch (error) { /* 不支持布局 API 的客户端使用默认安全位置。 */ }
       this._windowHeight = height;
-      const compact = Math.round(height * .32);
-      this._sheetStops = { compact, expanded: Math.min(compact, capsuleBottom + 12) };
+      const compact = this.data.embedded ? this.data.topOffset : Math.round(height * .32);
+      this._sheetStops = { compact, expanded: this.data.embedded ? compact : Math.min(compact, capsuleBottom + 12) };
       this._drag = null;
       const sheetTop = this.data.expanded ? this._sheetStops.expanded : compact;
       this.setData({ viewportHeight: height, sheetTop, dragging: false, keyboardTop: this.keyboardTop(sheetTop, this.data.keyboardHeight) });
     },
     keyboardTop(top, height) {
+      if (this.data.embedded) return this.data.topOffset;
       return Math.min(top, Math.max(this._sheetStops.expanded, this._windowHeight - height - 220));
     },
     touchY(event) {
@@ -48,7 +56,7 @@ Component({
     },
     dragStart(event) {
       const y = this.touchY(event);
-      if (this._dead || typeof y !== 'number' || !this._sheetStops) return;
+      if (this.data.embedded || this._dead || typeof y !== 'number' || !this._sheetStops) return;
       if (this.data.keyboardHeight && typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this._drag = { y, top: this.data.sheetTop, expanded: this.data.expanded };
       this.setData({ dragging: true, keyboardHeight: 0 });
@@ -75,18 +83,54 @@ Component({
       this._drag = null;
       this.setData({ expanded, sheetTop: this._sheetStops[expanded ? 'expanded' : 'compact'], dragging: false });
     },
+    toggleExpanded() {
+      if (this.data.embedded || this._dead || !this._sheetStops) return;
+      this._drag = null;
+      const expanded = !this.data.expanded;
+      const sheetTop = this._sheetStops[expanded ? 'expanded' : 'compact'];
+      this.setData({ expanded, sheetTop, dragging: false, keyboardTop: this.keyboardTop(sheetTop, this.data.keyboardHeight) });
+    },
     close() {
       if (this.data.sending) return;
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this.triggerEvent('close');
     },
     login() { this.triggerEvent('login'); },
+    focusComposer() {
+      if (!users.getCachedUser()) { this.login(); return; }
+      this.cancelReply();
+      this.setData({ inputFocused: true });
+    },
     valid(epoch, version) { return !this._dead && this._epoch === epoch && users.getSessionVersion() === version; },
-    renderComments() { this.setData({ items: commentGroups(this._roots, this._threads) }); },
+    renderComments() {
+      let roots = this._roots, threads = this._threads;
+      const pending = this._pendingReply;
+      if (pending) {
+        if (!pending.rootId) roots = [...roots, pending];
+        else {
+          roots = roots.map(row => row._id === pending.rootId ? { ...row, replyCount: (row.replyCount || 0) + 1 } : row);
+          threads = new Map(threads);
+          const thread = threads.get(pending.rootId) || { items: [], fresh: new Set(), open: false };
+          threads.set(pending.rootId, { ...thread, items: [...thread.items, pending], fresh: new Set([...thread.fresh, pending._id]) });
+        }
+      }
+      const items = commentGroups(roots, threads), values = {};
+      if (items.length !== this.data.items.length || items.some((row, index) => row._id !== this.data.items[index]._id)) values.items = items;
+      else for (let index = 0; index < items.length; index++) if (JSON.stringify(items[index]) !== JSON.stringify(this.data.items[index])) values[`items[${index}]`] = items[index];
+      if (Object.keys(values).length) this.setData(values);
+    },
+    applyCommentRow(row) {
+      let found = false;
+      const replace = item => { if (item._id !== row._id) return item; found = true; return row; };
+      this._roots = this._roots.map(replace);
+      for (const thread of this._threads.values()) thread.items = thread.items.map(replace);
+      if (found) this.renderComments();
+    },
     showReplies(result) {
       this._roots = result.items;
       this.setData({ hasMore: result.hasMore, nextOffset: result.nextOffset });
       this.renderComments();
+      if (typeof square.warmReplyChildren === 'function') square.warmReplyChildren(this.data.postId, result.items);
     },
     thread(id) {
       if (!this._threads.has(id)) {
@@ -114,6 +158,7 @@ Component({
       this._requestId = token();
       this.setData({ replyTarget: null });
     },
+    focusInput() { this.setData({ inputFocused: true }); },
     blurInput() { this.setData({ inputFocused: false }); },
     toggleThread(event) {
       const id = event.currentTarget.dataset.id, root = this.findComment(id);
@@ -134,7 +179,7 @@ Component({
       const thread = this.thread(id);
       if (thread.loading || this._dead) return;
       const epoch = this._epoch, version = users.getSessionVersion();
-      thread.loading = true; thread.error = ''; this.renderComments();
+      thread.loading = append || !thread.items.length; thread.error = ''; this.renderComments();
       try {
         const result = await square.listChildren(this.data.postId, id, { offset: append ? thread.nextOffset : 0, force });
         if (!this.valid(epoch, version)) return;
@@ -153,14 +198,21 @@ Component({
       if (!users.getCachedUser()) { this.login(); return; }
       const { id, kind } = event.currentTarget.dataset;
       const row = this.findComment(id);
-      if (!row || this._commentBusy.has(id)) return;
+      if (!row || !['like', 'fold'].includes(kind)) return;
       const epoch = this._epoch, version = users.getSessionVersion();
-      this._commentBusy.add(id);
+      let operation = this._commentClicks.get(id);
+      if (!operation) { operation = { confirmed: row, sequence: 0 }; this._commentClicks.set(id, operation); }
+      const sequence = ++operation.sequence;
+      const latestClick = () => this._commentClicks.get(id) === operation && operation.sequence === sequence;
+      const active = kind === 'like' ? Boolean(row.folded || !row.liked) : !row.folded;
+      this.applyCommentRow(optimisticReaction(row, kind, active));
       try {
-        const latest = await square.commentState(this.data.postId, id, kind, !(kind === 'like' ? row.liked : row.folded));
+        const result = await square.commentState(this.data.postId, id, kind, active, row);
         if (!this.valid(epoch, version)) return;
-        this._roots = this._roots.map(item => item._id === id ? latest : item);
-        for (const thread of this._threads.values()) thread.items = thread.items.map(item => item._id === id ? latest : item);
+        if (this._commentClicks.get(id) === operation) operation.confirmed = result;
+        if (!latestClick()) return;
+        const latest = typeof square.cachedComment === 'function' ? square.cachedComment(id) || result : result;
+        this.applyCommentRow(latest);
         if (latest.folded && this.data.replyTarget) {
           const target = this.findComment(this.data.replyTarget.id);
           if (target && (target._id === id || (target.ancestorIds || []).includes(id))) {
@@ -168,11 +220,15 @@ Component({
             if (!this.data.sending) this.cancelReply();
           }
         }
-        this.renderComments();
       } catch (error) {
-        if (this.valid(epoch, version)) wx.showToast({ title: error.message || '操作失败，请重试', icon: 'none' });
+        if (!latestClick()) return;
+        if (this.valid(epoch, version)) {
+          const confirmed = typeof square.cachedComment === 'function' ? square.cachedComment(id) || operation.confirmed : operation.confirmed;
+          this.applyCommentRow(confirmed);
+          wx.showToast({ title: error.message || '操作失败，请重试', icon: 'none' });
+        }
         else if (!this._dead && this._epoch === epoch) this.triggerEvent(users.getCachedUser() ? 'close' : 'login');
-      } finally { this._commentBusy.delete(id); }
+      } finally { if (latestClick()) this._commentClicks.delete(id); }
     },
     async load(append = false, force = false) {
       if (this._loading || this._dead) return;
@@ -211,11 +267,20 @@ Component({
       if (!users.getCachedUser()) { this.login(); return; }
       const epoch = this._epoch, version = users.getSessionVersion();
       this._requestId = this._requestId || token();
-      this.setData({ sending: true, sendError: '' });
+      const original = { text: this.data.text, count: this.data.count, target: this.data.replyTarget };
+      const viewer = users.getCachedUser(), targetRow = original.target && this.findComment(original.target.id);
+      this._pendingReply = { _id: `pending_${this._requestId}`, content: original.text, pending: true, createdAt: new Date().toISOString(),
+        author: { nickname: viewer.nickname || '', avatarFileID: viewer.avatarFileID || '', accountId: viewer.accountId || '',
+          verified: viewer.role === 'student' && viewer.certificationStatus === 'approved' && Boolean(viewer.schoolId) },
+        ...(original.target ? { rootId: original.target.rootId, replyToId: original.target.id, replyToName: original.target.nickname,
+          ancestorIds: targetRow ? [...(targetRow.ancestorIds || []), targetRow._id] : [] } : {}) };
+      this.setData({ sending: true, sendError: '', text: '', count: 0, canSend: false, scrollIntoView: `comment-${this._pendingReply._id}` });
+      this.renderComments();
       try {
-        const target = this.data.replyTarget;
-        const result = await square.reply(this.data.postId, this.data.text, this._requestId, target && target.id);
+        const target = original.target;
+        const result = await square.reply(this.data.postId, original.text, this._requestId, target && target.id);
         if (!this.valid(epoch, version)) return;
+        this._pendingReply = null;
         if (target) {
           if (result.root) this._roots = this._roots.map(row => row._id === result.root._id ? result.root : row);
           const thread = this.thread(target.rootId);
@@ -229,7 +294,10 @@ Component({
         wx.showToast({ title: '评论已发布' });
       } catch (error) {
         if (this.valid(epoch, version)) {
-          this.setData({ sendError: error.message || '评论发布失败，请重试' });
+          this._pendingReply = null;
+          this.renderComments();
+          this.setData({ text: original.text, count: original.count, canSend: Boolean(original.text.trim()) && original.count <= 300, replyTarget: original.target,
+            sendError: error.message || '评论发布失败，请重试' });
         } else if (!this._dead && this._epoch === epoch) {
           if (!users.getCachedUser()) this.login();
           else this.triggerEvent('close');

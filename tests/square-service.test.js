@@ -12,7 +12,7 @@ const reaction = (f, id, active = true, kind = 'like', identity = f.alice) =>
 
 test('真实云函数入口兼容微信自动附带的userInfo，发帖回复仍使用可信上下文身份', async () => {
   const f = fixture(); const alice = await f.login(); await f.login(f.bob);
-  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : {
+  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
     init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
     openapi: { security: { msgSecCheck: async () => ({ result: { suggest: 'pass' } }) } },
   } };
@@ -75,6 +75,36 @@ test('并发及重试发布只产生一条动态，相同提交标识不得更�
   assert.equal((await publish(f, '重试中换掉内容')).code, 'REQUEST_CONFLICT');
 });
 
+test('内容声明严格校验并真实保存，重试不能更换声明；广场、本人列表和详情读取一致', async () => {
+  const f = fixture(); await f.login();
+  for (const declaration of ['ai', 'opinion', 'repost', 'fiction', 'marketing', 'none']) {
+    const post = { scope: 'square', content: '声明不混进正文', requestId: `declaration-${declaration}-request001`, declaration };
+    const first = await f.handle({ action: 'publishSquarePost', post }, f.alice);
+    assert.equal(first.success, true, first.message);
+    const id = first.square.post._id;
+    assert.equal(f.squarePosts.get(id).declaration, declaration); assert.equal(f.squarePosts.get(id).content, post.content);
+    const retry = await f.handle({ action: 'publishSquarePost', post }, f.alice);
+    assert.equal(retry.square.post._id, id);
+    const conflict = await f.handle({ action: 'publishSquarePost', post: { ...post, declaration: declaration === 'ai' ? 'none' : 'ai' } }, f.alice);
+    assert.equal(conflict.code, 'REQUEST_CONFLICT');
+    for (const args of [{ action: 'listSquarePosts' }, { action: 'listSquarePosts', mine: true }, { action: 'getSquarePost', postId: id }]) {
+      const result = await f.handle(args, f.alice);
+      const row = result.square.post || result.square.items.find(row => row._id === id);
+      assert.equal(row.declaration, declaration);
+    }
+  }
+  for (const declaration of [null, 1, {}, [], 'other', '内容由AI生成']) {
+    const result = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '拒绝伪造', requestId: 'declaration-invalid001', declaration } }, f.alice);
+    assert.equal(result.code, 'INVALID_POST');
+  }
+  const legacy = await publish(f);
+  delete f.squarePosts.get(legacy.square.post._id).declaration;
+  assert.equal((await publish(f)).success, true);
+  assert.equal((await f.handle({ action: 'getSquarePost', postId: legacy.square.post._id }, f.alice)).square.post.declaration, 'none');
+  const reply = await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: legacy.square.post._id, content: '评论没有声明选项', requestId: 'declaration-reply001', declaration: 'ai' } }, f.alice);
+  assert.equal(reply.code, 'INVALID_POST');
+});
+
 test('个人动态从可信账号筛选、按时间分页，隐藏内容及其他作者不会混入', async () => {
   const f = fixture(); const alice = await f.login(); await f.login(f.bob);
   for (let i = 0; i < 23; i++) {
@@ -87,6 +117,7 @@ test('个人动态从可信账号筛选、按时间分页，隐藏内容及其�
   const first = await f.handle({ action: 'listSquarePosts', mine: true, authorId: 'bob', userId: 'bob' }, f.alice);
   assert.equal(first.success, true); assert.equal(first.square.mine, true);
   assert.equal(first.square.items.length, 20); assert.equal(first.square.hasMore, true);
+  assert.equal(first.square.total, 21);
   assert.equal(first.square.items[0].content, '本人动态20');
   assert.ok(first.square.items.every(post => post.author.accountId === alice.accountId));
   const second = await f.handle({ action: 'listSquarePosts', mine: true, offset: first.square.nextOffset }, f.alice);
@@ -109,7 +140,7 @@ test('内容长度、文字校验拒绝和服务异常均不写入动态', async
   assert.equal(failed.squarePosts.size, 0);
 });
 
-test('点赞和转发采用目标状态，重复和并发请求不会虚增计数，可取消', async () => {
+test('点赞采用目标状态，重复和并发请求不会虚增计数，可取消', async () => {
   const f = fixture(); await f.login();
   const id = (await publish(f)).square.post._id;
   const results = await Promise.all(Array.from({ length: 5 }, () => reaction(f, id)));
@@ -119,14 +150,24 @@ test('点赞和转发采用目标状态，重复和并发请求不会虚增计�
   assert.equal((await reaction(f, id, false)).square.post.likeCount, 0);
   await f.login(f.bob);
   await reaction(f, id, true, 'like', f.bob);
-  const repost = await reaction(f, id, true, 'repost');
-  assert.equal(repost.square.post.repostCount, 1);
-  assert.equal(repost.square.post.reposted, true);
-  assert.equal((await reaction(f, id, false, 'repost')).square.post.repostCount, 0);
   const guest = await f.handle({ action: 'getSquarePost', postId: id }, f.bob);
   assert.equal(guest.square.post.liked, false);
   const signedIn = await f.handle({ action: 'getSquarePost', postId: id, personalize: true }, f.bob);
   assert.equal(signedIn.square.post.liked, true);
+});
+
+test('转发接口已禁用，历史计数不再展示或被修改，点赞不受影响', async () => {
+  const f = fixture(); await f.login();
+  const id = (await publish(f)).square.post._id;
+  f.squarePosts.get(id).repostCount = 3;
+  assert.equal((await reaction(f, id, true, 'repost')).code, 'INVALID_POST');
+  assert.equal((await reaction(f, id, false, 'repost')).code, 'INVALID_POST');
+  assert.equal(f.squareInteractions.size, 0);
+  assert.equal(f.squarePosts.get(id).repostCount, 3);
+  const liked = await reaction(f, id);
+  assert.equal(liked.square.post.likeCount, 1);
+  assert.equal(liked.square.post.repostCount, 0);
+  assert.equal(liked.square.post.reposted, false);
 });
 
 test('回复与计数同时提交、重试不重复；失败事务不留下半条回复或错误数量', async () => {
@@ -196,22 +237,14 @@ test('举报真实保存待处理原因和内容，同人重复提交不重复�
   assert.equal((await f.handle({ action: 'reportSquarePost', postId: id, reason: 'other' }, f.bob)).code, 'POST_NOT_FOUND');
 });
 
-test('分享发起次数来自事务记录，同一请求重试不增加，独立请求累加，失败回滚', async () => {
+test('动态分享接口已移除，不再创建分享记录或返回分享计数', async () => {
   const f = fixture(); await f.login();
   const id = (await publish(f)).square.post._id;
-  assert.equal((await f.handle({ action: 'getSquarePost', postId: id }, f.alice)).square.post.shareCount, 0);
-  const input = { action: 'recordSquareShare', postId: id, requestId: 'share-request-000001', shareCount: 99 };
-  const results = await Promise.all(Array.from({ length: 4 }, () => f.handle(input, f.alice)));
-  assert.ok(results.every(result => result.success)); assert.equal(f.squarePosts.get(id).shareCount, 1);
-  assert.equal(f.squareInteractions.size, 1);
-  assert.equal((await f.handle({ ...input, requestId: 'share-request-000002' }, f.alice)).square.post.shareCount, 2);
-  assert.equal((await f.handle(input, { openid: 'guest', env: 'test' })).code, 'NOT_REGISTERED');
-  await f.handle({ action: 'deleteSquarePost', postId: id }, f.alice);
-  assert.equal((await f.handle({ ...input, requestId: 'share-after-delete01' }, f.alice)).code, 'POST_NOT_FOUND');
-  const failed = fixture({ failCollection: 'square_interactions' }); await failed.login();
-  const failedId = (await publish(failed)).square.post._id;
-  assert.equal((await failed.handle({ ...input, postId: failedId }, failed.alice)).success, false);
-  assert.equal(failed.squarePosts.get(failedId).shareCount, 0); assert.equal(failed.squareInteractions.size, 0);
+  assert.equal((await f.handle({ action: 'recordSquareShare', postId: id, requestId: 'removed-share-00001' }, f.alice)).code, 'INVALID_ACTION');
+  assert.equal(f.squareInteractions.size, 0);
+  assert.equal(f.squarePosts.get(id).shareCount, undefined);
+  f.squarePosts.get(id).shareCount = 7;
+  assert.equal((await f.handle({ action: 'getSquarePost', postId: id }, f.alice)).square.post.shareCount, undefined);
 });
 
 test('删除和举报遇到账号失效或写入失败不提示成功、不留下部分更改', async () => {

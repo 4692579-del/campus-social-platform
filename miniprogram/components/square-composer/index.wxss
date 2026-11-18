@@ -1,0 +1,78 @@
+@import "../../styles/login-sheet.wxss";
+:host { display: block; }
+button::after { border: 0; }
+.composer-layer { position: fixed; z-index: 2700; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
+.composer-backdrop, .settings-backdrop { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: rgba(15, 23, 37, .32); animation: compose-fade .26s ease both; }
+.compose-sheet { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; min-height: 0; border-radius: 38rpx 38rpx 0 0; background: #fff; overflow: hidden; box-shadow: 0 -8rpx 40rpx rgba(15, 23, 37, .06); animation: compose-rise .26s cubic-bezier(.22, .68, .2, 1) both; }
+.is-closing .compose-sheet { animation: compose-fall .26s cubic-bezier(.4, 0, .78, .32) both; }
+.is-closing .composer-backdrop { animation: compose-fade-out .26s ease both; }
+.compose-header { position: relative; display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; height: 112rpx; padding: 8rpx 28rpx 0; border-bottom: 1rpx solid #edf0f3; box-sizing: border-box; }
+.compose-header .compose-cancel { width: 88rpx; min-width: 0; margin: 0; padding: 0; background: transparent; color: #30373e; font-size: 29rpx; line-height: 76rpx; text-align: left; }
+.compose-title { position: absolute; left: 210rpx; right: 210rpx; text-align: center; font-size: 32rpx; font-weight: 700; pointer-events: none; }
+.compose-capsule { display: flex; align-items: center; flex: 0 0 auto; height: 68rpx; border: 1rpx solid #e1e4e8; border-radius: 40rpx; background: #fafbfc; }
+.compose-capsule button { display: flex; align-items: center; justify-content: center; width: 76rpx; min-width: 0; height: 68rpx; margin: 0; padding: 0; background: transparent; border-radius: 40rpx; }
+.compose-capsule image { width: 34rpx; height: 34rpx; }
+.compose-capsule button[disabled] { opacity: .4; }
+.capsule-divider { width: 1rpx; height: 30rpx; background: #e1e4e8; }
+.compose-body { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; padding: 30rpx 28rpx 0; }
+.compose-author { position: relative; display: flex; flex: 0 0 auto; align-items: flex-start; min-height: 80rpx; }
+.compose-avatar { display: block; flex-shrink: 0; width: 72rpx; height: 72rpx; border-radius: 50%; background: #f0f2f4; }
+.compose-destination { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10rpx; min-height: 42rpx; margin-left: 20rpx; }
+.compose-nickname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 29rpx; font-weight: 700; }
+.compose-destination image { flex-shrink: 0; width: 22rpx; height: 22rpx; }
+.compose-scope { flex-shrink: 0; color: #8d949d; font-size: 27rpx; }
+.compose-editor { position: relative; flex: 1 1 0; min-height: 0; margin: -28rpx 0 0 92rpx; padding-top: 6rpx; }
+.compose-editor textarea { display: block; width: 100%; height: 100%; min-height: 0; padding: 0; box-sizing: border-box; color: #171b20; font-size: 31rpx; line-height: 1.7; }
+.compose-editor-preview { display: block; height: 100%; overflow: hidden; font-size: 31rpx; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.compose-placeholder { color: #a1a7af; }
+.compose-footer { flex: 0 0 auto; background: #fff; }
+.compose-tools { display: flex; align-items: center; gap: 18rpx; min-height: 84rpx; padding: 6rpx 28rpx 20rpx; }
+.compose-tools-divider { flex: 0 0 1rpx; width: 1rpx; height: 30rpx; margin: 0 4rpx; background: #d8dde3; }
+.compose-media { display: flex; align-items: center; flex-shrink: 0; gap: 24rpx; }
+.compose-media > view { display: flex; align-items: center; justify-content: center; width: 52rpx; height: 76rpx; }
+.compose-media .choose-image-button { display: flex; align-items: center; justify-content: center; width: 52rpx; min-width: 0; height: 76rpx; margin: 0; padding: 0; background: transparent; }
+.choose-image-button[disabled] { opacity: .45; }
+.compose-selected-images { flex: 0 0 170rpx; width: auto; height: 170rpx; margin-left: 92rpx; }
+.selected-image-strip { display: flex; gap: 14rpx; width: max-content; padding: 10rpx 4rpx 14rpx 0; }
+.selected-image { position: relative; flex-shrink: 0; width: 138rpx; height: 138rpx; }
+.selected-image > image { display: block; width: 100%; height: 100%; border-radius: 16rpx; background: #edf0f3; }
+.selected-image .remove-image { position: absolute; top: 5rpx; right: 5rpx; display: flex; align-items: center; justify-content: center; width: 40rpx; min-width: 0; height: 40rpx; margin: 0; padding: 0; border-radius: 50%; background: rgba(255, 255, 255, .94); }
+.remove-image image { width: 22rpx; height: 22rpx; }
+.compose-upload-status { padding: 10rpx 28rpx; color: #87919c; font-size: 24rpx; }
+.compose-media image, .post-options image { flex-shrink: 0; width: 48rpx; height: 48rpx; }
+.compose-tools .post-options { display: flex; align-items: center; flex-shrink: 0; gap: 8rpx; width: auto; min-width: 0; height: 76rpx; margin: 0; padding: 0; background: transparent; color: #687580; font-size: 28rpx; line-height: 1; }
+.compose-submit { display: flex; align-items: center; flex-shrink: 0; gap: 20rpx; margin-left: auto; }
+.compose-progress { display: flex; align-items: center; justify-content: center; flex: 0 0 34rpx; width: 34rpx; height: 34rpx; border-radius: 50%; background-color: #dce0e5; }
+.compose-progress > view { width: 26rpx; height: 26rpx; border-radius: 50%; background: #fff; }
+.compose-tools .publish-button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 116rpx; min-width: 0; height: 72rpx; margin: 0; padding: 0; background: #4775fa; color: #fff; font-size: 28rpx; font-weight: 600; border-radius: 40rpx; line-height: 1; }
+.publish-button[disabled] { background: #edf0f5; color: #a3abb6; }
+.compose-error { margin: 12rpx 28rpx; padding: 14rpx 20rpx; border-radius: 14rpx; background: #fff4f1; color: #a44130; font-size: 24rpx; line-height: 1.5; }
+.compose-settings-layer { position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; left: 0; }
+.compose-settings { position: absolute; left: 12rpx; right: 12rpx; bottom: 0; display: flex; flex-direction: column; padding: 0 28rpx; border-radius: 38rpx 38rpx 0 0; box-sizing: border-box; background: #f3f5f7; overflow: hidden; animation: compose-rise .24s cubic-bezier(.22, .68, .2, 1) both; }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; min-height: 96rpx; font-size: 31rpx; font-weight: 700; }
+.settings-heading button { display: flex; align-items: center; justify-content: center; width: 52rpx; min-width: 0; height: 52rpx; margin: 0; padding: 0; border-radius: 50%; background: #e9ecf0; }
+.settings-heading image { width: 26rpx; height: 26rpx; }
+.settings-scroll { flex: 1 1 0; height: 0; min-height: 0; overflow: hidden; }
+.settings-caption { margin: 0 0 18rpx; color: #8d949d; font-size: 25rpx; }
+.settings-card { margin-bottom: 22rpx; border-radius: 26rpx; background: #fff; overflow: hidden; }
+.settings-card .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; width: 100%; min-width: 0; min-height: 92rpx; margin: 0; padding: 22rpx 26rpx; box-sizing: border-box; background: #fff; border-bottom: 1rpx solid #edf0f3; color: #30373e; font-size: 28rpx; line-height: 1.5; text-align: left; }
+.settings-card .settings-row:last-child { border-bottom: 0; }
+.settings-radio { display: flex; align-items: center; justify-content: center; flex: 0 0 34rpx; width: 34rpx; height: 34rpx; box-sizing: border-box; border: 3rpx solid #c5cbd2; border-radius: 50%; }
+.settings-radio.is-selected { border-color: #4775fa; }
+.settings-radio.is-selected > view { width: 20rpx; height: 20rpx; border-radius: 50%; background: #4775fa; }
+.settings-actions { flex-shrink: 0; padding: 10rpx 0 calc(24rpx + env(safe-area-inset-bottom)); }
+.settings-actions .settings-done { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 84rpx; margin: 0; padding: 0; border-radius: 22rpx; background: #4775fa; color: #fff; font-size: 29rpx; font-weight: 600; line-height: 1; }
+.compose-exit-layer { position: absolute; z-index: 30; inset: 0; display: flex; align-items: center; justify-content: center; padding: 32rpx 0 calc(32rpx + env(safe-area-inset-bottom)); box-sizing: border-box; }
+.compose-exit-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .28); animation: compose-fade .18s ease both; }
+.compose-exit-dialog { position: relative; width: 550rpx; max-width: calc(100% - 96rpx); padding: 26rpx; box-sizing: border-box; border: 1rpx solid rgba(255, 255, 255, .95); border-radius: 62rpx; background: #f0f0f1; box-shadow: 0 16rpx 60rpx rgba(0, 0, 0, .16); animation: compose-exit-in .2s ease both; }
+.compose-exit-dialog button { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 82rpx; margin: 0 0 14rpx; padding: 0; border-radius: 48rpx; background: #dedee0; color: #171b20; font-size: 30rpx; font-weight: 600; line-height: 1; }
+.compose-exit-dialog button:last-child { margin-bottom: 0; }
+.compose-exit-dialog .exit-save { background: #4775fa; color: #fff; }
+.compose-exit-dialog .exit-discard { color: #e44646; }
+.compose-exit-dialog button[disabled] { opacity: .55; }
+.compose-exit-error { padding: 0 10rpx 18rpx; color: #a44130; font-size: 24rpx; line-height: 1.5; text-align: center; }
+@keyframes compose-exit-in { from { opacity: 0; transform: translateY(16rpx) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes compose-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes compose-fall { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@keyframes compose-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes compose-fade-out { from { opacity: 1; } to { opacity: 0; } }

@@ -17,6 +17,62 @@ async function setup(options) {
   return { f, postId, rootId, alice, bob };
 }
 
+test('SDK直接返回事务回调值时，评论点赞和心碎仍正确返回已保存状态', async () => {
+  const { f, postId, rootId } = await setup(); f.hooks.transactionResult = 'direct';
+  const liked = await state(f, postId, rootId, 'like', true);
+  assert.equal(liked.success, true, liked.message); assert.equal(liked.square.reply.liked, true); assert.equal(liked.square.reply.likeCount, 1);
+  const folded = await state(f, postId, rootId, 'fold', true);
+  assert.equal(folded.success, true, folded.message); assert.equal(folded.square.reply.folded, true);
+});
+
+test('事务内逐条读取兼容旧SDK，点赞与一级及楼中回复均能完成，回滚仍原子', async () => {
+  const { f, postId, rootId } = await setup(); f.hooks.serialTransactionReads = true;
+  const liked = await state(f, postId, rootId, 'like', true);
+  assert.equal(liked.success, true, liked.message);
+  const first = await reply(f, postId); assert.equal(first.success, true, first.message);
+  const child = await reply(f, postId, rootId); assert.equal(child.success, true, child.message);
+  assert.equal(f.squareReplies.get(rootId).replyCount, 1);
+  assert.equal(f.squarePosts.get(postId).replyCount, 3);
+});
+
+test('二十条不同作者的评论批量读取资料，权限和认证仍使用当前请求的真实账号', async () => {
+  const { f, postId } = await setup(); f.squareReplies.clear();
+  const authors = [];
+  for (let i = 0; i < 20; i++) {
+    const user = await f.login({ openid: `comment-author-${i}`, env: 'test' }); authors.push(user._id);
+    f.users.get(user._id).nickname = `同学${i}`;
+    f.squareReplies.set(`r_${String(i).padStart(40, '0')}`, { _id: `r_${String(i).padStart(40, '0')}`, postId,
+      content: `内容${i}`, status: 'published', authorId: user._id, sortKey: String(i).padStart(3, '0'), likeCount: i });
+  }
+  f.queries.length = 0; f.docReads.length = 0;
+  const result = await list(f, postId);
+  assert.equal(result.success, true); assert.equal(result.square.items.length, 20);
+  assert.equal(result.square.items[19].author.nickname, '同学19');
+  assert.equal(f.queries.filter(query => query.name === 'users' && query.condition._id.operation === 'in').length, 1);
+  assert.equal(f.queries.filter(query => query.name === 'users').length, 2); // 一次可信身份查询、一次作者批量查询。
+  assert.equal(f.docReads.filter(read => read.name === 'users').length, 0);
+  f.users.get(authors[0]).status = 'banned';
+  assert.equal((await list(f, postId)).square.items[0].author.nickname, '账号暂不可用');
+});
+
+test('评论反应直接返回已提交事务的真实状态，不再串行重读评论和个人状态', async () => {
+  const { f, postId, rootId } = await setup();
+  f.queries.length = 0; f.docReads.length = 0;
+  const response = await state(f, postId, rootId, 'like', true);
+  assert.equal(response.square.reply.liked, true); assert.equal(response.square.reply.likeCount, 1);
+  assert.equal(f.squareReplies.get(rootId).likeCount, 1);
+  assert.equal(f.queries.filter(query => query.name === 'square_comment_states').length, 0);
+  assert.equal(f.docReads.filter(read => !read.inTransaction && ['square_replies', 'square_comment_states'].includes(read.name)).length, 0);
+});
+
+test('回复发送仍等待文字校验和事务确认，校验拒绝不写评论或增加计数', async () => {
+  let permitted = true;
+  const { f, postId, rootId } = await setup({ checkText: async () => permitted }); permitted = false;
+  const result = await reply(f, postId, rootId);
+  assert.equal(result.code, 'CONTENT_REJECTED'); assert.equal(f.squareReplyChildren.size, 0);
+  assert.equal(f.squareReplies.get(rootId).replyCount, 0); assert.equal(f.squarePosts.get(postId).replyCount, 1);
+});
+
 test('旧评论保留为一级评论；回复关系由云端派生，回复他人及楼中楼均归属真实分组', async () => {
   const { f, postId, rootId } = await setup();
   delete f.squareReplies.get(rootId).likeCount; delete f.squareReplies.get(rootId).replyCount;
@@ -89,4 +145,22 @@ test('新版评论集合未建时返回配置错误类别，缓存读取失败�
   const result = await list(f, postId);
   assert.equal(result.code, 'COMMENTS_STORAGE_NOT_READY'); assert.match(result.message, /尚未配置完成/);
   assert.equal(f.squareReplies.size, 1);
+});
+
+test('心碎后点赞同时恢复可见，原已点赞时仅恢复且并发重试不增加计数，根评论与子回复一致', async () => {
+  const { f, postId, rootId } = await setup();
+  const childId = (await reply(f, postId, rootId)).square.reply._id;
+  for (const id of [rootId, childId]) {
+    await state(f, postId, id, 'fold', true);
+    await state(f, postId, id, 'fold', true, f.bob);
+    let restored = (await state(f, postId, id, 'like', true)).square.reply;
+    assert.equal(restored.folded, false); assert.equal(restored.liked, true); assert.equal(restored.likeCount, 1);
+    await state(f, postId, id, 'fold', true);
+    const repeated = await Promise.all(Array.from({ length: 4 }, () => state(f, postId, id, 'like', true)));
+    assert.ok(repeated.every(result => result.square.reply.folded === false && result.square.reply.liked === true));
+    restored = repeated.at(-1).square.reply; assert.equal(restored.likeCount, 1);
+    const bob = (await list(f, postId, f.bob, id === rootId ? undefined : rootId)).square.items.find(row => row._id === id);
+    assert.equal(bob.folded, true); assert.equal(bob.liked, false);
+    assert.equal((await state(f, postId, id, 'like', false)).square.reply.likeCount, 0);
+  }
 });

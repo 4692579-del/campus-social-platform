@@ -29,12 +29,13 @@ test('认证介绍直接使用会话状态，后台刷新不打断已经选择�
 });
 
 function fixture({ signedIn = user(), cachedUser = null, cachedCertification = null, query, save, withdraw, confirm = true, modal,
-  mediaError, largeImage = false, compressionError = false } = {}) {
+  mediaError, largeImage = false, compressionError = false, previousPages = [], deferRender = false } = {}) {
   const submissions = [];
   const toasts = [];
   const selections = [];
   const withdrawals = [], confirmations = [];
-  let definition;
+  let definition, page;
+  const backCalls = [], tabCalls = [], renderTasks = [];
   const service = {
     getCachedUser: () => cachedUser, getCachedCertification: () => cachedCertification,
     restore: async () => signedIn,
@@ -50,6 +51,7 @@ function fixture({ signedIn = user(), cachedUser = null, cachedCertification = n
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/certification/index.js'), 'utf8'), {
     Page: value => { definition = value; }, require: () => service,
+    getCurrentPages: () => [...previousPages, page],
     wx: {
       chooseMedia(options) {
         selections.push(options);
@@ -59,13 +61,40 @@ function fixture({ signedIn = user(), cachedUser = null, cachedCertification = n
       getImageInfo: options => options.success({ type: 'png', width: 1200, height: 800 }),
       compressImage: options => compressionError ? options.fail({ errMsg: 'not supported' }) : options.success({ tempFilePath: '/tmp/compressed.png' }),
       getFileSystemManager: () => ({ readFile: options => options.success({ data: largeImage ? 'A'.repeat(1400000) : 'aW1hZ2U=' }) }),
-      showToast: options => toasts.push(options.title), switchTab() {}, previewImage() {},
+      showToast: options => toasts.push(options.title), switchTab: options => tabCalls.push(options), previewImage() {},
+      navigateBack: options => backCalls.push(options),
+      nextTick: callback => { if (deferRender) renderTasks.push(callback); else callback(); },
       showModal: options => { confirmations.push(options); if (modal) modal(options); else options.success({ confirm }); },
     },
   });
-  const page = { ...definition, data: { ...definition.data }, setData(values) { Object.assign(this.data, values); } };
-  return { page, submissions, toasts, selections, withdrawals, confirmations };
+  page = { ...definition, data: { ...definition.data }, setData(values) { Object.assign(this.data, values); } };
+  return { page, submissions, toasts, selections, withdrawals, confirmations, backCalls, tabCalls, renderTasks };
 }
+
+test('从侧栏认证返回时先恢复被覆盖的首页，提交视图后只执行一次原生返回', async () => {
+  let prepared = 0;
+  const home = { prepareMenuReturn() { prepared++; } };
+  const f = fixture({ cachedUser: user(), previousPages: [home], deferRender: true });
+  await f.page.onLoad();
+  f.page.backStep(); f.page.backStep();
+  assert.equal(prepared, 1);
+  assert.equal(f.backCalls.length, 0); assert.equal(f.renderTasks.length, 1);
+  f.renderTasks.shift()();
+  assert.equal(f.backCalls.length, 1); assert.equal(f.tabCalls.length, 0);
+  f.page.onUnload(); assert.equal(prepared, 1);
+});
+
+test('认证从个人主页进入仍返回个人主页，独立入口不先尝试无效返回，系统卸载也恢复侧栏底页', async () => {
+  const profile = fixture({ previousPages: [{ route: 'pages/profile/index' }] });
+  await profile.page.onLoad(); profile.page.backToProfile();
+  assert.equal(profile.backCalls.length, 1); assert.equal(profile.tabCalls.length, 0);
+  const single = fixture(); await single.page.onLoad(); single.page.backToProfile();
+  assert.equal(single.backCalls.length, 0); assert.equal(single.tabCalls[0].url, '/pages/home/index');
+  let prepared = 0;
+  const nativeBack = fixture({ previousPages: [{ prepareMenuReturn() { prepared++; } }] });
+  await nativeBack.page.onLoad(); nativeBack.page.onUnload();
+  assert.equal(prepared, 1);
+});
 
 async function fill(f) {
   await f.page.loadApplication();

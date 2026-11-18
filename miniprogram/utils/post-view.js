@@ -1,3 +1,4 @@
+const { declarationText } = require('./content-declaration');
 function dateOf(raw) {
   const value = raw && typeof raw === 'object' && '$date' in raw ? raw.$date : raw;
   return value ? new Date(value) : null;
@@ -7,7 +8,7 @@ function postView(post) {
   const elapsed = valid ? Math.max(0, Date.now() - date.getTime()) : 0;
   const local = valid ? new Date(date.getTime() + 8 * 3600000) : null;
   const pad = n => String(n).padStart(2, '0');
-  return { ...post, timeText: !valid ? '' : elapsed < 60000 ? '刚刚' : elapsed < 3600000 ? `${Math.floor(elapsed / 60000)}分钟` :
+  return { ...post, declarationText: declarationText(post.declaration), timeText: !valid ? '' : elapsed < 60000 ? '刚刚' : elapsed < 3600000 ? `${Math.floor(elapsed / 60000)}分钟` :
     elapsed < 86400000 ? `${Math.floor(elapsed / 3600000)}小时` : `${local.getUTCMonth() + 1}月${local.getUTCDate()}日`,
     exactTime: valid ? `${local.getUTCFullYear()}年${local.getUTCMonth() + 1}月${local.getUTCDate()}日 ${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}` : '' };
 }

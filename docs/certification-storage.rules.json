@@ -1,4 +1,4 @@
 {
-  "read": "/^avatars\\//.test(resource.path) || /^my-photo-[0-9]+\\.png$/.test(resource.path) || /^my-photo\\.png$/.test(resource.path) || /^code\\.png$/.test(resource.path)",
-  "write": "(/^avatars\\//.test(resource.path) || /^my-photo-[0-9]+\\.png$/.test(resource.path) || /^my-photo\\.png$/.test(resource.path)) && (resource.openid == auth.openid || resource.openid == auth.uid)"
+  "read": "/^avatars\\//.test(resource.path) || /^my-photo-[0-9]+\\.png$/.test(resource.path) || /^my-photo\\.png$/.test(resource.path) || /^code\\.png$/.test(resource.path) || /^square-media\\//.test(resource.path) || (/^square-uploads\\//.test(resource.path) && (resource.openid == auth.openid || resource.openid == auth.uid))",
+  "write": "(/^avatars\\//.test(resource.path) || /^my-photo-[0-9]+\\.png$/.test(resource.path) || /^my-photo\\.png$/.test(resource.path) || /^square-uploads\\//.test(resource.path)) && (resource.openid == auth.openid || resource.openid == auth.uid)"
 }

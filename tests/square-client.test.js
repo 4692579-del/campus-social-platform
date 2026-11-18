@@ -38,11 +38,209 @@ function client(handler) {
   let current = { ...user }, version = 0;
   const calls = [];
   const users = { getCachedUser: () => current, getSessionVersion: () => version, logout: () => { current = null; version++; } };
-  const context = { module: { exports: {} }, require: () => users,
+  const context = { module: { exports: {} }, require: name => name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : users,
     wx: { cloud: { callFunction: async args => { calls.push(args.data); return handler(args.data); } } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/services/square.js'), 'utf8'), context);
   return { service: context.module.exports, users, calls, login(value = user) { current = { ...value }; version++; } };
 }
+
+const commentRow = (extra = {}) => ({ _id: 'r_' + 'a'.repeat(40), content: '评论', author: post().author, likeCount: 0, liked: false, folded: false, ...extra });
+const commentResponse = row => ({ result: { success: true, square: { reply: row } } });
+test('评论点赞和取消立即更新缓存，串行合并快速点击，迟到确认不反弹，失败回退已确认状态', async () => {
+  const writes = [];
+  const f = client(data => new Promise(resolve => writes.push({ data, resolve })));
+  const row = commentRow(), notices = [], stop = f.service.subscribeComment(value => notices.push({ ...value }));
+  const liking = f.service.commentState(post()._id, row._id, 'like', true, row);
+  assert.equal(f.service.cachedComment(row._id).liked, true); assert.equal(f.service.cachedComment(row._id).likeCount, 1);
+  const cancelling = f.service.commentState(post()._id, row._id, 'like', false);
+  assert.equal(liking, cancelling); assert.equal(writes.length, 1); assert.equal(f.service.cachedComment(row._id).liked, false);
+  writes[0].resolve(commentResponse(commentRow({ liked: true, likeCount: 1 })));
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  assert.equal(writes.length, 2); assert.equal(writes[1].data.active, false); assert.equal(f.service.cachedComment(row._id).liked, false);
+  assert.equal(notices.slice(1).some(value => value.liked), false);
+  writes[1].resolve({ result: { success: false, code: 'NETWORK_ERROR', message: '保存失败' } });
+  await assert.rejects(liking, /保存失败/);
+  assert.equal(f.service.cachedComment(row._id).liked, true); assert.equal(f.service.cachedComment(row._id).likeCount, 1);
+  stop();
+});
+
+test('心碎后立即点赞恢复显示，两种状态共用队列，确认前的后台读取不能覆盖即时选择', async () => {
+  const writes = []; let finishRead;
+  const row = commentRow();
+  const f = client(data => data.action === 'listSquareReplies' ? new Promise(resolve => { finishRead = resolve; }) : new Promise(resolve => writes.push({ data, resolve })));
+  const fold = f.service.commentState(post()._id, row._id, 'fold', true, row);
+  assert.equal(f.service.cachedComment(row._id).folded, true);
+  const like = f.service.commentState(post()._id, row._id, 'like', true);
+  assert.equal(fold, like); assert.equal(f.service.cachedComment(row._id).folded, false); assert.equal(f.service.cachedComment(row._id).liked, true);
+  const reading = f.service.listReplies(post()._id);
+  finishRead({ result: { success: true, square: { items: [row], nextOffset: 1, hasMore: false } } }); await reading;
+  assert.equal(f.service.cachedReplies(post()._id).items[0].liked, true);
+  writes[0].resolve(commentResponse(commentRow({ folded: true })));
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  assert.equal(writes[1].data.kind, 'like'); assert.equal(writes[1].data.active, true);
+  writes[1].resolve(commentResponse(commentRow({ liked: true, likeCount: 1, folded: false }))); await like;
+  assert.equal(f.service.cachedComment(row._id).likeCount, 1); assert.equal(f.service.cachedReplies(post()._id).items[0].folded, false);
+});
+
+test('评论保存中换账号或删除动态，不让迟到状态恢复旧账号或已删除内容', async () => {
+  let finish;
+  const f = client(() => new Promise(resolve => { finish = resolve; }));
+  const row = commentRow(), pending = f.service.commentState(post()._id, row._id, 'fold', true, row);
+  f.login({ ...user, _id: 'bob' }); finish(commentResponse(commentRow({ folded: true })));
+  await assert.rejects(pending, error => error.code === 'SESSION_CHANGED'); assert.equal(f.service.cachedComment(row._id), null);
+  let complete;
+  const removed = client(data => data.action === 'deleteSquarePost' ? { result: { success: true, square: { deletedId: post()._id } } } : new Promise(resolve => { complete = resolve; }));
+  const writing = removed.service.commentState(post()._id, row._id, 'like', true, row);
+  await removed.service.deletePost(post()._id); complete(commentResponse(commentRow({ liked: true, likeCount: 1 })));
+  await assert.rejects(writing, error => error.code === 'POST_NOT_FOUND'); assert.equal(removed.service.cachedComment(row._id), null);
+});
+
+test('仅预取前两个未折叠回复组，点击展开复用在途请求与新鲜缓存', async () => {
+  const finishes = [];
+  const f = client(() => new Promise(resolve => finishes.push(resolve)));
+  const rows = [commentRow({ folded: true, replyCount: 5 }), ...[1, 2, 3].map(i => commentRow({ _id: 'root' + i, replyCount: 2 }))];
+  f.service.warmReplyChildren(post()._id, rows); assert.equal(f.calls.length, 2);
+  const expanding = f.service.listChildren(post()._id, 'root1'); assert.equal(f.calls.length, 2);
+  for (const finish of finishes) finish({ result: { success: true, square: { items: [], hasMore: false, nextOffset: 0 } } });
+  await expanding; await f.service.listChildren(post()._id, 'root1'); assert.equal(f.calls.length, 2);
+});
+
+test('发布图片后立即同步列表、详情和相册；删除动态移除其所有图片，退出清理相册缓存', async () => {
+  const images = ['cloud://test.bucket/square-media/alice/a.jpg', 'cloud://test.bucket/square-media/alice/b.jpg'];
+  const f = client(data => ({ result: { success: true, square: data.action === 'publishSquarePost' ? { post: post({ images, isOwn: true }) } :
+    data.action === 'deleteSquarePost' ? { deletedId: post()._id } : { items: [], hasMore: false, nextOffset: 0 } } }));
+  await f.service.album(); await f.service.publish('图文', 'images-request-00001', ['cloud://test.bucket/square-uploads/alice/a.jpg']);
+  assert.equal(f.calls.at(-1).post.images.length, 1);
+  assert.equal(f.service.cachedOwnFeed().items[0].images.length, 2);
+  assert.equal(f.service.cachedPost(post()._id).images.length, 2);
+  assert.equal(f.service.cachedAlbum().items.length, 2); assert.equal(f.service.cachedAlbum().nextOffset, 1);
+  await f.service.deletePost(post()._id);
+  assert.equal(f.service.cachedAlbum().items.length, 0); assert.equal(f.service.cachedAlbum().nextOffset, 0);
+  f.users.logout(); assert.equal(f.service.cachedAlbum(), null);
+});
+
+test('迟到相册读取不能覆盖刚发图片，也不能污染切换后的账号', async () => {
+  let finish;
+  const imagePost = post({ images: ['cloud://test.bucket/square-media/alice/a.jpg'] });
+  const f = client(data => data.action === 'listSquareAlbum' ? new Promise(resolve => { finish = resolve; }) : { result: { success: true, square: { post: imagePost } } });
+  const pending = f.service.album();
+  await f.service.publish('图', 'images-request-00001', ['cloud://test.bucket/square-uploads/alice/a.jpg']);
+  finish({ result: { success: true, square: { items: [], hasMore: false, nextOffset: 0 } } });
+  await pending; assert.equal(f.service.cachedAlbum().items.length, 1);
+  const late = f.service.album({ force: true }); f.login({ ...user, _id: 'bob' });
+  finish({ result: { success: true, square: { items: [], hasMore: false, nextOffset: 0 } } });
+  await assert.rejects(late, error => error.code === 'SESSION_CHANGED'); assert.equal(f.service.cachedAlbum(), null);
+});
+
+test('客户端拒绝转发操作，不发送云请求或伪造操作成功', async () => {
+  const f = client(() => { throw new Error('不得调用云端'); });
+  await assert.rejects(f.service.react(post()._id, 'repost', true), error => error.code === 'INVALID_POST');
+  assert.equal(f.calls.length, 0);
+});
+
+const likeResponse = (liked, extra = {}) => ({ result: { success: true, square: { post: post({ liked, likeCount: liked ? 1 : 0, ...extra }) } } });
+const settleLikes = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+test('点赞立即同步两个列表，快速取消即时复原并串行保存最后选择，旧响应不反弹', async () => {
+  const writes = [];
+  const f = client(data => data.action === 'setSquareReaction' ? new Promise(resolve => writes.push({ data, resolve })) :
+    { result: { success: true, square: { mine: true, items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list(); await f.service.list({ mine: true });
+  const notifications = [], stop = f.service.subscribePost(row => notifications.push([row.liked, row.likeCount]));
+  const liking = f.service.react(post()._id, 'like', true);
+  assert.equal(f.service.cachedFeed().items[0].liked, true);
+  assert.equal(f.service.cachedOwnFeed().items[0].likeCount, 1);
+  const cancelling = f.service.react(post()._id, 'like', false);
+  assert.equal(liking, cancelling); assert.equal(writes.length, 1);
+  assert.equal(f.service.cachedFeed().items[0].liked, false);
+  assert.equal(f.service.cachedFeed().items[0].likeCount, 0);
+  writes[0].resolve(likeResponse(true)); await settleLikes();
+  assert.equal(writes.length, 2); assert.equal(writes[1].data.active, false);
+  assert.equal(f.service.cachedPost(post()._id).liked, false);
+  writes[1].resolve(likeResponse(false)); await cancelling;
+  assert.equal(f.service.cachedOwnFeed().items[0].liked, false);
+  assert.equal(f.service.cachedPost(post()._id).likeCount, 0);
+  stop(); assert.ok(notifications.length >= 3);
+});
+
+test('多次切换合并为最新目标；保存失败恢复已确认状态，并允许再次操作', async () => {
+  const writes = [];
+  const f = client(data => data.action === 'setSquareReaction' ? new Promise((resolve, reject) => writes.push({ data, resolve, reject })) :
+    { result: { success: true, square: { items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list();
+  const pending = f.service.react(post()._id, 'like', true);
+  f.service.react(post()._id, 'like', false); f.service.react(post()._id, 'like', true);
+  assert.equal(writes.length, 1); assert.equal(f.service.cachedPost(post()._id).likeCount, 1);
+  writes[0].resolve(likeResponse(true)); await pending;
+  assert.equal(writes.length, 1);
+  const cancelling = f.service.react(post()._id, 'like', false);
+  assert.equal(f.service.cachedPost(post()._id).likeCount, 0);
+  const rejection = assert.rejects(cancelling, /连接/);
+  writes[1].reject(new Error('offline')); await rejection;
+  assert.equal(f.service.cachedPost(post()._id).liked, true);
+  assert.equal(f.service.cachedFeed().items[0].likeCount, 1);
+  const retry = f.service.react(post()._id, 'like', false);
+  writes[2].resolve(likeResponse(false)); await retry;
+  assert.equal(f.service.cachedFeed().items[0].likeCount, 0);
+});
+
+test('后台刷新不覆盖等待保存的爱心，点赞响应不覆盖同时增加的评论数量', async () => {
+  let finishLike;
+  const f = client(data => data.action === 'setSquareReaction' ? new Promise(resolve => { finishLike = resolve; }) :
+    { result: { success: true, square: data.action === 'publishSquareReply'
+      ? { post: post({ replyCount: 1 }), reply: { _id: 'reply', content: '并行评论' } }
+      : { items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list(); const pending = f.service.react(post()._id, 'like', true);
+  await f.service.list({ force: true });
+  assert.equal(f.service.cachedFeed().items[0].liked, true);
+  assert.equal(f.service.cachedFeed().items[0].likeCount, 1);
+  await f.service.reply(post()._id, '并行评论', 'parallel-reply-000001');
+  finishLike(likeResponse(true)); await pending;
+  assert.equal(f.service.cachedPost(post()._id).replyCount, 1);
+  assert.equal(f.service.cachedPost(post()._id).likeCount, 1);
+});
+
+test('服务返回未确认的目标状态时停止保存并回退，不无限重试', async () => {
+  const f = client(data => data.action === 'setSquareReaction' ? likeResponse(false) :
+    { result: { success: true, square: { items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list();
+  await assert.rejects(f.service.react(post()._id, 'like', true), /状态未确认/);
+  assert.equal(f.calls.filter(call => call.action === 'setSquareReaction').length, 1);
+  assert.equal(f.service.cachedPost(post()._id).liked, false);
+  assert.equal(f.service.cachedFeed().items[0].likeCount, 0);
+});
+
+test('点赞响应在切换账号或删除动态后到达，不能恢复旧状态或被删除的卡片', async () => {
+  let finish;
+  const f = client(data => data.action === 'setSquareReaction' ? new Promise(resolve => { finish = resolve; }) :
+    { result: { success: true, square: { items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list(); const pending = f.service.react(post()._id, 'like', true);
+  f.users.logout(); f.login({ ...user, _id: 'bob' });
+  const rejection = assert.rejects(pending, error => error.code === 'SESSION_CHANGED');
+  finish(likeResponse(true)); await rejection;
+  assert.equal(f.service.cachedPost(post()._id), null);
+  let finishDeleted;
+  const g = client(data => data.action === 'setSquareReaction' ? new Promise(resolve => { finishDeleted = resolve; }) :
+    { result: { success: true, square: data.action === 'deleteSquarePost' ? { deletedId: post()._id } : { items: [post()], hasMore: false, nextOffset: 1 } } });
+  await g.service.list(); const writing = g.service.react(post()._id, 'like', true);
+  await g.service.deletePost(post()._id);
+  const deleted = assert.rejects(writing, error => error.code === 'POST_NOT_FOUND');
+  finishDeleted(likeResponse(true)); await deleted;
+  assert.equal(g.service.cachedPost(post()._id), null); assert.equal(g.service.cachedFeed().items.length, 0);
+});
+
+test('个人动态真实总数跨分页保留，发布与删除同步更新总数，重复删除不再扣减', async () => {
+  const addedId = 'p_' + 'c'.repeat(40);
+  const f = client(data => ({ result: { success: true, square:
+    data.action === 'publishSquarePost' ? { post: post({ _id: addedId, isOwn: true }) } :
+    data.action === 'deleteSquarePost' ? { deletedId: addedId } :
+    { mine: true, items: [post()], hasMore: true, nextOffset: data.offset ? 40 : 20, ...(data.offset ? {} : { total: 45 }) } } }));
+  await f.service.list({ mine: true }); await f.service.list({ mine: true, offset: 20 });
+  assert.equal(f.service.cachedOwnFeed().total, 45);
+  await f.service.publish('新增动态', 'total-post-request-001'); assert.equal(f.service.cachedOwnFeed().total, 46);
+  await f.service.deletePost(addedId); assert.equal(f.service.cachedOwnFeed().total, 45);
+  await f.service.deletePost(addedId); assert.equal(f.service.cachedOwnFeed().total, 45);
+});
 
 test('信息流、完整动态和回复在一分钟内复用；普通用户发布后立即更新预览并返回广场', async () => {
   const f = client(async data => ({ result: { success: true, square:
@@ -60,6 +258,23 @@ test('信息流、完整动态和回复在一分钟内复用；普通用户发�
   assert.equal(f.service.cachedFeed().items[0].content, '未认证也能发布');
   assert.equal(f.service.consumePublication(), true);
   assert.equal(f.service.consumePublication(), false);
+});
+
+test('内容声明跟随真实发布响应同步广场、个人和详情缓存，显示文案不混入正文且旧动态不显示声明', async () => {
+  const f = client(async data => ({ result: { success: true, square: { post: post({
+    content: data.post.content, declaration: data.post.declaration || 'none', images: ['cloud://test.bucket/square-media/alice/a.jpg'],
+  }) } } }));
+  const row = await f.service.publish('真实图文', 'declaration-client001', ['cloud://test.bucket/square-uploads/alice/a.jpg'], 'ai');
+  assert.equal(f.calls[0].post.declaration, 'ai');
+  for (const value of [row, f.service.cachedFeed().items[0], f.service.cachedOwnFeed().items[0], f.service.cachedPost(row._id)]) {
+    assert.equal(value.declaration, 'ai'); assert.equal(value.content, '真实图文');
+    assert.equal(postView(value).declarationText, '内容由AI生成'); assert.equal(value.images.length, 1);
+  }
+  await f.service.publish('无需声明', 'declaration-none0001'); assert.equal(f.calls.at(-1).post.declaration, undefined);
+  const { declarations } = require('../miniprogram/utils/content-declaration');
+  for (const item of declarations) assert.equal(postView(post({ declaration: item.key })).declarationText, item.key === 'none' ? '' : item.label);
+  assert.equal(postView(post()).declarationText, '');
+  assert.equal(postView(post({ declaration: 'arbitrary', declarationText: '不能伪造展示' })).declarationText, '');
 });
 
 test('详情点赞和回复同步列表；迟到的旧详情不会覆盖刚成功的点赞', async () => {
@@ -177,17 +392,15 @@ test('删除同步清理广场、个人、详情与回复缓存，迟到响应�
   assert.equal(f.service.cachedPost(post()._id), null);
 });
 
-test('分享计数同步两个列表；失败删除保留动态，账号切换后旧删除结果不能清理新账号缓存', async () => {
+test('失败删除保留动态，账号切换后旧删除结果不能清理新账号缓存', async () => {
   let failed = true, finish;
   const f = client(data => {
     if (data.action === 'deleteSquarePost') return failed ? Promise.resolve({ result: { success: false, code: 'FORBIDDEN', message: '只能删除自己的动态' } }) : new Promise(resolve => { finish = resolve; });
-    return Promise.resolve({ result: { success: true, square: data.action === 'recordSquareShare' ? { post: post({ shareCount: 1 }) } :
-      { ...(data.mine ? { mine: true } : {}), items: [post()], hasMore: false, nextOffset: 1 } } });
+    return Promise.resolve({ result: { success: true, square: { ...(data.mine ? { mine: true } : {}), items: [post()], hasMore: false, nextOffset: 1 } } });
   });
-  await f.service.list(); await f.service.list({ mine: true }); await f.service.recordShare(post()._id, 'share-client-00000001');
-  assert.equal(f.service.cachedFeed().items[0].shareCount, 1); assert.equal(f.service.cachedOwnFeed().items[0].shareCount, 1);
+  await f.service.list(); await f.service.list({ mine: true });
   await assert.rejects(f.service.deletePost(post()._id), error => error.code === 'FORBIDDEN');
-  assert.equal(f.service.cachedPost(post()._id).shareCount, 1);
+  assert.equal(f.service.cachedPost(post()._id)._id, post()._id);
   failed = false;
   const deleting = f.service.deletePost(post()._id);
   f.users.logout(); f.login({ ...user, _id: 'bob' }); await f.service.list();
@@ -196,37 +409,15 @@ test('分享计数同步两个列表；失败删除保留动态，账号切换�
   assert.equal(f.service.cachedFeed().items.length, 1);
 });
 
-function pageFixture(name, options = {}) {
-  let definition, current = options.guest ? null : { ...user };
-  const storage = options.storage || new Map(), routes = [], calls = [];
-  const users = { getCachedUser: () => current, restore: async () => current,
-    login: async () => { current = { ...user }; return current; }, logout: () => { current = null; } };
-  const square = { publish: async (content, id) => { calls.push({ content, id }); return options.publish ? options.publish(content, id) : post({ content }); },
-    cachedPost: () => options.post || null, cachedReplies: () => options.replies || null,
-    detail: async () => options.detail ? options.detail() : options.post || post(),
-    listReplies: async () => options.replies || { items: [], hasMore: false, nextOffset: 0 },
-    react: async (id, kind, active) => { calls.push({ id, kind, active }); return post({ liked: active, likeCount: active ? 1 : 0 }); },
-    reply: async (id, content) => ({ post: post({ replyCount: 1 }), reply: post({ _id: 'reply', content }) }) };
-  const wx = { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
-    getStorageSync: key => storage.get(key), setStorageSync: (key, value) => storage.set(key, value), removeStorageSync: key => storage.delete(key),
-    showToast() {}, navigateBack: () => routes.push('back'), switchTab: value => routes.push(value.url) };
-  const gateContext = { module: { exports: {} }, require: () => users, wx };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/utils/login-gate.js'), 'utf8'), gateContext);
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../miniprogram/pages/${name}/index.js`), 'utf8'), {
-    Page: value => { definition = value; }, wx,
-    require: key => key.includes('post-actions') ? require('../miniprogram/utils/post-actions') : key.includes('login-gate') ? gateContext.module.exports : key.includes('post-view') ? require('../miniprogram/utils/post-view') : key.includes('services/square') ? square : users,
-  });
-  const page = { ...definition, data: structuredClone(definition.data), setData(value) { Object.assign(this.data, value); } };
-  return { page, storage, routes, calls };
-}
+const { composerFixture: pageFixture } = require('./helpers/square-composer-fixture');
 
-test('发布页普通用户直接输入，仅发布广场；自动保留本账号草稿并限制1000字', async () => {
-  const f = pageFixture('square-compose'); await f.page.onLoad();
+test('发布页普通用户直接输入，仅右上角明确保存后恢复草稿，并限制1000字', async () => {
+  const f = pageFixture(); await f.attach();
   f.page.onInput({ detail: { value: '未认证同学的想法' } });
   assert.equal(f.page.data.canPublish, true);
-  f.page.cancel();
+  assert.equal(f.storage.size, 0); f.page.saveAndClose();
   assert.equal(f.storage.get('square.draft.alice').content, '未认证同学的想法');
-  const reopened = pageFixture('square-compose', { storage: f.storage }); await reopened.page.onLoad();
+  const reopened = pageFixture({ storage: f.storage }); await reopened.attach();
   assert.equal(reopened.page.data.content, '未认证同学的想法');
   reopened.page.onInput({ detail: { value: '😊'.repeat(1001) } });
   assert.equal(reopened.page.data.count, 1001);
@@ -234,16 +425,16 @@ test('发布页普通用户直接输入，仅发布广场；自动保留本账�
   await reopened.page.publish(); assert.equal(reopened.calls.length, 0);
 });
 
-test('发布请求失败保留草稿和幂等标识，成功才清理草稿并回到首页', async () => {
+test('发布请求失败保留编辑内容和幂等标识，不自动保存草稿，成功才收起面板', async () => {
   let failed = true;
-  const f = pageFixture('square-compose', { publish: async () => { if (failed) throw new Error('暂时无法连接'); return post(); } });
-  await f.page.onLoad(); f.page.onInput({ detail: { value: '失败后可以重试' } });
+  const f = pageFixture({ publish: async () => { if (failed) throw new Error('暂时无法连接'); return post(); } });
+  await f.attach(); f.page.onInput({ detail: { value: '失败后可以重试' } });
   await f.page.publish();
-  assert.equal(f.page.data.error, '暂时无法连接'); assert.equal(f.routes.length, 0);
-  assert.equal(f.storage.size, 1);
+  assert.equal(f.page.data.error, '暂时无法连接'); assert.equal(f.events.length, 0);
+  assert.equal(f.page.data.content, '失败后可以重试'); assert.equal(f.storage.size, 0);
   failed = false; await f.page.publish();
   assert.equal(f.calls[0].id, f.calls[1].id);
-  assert.deepEqual(f.routes, ['/pages/home/index']); assert.equal(f.storage.size, 0);
+  f.flushClose(); assert.equal(f.events.at(-1).detail.published, true); assert.equal(f.storage.size, 0);
 });
 
 test('首次评论读取迟于发送返回时保留刚发布的评论', async () => {

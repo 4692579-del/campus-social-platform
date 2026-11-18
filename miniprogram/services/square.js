@@ -1,16 +1,20 @@
 const users = require('./user');
+const { projectComment, reactComment } = require('../utils/comment-state');
 const TTL = 60000;
-let owner, generation = 0, feed = null, ownFeed = null, mutation = 0, removals = 0, published = false;
+let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
 const posts = new Map(), postTimes = new Map(), replies = new Map(), pending = new Map(), revisions = new Map();
 const deleted = new Set();
+const likeWrites = new Map(), postListeners = new Set();
 const children = new Map(), comments = new Map(), commentVersions = new Map();
+const commentWrites = new Map(), commentListeners = new Set();
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { owner = key; generation += 1; feed = null; ownFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); pending.clear(); revisions.clear(); deleted.clear(); }
+  if (key !== owner) { owner = key; generation += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); likeWrites.clear(); }
   return key;
 }
 function cachedFeed() { session(); return feed && feed.value; }
+function cachedAlbum() { session(); return albumFeed && albumFeed.value; }
 function cachedOwnFeed() {
   session();
   if (!ownFeed && feed) {
@@ -26,17 +30,34 @@ function cachedOwnFeed() {
 function cachedPost(id) { session(); return posts.get(id) || (feed && feed.value.items.find(item => item._id === id)) || null; }
 function cachedReplies(id) { session(); return replies.get(id) || null; }
 function cachedChildren(id, rootId) { session(); return children.get(`${id}:${rootId}`) || null; }
-function saveComment(row, changed = false) {
+function cachedComment(id) { session(); return comments.get(id) || null; }
+function subscribeComment(listener) { commentListeners.add(listener); return () => commentListeners.delete(listener); }
+function saveComment(row, changed = false, notify = false) {
   comments.set(row._id, row);
   if (changed) commentVersions.set(row._id, ++mutation);
   for (const list of [...replies.values(), ...children.values()]) list.items = list.items.map(item => item._id === row._id ? row : item);
+  if (notify) for (const listener of commentListeners) {
+    try { listener(row); } catch (error) { /* 展示订阅不能影响后台保存。 */ }
+  }
 }
+function pendingComment(row) { const write = commentWrites.get(row._id); return write ? projectComment(row, write.desired) : row; }
 function previewPost(post) {
   const content = post.fullContent || post.content;
   return { ...post, content: Array.from(content).slice(0, 280).join(''), fullContent: content, truncated: Array.from(content).length > 280 };
 }
+function likedPost(post, liked) {
+  if (!post) return null;
+  const delta = Boolean(post.liked) === liked ? 0 : liked ? 1 : -1;
+  return { ...post, liked, likeCount: Math.max(0, (Number(post.likeCount) || 0) + delta) };
+}
+function pendingLike(post) {
+  const write = likeWrites.get(post._id);
+  return write ? likedPost(post, write.desired) : post;
+}
+function subscribePost(listener) { postListeners.add(listener); return () => postListeners.delete(listener); }
 function updatePost(post, prepend = false) {
   if (deleted.has(post._id)) return;
+  post = pendingLike(post);
   posts.set(post._id, post);
   postTimes.set(post._id, Date.now());
   if (feed) {
@@ -50,17 +71,30 @@ function updatePost(post, prepend = false) {
     if (prepend && !found) {
       ownFeed.value.items.unshift(previewPost(post));
       ownFeed.value.nextOffset += 1;
+      if (Number.isSafeInteger(ownFeed.value.total)) ownFeed.value.total += 1;
     }
   } else if (prepend) ownFeed = { time: 0, value: { items: [previewPost(post)], hasMore: true, nextOffset: 0 } };
+  for (const listener of postListeners) {
+    try { listener(post); } catch (error) { /* 页面观察者不能影响已完成的保存或缓存更新。 */ }
+  }
 }
 function unavailable(id) {
   if (deleted.has(id)) throw Object.assign(new Error('动态不存在或已不可见'), { code: 'POST_NOT_FOUND' });
 }
-function removePost(id) {
+function removePost(id, knownOwn = false) {
+  const newlyRemoved = !deleted.has(id);
+  const row = posts.get(id) || (ownFeed && ownFeed.value.items.find(item => item._id === id));
+  const own = knownOwn || Boolean(row && (row.isOwn || row.author && users.getCachedUser() && users.getCachedUser().accountId && row.author.accountId === users.getCachedUser().accountId));
   if (!deleted.has(id)) removals += 1;
   deleted.add(id);
+  if (albumFeed) {
+    if (albumFeed.value.items.some(item => item.postId === id)) albumFeed.value.nextOffset = Math.max(0, albumFeed.value.nextOffset - 1);
+    albumFeed.value.items = albumFeed.value.items.filter(item => item.postId !== id);
+    albumFeed.time = 0;
+  }
   revisions.set(id, ++mutation);
   posts.delete(id); postTimes.delete(id); replies.delete(id);
+  if (newlyRemoved && own && ownFeed && Number.isSafeInteger(ownFeed.value.total)) ownFeed.value.total = Math.max(0, ownFeed.value.total - 1);
   for (const key of children.keys()) if (key.startsWith(`${id}:`)) children.delete(key);
   for (const cached of [feed, ownFeed]) if (cached) {
     const removed = cached.value.items.some(post => post._id === id);
@@ -82,7 +116,8 @@ async function call(action, data = {}, authenticated = false) {
   if (!result || !result.success) {
     if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) users.logout();
     throw Object.assign(new Error(result && result.code !== 'INVALID_ACTION' ? result.message :
-      ['listSquareReplyChildren', 'setSquareCommentState'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
+      action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
+        ['listSquareReplyChildren', 'setSquareCommentState'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
   return result.square;
@@ -109,11 +144,12 @@ function list({ force = false, offset = 0, mine = false } = {}) {
       if (removalVersion !== removals) throw new Error('动态列表已更新，请刷新后重试');
     }
     if (mine && result.mine !== true) throw new Error('个人动态服务需要更新，请重新部署 userService 云函数');
-    const currentItems = result.items.filter(post => !deleted.has(post._id)).map(post => before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post);
+    const currentItems = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
     const timestamp = post => new Date(post.createdAt && post.createdAt.$date || post.createdAt).getTime() || 0;
     const latest = mine ? ownFeed : feed;
     const items = (requestOffset || revision !== mutation) && latest ? [...new Map([...latest.value.items, ...currentItems].map(item => [item._id, item])).values()].sort((a, b) => timestamp(b) - timestamp(a)) : currentItems;
-    const saved = { value: { ...result, items }, time: Date.now() };
+    const total = mine && latest && (requestOffset || revision !== mutation) && Number.isSafeInteger(latest.value.total) ? latest.value.total : result.total;
+    const saved = { value: { ...result, ...(mine && Number.isSafeInteger(total) ? { total } : {}), items }, time: Date.now() };
     if (mine) ownFeed = saved;
     else feed = saved;
     for (const post of items) if (!post.truncated || typeof post.fullContent === 'string') {
@@ -134,7 +170,7 @@ function detail(id, force = false) {
     unavailable(id);
     if (revision !== revisions.get(id) && posts.has(id)) return posts.get(id);
     updatePost(result.post);
-    return result.post;
+    return posts.get(id);
   });
 }
 function listReplies(id, { offset = 0, force = false } = {}) {
@@ -154,7 +190,7 @@ function readComments(id, rootId, { offset, force }) {
     const result = await call(rootId ? 'listSquareReplyChildren' : 'listSquareReplies', { postId: id, offset, ...(rootId ? { rootId } : {}) });
     unavailable(id);
     const previous = store.get(key);
-    const rows = result.items.map(row => versions.get(row._id) !== commentVersions.get(row._id) && comments.has(row._id) ? comments.get(row._id) : row);
+    const rows = result.items.map(row => pendingComment(versions.get(row._id) !== commentVersions.get(row._id) && comments.has(row._id) ? comments.get(row._id) : row));
     const value = { ...result, time: Date.now(), items: (offset || revision !== revisions.get(id)) && previous ? [...new Map([...previous.items, ...rows].map(item => [item._id, item])).values()] : rows };
     const timestamp = item => new Date(item.createdAt && item.createdAt.$date || item.createdAt).getTime() || 0;
     value.items.sort((a, b) => timestamp(a) - timestamp(b));
@@ -163,19 +199,88 @@ function readComments(id, rootId, { offset, force }) {
     return value;
   });
 }
-async function publish(content, requestId) {
-  const result = await call('publishSquarePost', { post: { content, requestId, scope: 'square' } }, true);
+async function publish(content, requestId, images = [], declaration = 'none') {
+  const result = await call('publishSquarePost', { post: { content, requestId, scope: 'square', ...(images.length ? { images } : {}),
+    ...(declaration !== 'none' ? { declaration } : {}) } }, true);
   revisions.set(result.post._id, ++mutation);
   updatePost(result.post, true);
+  const added = (result.post.images || []).map((fileID, index) => ({ _id: `${result.post._id}_${index}`, postId: result.post._id, fileID, createdAt: result.post.createdAt, index }));
+  if (added.length) {
+    const previous = albumFeed && albumFeed.value;
+    albumFeed = { time: 0, value: { items: [...added, ...(previous ? previous.items.filter(item => item.postId !== result.post._id) : [])],
+      hasMore: previous ? previous.hasMore : true, nextOffset: previous ? previous.nextOffset + (previous.items.some(item => item.postId === result.post._id) ? 0 : 1) : 0 } };
+  }
   published = true;
   return result.post;
 }
-async function react(id, kind, active) {
-  const result = await call('setSquareReaction', { postId: id, kind, active }, true);
-  unavailable(id);
+function album({ force = false, offset = 0 } = {}) {
+  session();
+  if (!force && !offset && albumFeed && Date.now() - albumFeed.time < TTL) return Promise.resolve(albumFeed.value);
+  return merged(`album:${offset}`, async () => {
+    const revision = mutation, beforeRemovals = removals;
+    let result = await call('listSquareAlbum', { offset }, true);
+    if (beforeRemovals !== removals) {
+      const removalVersion = removals;
+      result = await call('listSquareAlbum', { offset: 0 }, true); offset = 0;
+      if (removalVersion !== removals) throw new Error('相册已更新，请刷新后重试');
+    }
+    const previous = albumFeed && albumFeed.value;
+    const incoming = result.items.filter(item => !deleted.has(item.postId));
+    const items = (offset || revision !== mutation) && previous ? [...new Map([...previous.items, ...incoming].map(item => [item._id, item])).values()] : incoming;
+    albumFeed = { time: Date.now(), value: { ...result, items } };
+    return albumFeed.value;
+  });
+}
+function react(id, kind, active, sourcePost) {
+  session();
+  if (kind !== 'like' || typeof active !== 'boolean') return Promise.reject(Object.assign(new Error('该互动功能暂未开放'), { code: 'INVALID_POST' }));
+  if (!users.getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
+  try { unavailable(id); } catch (error) { return Promise.reject(error); }
+  const existing = likeWrites.get(id);
+  const write = existing || { confirmed: cachedPost(id) || sourcePost || null, version: generation };
+  write.desired = active;
+  likeWrites.set(id, write);
   revisions.set(id, ++mutation);
-  updatePost(result.post);
-  return result.post;
+  const cached = cachedPost(id) || write.confirmed;
+  if (cached) updatePost(likedPost(cached, active));
+  if (existing) return write.promise;
+  write.promise = saveLike(id, write);
+  return write.promise;
+}
+async function saveLike(id, write) {
+  const valid = () => { session(); return generation === write.version && likeWrites.get(id) === write; };
+  const merge = row => {
+    const latest = posts.get(id);
+    return latest ? { ...latest, liked: Boolean(row.liked), likeCount: row.likeCount || 0 } : row;
+  };
+  try {
+    do {
+      const target = write.desired;
+      const result = await call('setSquareReaction', { postId: id, kind: 'like', active: target }, true);
+      if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
+      unavailable(id);
+      if (!result.post || typeof result.post.liked !== 'boolean') throw new Error('点赞状态未确认，请重试');
+      write.confirmed = merge(result.post);
+      if (result.post.liked !== target) throw new Error('点赞状态未确认，请重试');
+      revisions.set(id, ++mutation);
+      if (write.desired === Boolean(result.post.liked)) {
+        likeWrites.delete(id);
+        updatePost(write.confirmed);
+        return posts.get(id);
+      }
+      updatePost(write.confirmed);
+    } while (valid());
+  } catch (error) {
+    if (valid()) {
+      likeWrites.delete(id);
+      revisions.set(id, ++mutation);
+      if (write.confirmed) updatePost(merge(write.confirmed));
+      if (feed) feed.time = 0;
+      if (ownFeed) ownFeed.time = 0;
+      postTimes.delete(id);
+    }
+    throw error;
+  }
 }
 async function reply(id, content, requestId, replyToId) {
   const result = await call('publishSquareReply', { post: { postId: id, content, requestId, scope: 'square', ...(replyToId ? { replyToId } : {}) } }, true);
@@ -187,31 +292,77 @@ async function reply(id, content, requestId, replyToId) {
   const existing = store.get(key);
   if (existing) existing.items = [...new Map([...existing.items, result.reply].map(item => [item._id, item])).values()];
   else store.set(key, { items: [result.reply], hasMore: true, nextOffset: 0, time: 0 });
+  result.reply = pendingComment(result.reply);
   saveComment(result.reply, true);
-  if (result.root) saveComment(result.root, true);
+  if (result.root) { result.root = pendingComment(result.root); saveComment(result.root, true); }
   return result;
 }
-async function commentState(id, replyId, kind, active) {
-  const result = await call('setSquareCommentState', { postId: id, replyId, kind, active }, true);
-  unavailable(id);
-  saveComment(result.reply, true);
-  return result.reply;
+function warmReplyChildren(id, rows) {
+  session();
+  // 只预取最靠前的两个回复组，展开时复用同一请求，不为所有评论建请求。
+  for (const row of rows.filter(row => !row.folded && row.replyCount > 0).slice(0, 2)) listChildren(id, row._id).catch(() => {});
+}
+function commentState(id, replyId, kind, active, sourceRow) {
+  session();
+  if (!['like', 'fold'].includes(kind) || typeof active !== 'boolean') return Promise.reject(new Error('评论操作参数不正确'));
+  if (!users.getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
+  try { unavailable(id); } catch (error) { return Promise.reject(error); }
+  const existing = commentWrites.get(replyId), row = comments.get(replyId) || sourceRow;
+  if (!row) return call('setSquareCommentState', { postId: id, replyId, kind, active }, true).then(result => {
+    unavailable(id); saveComment(result.reply, true, true); return result.reply;
+  });
+  const write = existing || { confirmed: row, version: generation, postId: id, initial: { kind, active } };
+  const optimistic = reactComment(row, kind, active);
+  write.desired = { liked: optimistic.liked, folded: optimistic.folded };
+  commentWrites.set(replyId, write);
+  saveComment(optimistic, true, true);
+  if (existing) return write.promise;
+  write.promise = saveCommentState(replyId, write);
+  return write.promise;
+}
+async function saveCommentState(replyId, write) {
+  const valid = () => { session(); return generation === write.version && commentWrites.get(replyId) === write; };
+  let first = true;
+  try {
+    while (valid()) {
+      const target = { ...write.desired };
+      const kind = Boolean(write.confirmed.liked) !== target.liked ? 'like' : Boolean(write.confirmed.folded) !== target.folded ? 'fold' : first ? write.initial.kind : '';
+      if (!kind) break;
+      const active = kind === 'like' ? target.liked : target.folded;
+      first = false;
+      const result = await call('setSquareCommentState', { postId: write.postId, replyId, kind, active }, true);
+      if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
+      unavailable(write.postId);
+      const row = result.reply;
+      if (!row || row._id !== replyId || Boolean(row[kind === 'like' ? 'liked' : 'folded']) !== active || kind === 'like' && active && row.folded) throw new Error('评论状态未确认，请重试');
+      write.confirmed = { ...(comments.get(replyId) || write.confirmed), liked: Boolean(row.liked), folded: Boolean(row.folded), likeCount: row.likeCount || 0 };
+      saveComment(projectComment(write.confirmed, write.desired), true, true);
+    }
+    if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
+    commentWrites.delete(replyId);
+    saveComment(write.confirmed, true, true);
+    return write.confirmed;
+  } catch (error) {
+    if (valid()) {
+      commentWrites.delete(replyId);
+      if (!deleted.has(write.postId)) {
+        const latest = comments.get(replyId) || write.confirmed;
+        saveComment({ ...latest, liked: Boolean(write.confirmed.liked), folded: Boolean(write.confirmed.folded), likeCount: write.confirmed.likeCount || 0 }, true, true);
+      } else comments.delete(replyId);
+      if (replies.has(write.postId)) replies.get(write.postId).time = 0;
+      for (const [key, cached] of children) if (key.startsWith(`${write.postId}:`)) cached.time = 0;
+    }
+    throw error;
+  }
 }
 async function deletePost(id) {
   const result = await call('deleteSquarePost', { postId: id }, true);
   if (result.deletedId !== id) throw new Error('删除未确认，请重试');
-  removePost(id);
+  removePost(id, true);
   return id;
 }
 async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
-async function recordShare(id, requestId) {
-  const result = await call('recordSquareShare', { postId: id, requestId }, true);
-  unavailable(id);
-  revisions.set(id, ++mutation);
-  updatePost(result.post);
-  return result.post;
-}
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedFeed, cachedOwnFeed, cachedPost, cachedReplies, cachedChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, recordShare };
+module.exports = { cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost };

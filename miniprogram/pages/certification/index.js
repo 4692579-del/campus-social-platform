@@ -39,6 +39,8 @@ Page({
     ],
   },
   onLoad() {
+    const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
+    this._returnPage = pages[pages.length - 2];
     try {
       const info = wx.getWindowInfo();
       const capsule = wx.getMenuButtonBoundingClientRect();
@@ -50,7 +52,19 @@ Page({
     } catch (error) { /* 旧客户端使用默认顶部留白。 */ }
     return this.loadApplication(false);
   },
-  onUnload() { this._proofBase64 = ''; this._submission = null; this._unloaded = true; },
+  onUnload() {
+    this.prepareReturnSurface();
+    this._returnPage = null;
+    this._proofBase64 = ''; this._submission = null; this._unloaded = true;
+  },
+  prepareReturnSurface() {
+    if (this._returnSurfacePrepared) return true;
+    const previous = this._returnPage;
+    if (!previous || typeof previous.prepareMenuReturn !== 'function') return false;
+    previous.prepareMenuReturn();
+    this._returnSurfacePrepared = true;
+    return true;
+  },
   async loadApplication(force = true) {
     if (this._loading || this.data.saving || this.data.choosing || this.data.withdrawing || this.data.confirmingWithdrawal) return;
     this._loading = true;
@@ -310,5 +324,22 @@ Page({
     this.clearSchoolSearch();
     this.setStage('intro');
   },
-  backToProfile() { wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/index' }) }); },
+  backToProfile() {
+    if (this._returning || this._unloaded) return;
+    this._returning = true;
+    const prepared = this.prepareReturnSurface();
+    const fallback = () => wx.switchTab({ url: '/pages/home/index', fail: () => {
+      this._returning = false;
+      if (!this._unloaded) wx.showToast({ title: '返回失败，请重试', icon: 'none' });
+    } });
+    const navigate = () => {
+      if (this._unloaded) return;
+      const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : null;
+      if (pages && pages.length <= 1) fallback();
+      else wx.navigateBack({ fail: fallback });
+    };
+    // 先提交首页和底栏的恢复，再开始原生返回过渡，避免露出中间状态。
+    if (prepared && typeof wx.nextTick === 'function') wx.nextTick(navigate);
+    else navigate();
+  },
 });

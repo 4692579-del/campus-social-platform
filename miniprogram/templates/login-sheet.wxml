@@ -7,7 +7,7 @@
       <view class="login-sheet-description">登录萃，开启你的校园生活。</view>
       <view wx:if="{{error}}" class="login-sheet-error">{{error}}</view>
       <button size="mini" class="login-sheet-primary" bindtap="login" loading="{{loading}}" disabled="{{loading}}">{{loading ? '正在登录…' : '微信登录'}}</button>
-      <button size="mini" class="login-sheet-cancel" bindtap="cancelLogin">暂不登录，返回首页</button>
+      <button size="mini" class="login-sheet-cancel" bindtap="cancelLogin">{{cancelText || '暂不登录，返回首页'}}</button>
     </view>
   </view>
 </template>

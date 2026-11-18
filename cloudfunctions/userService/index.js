@@ -1,8 +1,10 @@
 const cloud = require('wx-server-sdk');
 const { createUserService } = require('./service');
+const { createSquareImageProcessor } = require('./square-images');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const service = createUserService(cloud.database({ throwOnNotFound: false }), {
+  processSquareImages: createSquareImageProcessor(cloud),
   checkText: async (content, openid) => {
     const result = await cloud.openapi.security.msgSecCheck({ content, openid, version: 2, scene: 3 });
     return result.result && result.result.suggest === 'pass';

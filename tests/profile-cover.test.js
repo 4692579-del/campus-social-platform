@@ -1,3 +1,4 @@
+const { loadPostActions, applyPageData } = require('./helpers/post-actions-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -55,7 +56,7 @@ test('未建档、缺少可信微信身份、封禁用户不能修改封面', as
 
 function pageFixture(options = {}) {
   let definition;
-  const requests = [], toasts = [], routes = [], modals = [], navigationColors = [];
+  const requests = [], toasts = [], routes = [], modals = [], navigationColors = [], backCalls = [], renderTasks = [];
   const service = {
     getCachedUser: () => options.cachedUser || null,
     restore: async () => { requests.push('restore'); return options.restore ? options.restore() : null; },
@@ -65,7 +66,8 @@ function pageFixture(options = {}) {
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
     Page: value => { definition = value; },
-    require: name => name.includes('post-actions') ? require('../miniprogram/utils/post-actions') : name.includes('services/square') ? { cachedOwnFeed: () => null, list: async () => ({ items: [], hasMore: false, nextOffset: 0 }) } :
+    getCurrentPages: () => [...(options.previousPages || []), page],
+    require: name => name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(service, {}, { showToast: args => toasts.push(args) }) : name.includes('services/square') ? { cachedOwnFeed: () => null, cachedAlbum: () => null, album: async () => ({ items: [], hasMore: false, nextOffset: 0 }), list: async () => ({ items: [], hasMore: false, nextOffset: 0 }) } :
       name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('user-role') ? { describeUser } : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : service,
     wx: {
       getWindowInfo: () => ({ statusBarHeight: 44, windowWidth: 375 }),
@@ -80,6 +82,8 @@ function pageFixture(options = {}) {
       showToast: args => toasts.push(args),
       showModal: args => modals.push(args),
       setNavigationBarColor: args => navigationColors.push(args.frontColor),
+      nextTick: callback => { if (options.deferRender) renderTasks.push(callback); else callback(); },
+      navigateBack: args => backCalls.push(args),
       navigateTo: args => routes.push(args.url), switchTab: args => {
         routes.push(args.url);
         if (options.failSwitchTab && args.fail) args.fail();
@@ -88,7 +92,7 @@ function pageFixture(options = {}) {
     },
   });
   const page = { ...definition, data: structuredClone(definition.data), setData(values) { Object.assign(this.data, values); } };
-  return { page, service, requests, toasts, routes, modals, navigationColors };
+  return { page, service, requests, toasts, routes, modals, navigationColors, backCalls, renderTasks };
 }
 const ordinary = { _id: 'alice', nickname: '测试同学', role: 'user', certificationStatus: 'unverified', schoolId: '' };
 
@@ -244,7 +248,7 @@ test('主页使用真实身份与日期，不编造关注粉丝，只有认证�
   page.onLoad();
   assert.equal(page.data.navTop, 52);
   assert.equal(page.data.navHeight, 92);
-  assert.equal(page.data.searchRight, 105);
+  assert.equal(page.data.searchLeft, 68);
   page.applyUser({ ...ordinary, createdAt: '2026-11-17T00:00:00Z' });
   assert.equal(page.data.joinedText, '2026年11月 加入');
   assert.equal(page.data.followingCount, 0);
@@ -260,13 +264,44 @@ test('主页使用真实身份与日期，不编造关注粉丝，只有认证�
   assert.equal(page.data.joinedText, '');
 });
 
-test('独立个人主页返回键回到首页，右侧搜索按钮进入新的搜索底栏页面', () => {
+test('无首页页面栈时返回键兜底回首页，搜索按钮仍进入搜索底栏页面', () => {
   const f = pageFixture();
   f.page.applyUser(ordinary);
   f.page.backToHome();
   assert.deepEqual(f.routes, ['/pages/home/index']);
   f.page.openSearch();
   assert.deepEqual(f.routes, ['/pages/home/index', '/pages/search/index']);
+});
+
+test('个人主页先恢复首页与底栏，再沿页面栈原生返回，连续点击不重复跳转', () => {
+  let prepared = 0;
+  const home = { route: 'pages/home/index', prepareMenuReturn() { prepared++; } };
+  const f = pageFixture({ previousPages: [home], deferRender: true });
+  f.page.onLoad();
+  f.page.backToHome(); f.page.backToHome();
+  assert.equal(prepared, 1);
+  assert.equal(f.backCalls.length, 0); assert.equal(f.routes.length, 0);
+  assert.equal(f.renderTasks.length, 1);
+  f.renderTasks.shift()();
+  assert.equal(f.backCalls.length, 1); assert.equal(f.backCalls[0].delta, 1);
+  assert.equal(f.routes.length, 0);
+  f.page.onUnload(); assert.equal(prepared, 1);
+});
+
+test('多层页面一次返回首页，不逐页闪回；返回失败有兜底且失败后允许重试', () => {
+  const home = { route: 'pages/home/index', prepareMenuReturn() {} };
+  const f = pageFixture({ previousPages: [home, { route: 'pages/another/index' }], failSwitchTab: true });
+  f.page.onLoad(); f.page.backToHome();
+  assert.equal(f.backCalls.length, 1); assert.equal(f.backCalls[0].delta, 2);
+  assert.equal(f.routes.length, 0);
+  f.backCalls[0].fail();
+  assert.deepEqual(f.routes, ['/pages/home/index']);
+  assert.equal(f.toasts.at(-1).title, '返回首页失败，请重试');
+  f.page.backToHome(); assert.equal(f.backCalls.length, 2);
+  let prepared = 0;
+  const native = pageFixture({ previousPages: [{ route: 'pages/home/index', prepareMenuReturn() { prepared++; } }] });
+  native.page.onLoad(); native.page.onUnload();
+  assert.equal(prepared, 1); assert.equal(native.routes.length, 0);
 });
 
 test('四个内容选项切换空状态，保留普通用户认证入口与管理员工作台', () => {

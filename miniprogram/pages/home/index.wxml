@@ -1,24 +1,40 @@
 <import src="../../templates/account-menu.wxml" />
 <import src="../../templates/login-sheet.wxml" />
 <view class="home-shell {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
-  <button wx:if="{{!menuOpen}}" size="mini" class="home-avatar-button" style="top: {{navTop}}px; width: {{navButtonHeight}}px; height: {{navButtonHeight}}px;" bindtap="openMenu" aria-label="打开侧面菜单" aria-expanded="{{menuOpen}}"><image wx:if="{{user && user.avatarFileID && !avatarFailed}}" src="{{user.avatarFileID}}" mode="aspectFill" binderror="onAvatarError" /><image wx:else src="/images/avatar.png" mode="aspectFill" /></button>
+  <button size="mini" class="home-avatar-button" style="top: {{navTop}}px; width: {{navButtonHeight}}px; height: {{navButtonHeight}}px;" bindtap="openMenu" disabled="{{menuOpen}}" aria-hidden="{{menuOpen}}" aria-label="打开侧面菜单" aria-expanded="{{menuOpen}}"><image src="/images/avatar.png" mode="aspectFill" /><image class="home-avatar-image {{homeAvatarReady ? 'is-ready' : ''}}" src="{{homeAvatarSource}}" data-source="{{homeAvatarSource}}" mode="aspectFill" bindload="onHomeAvatarLoad" binderror="onAvatarError" /></button>
   <view class="home-page" style="padding-top: {{navHeight}}px;">
-    <view class="home-tabs" role="tablist" aria-label="首页板块">
-      <button size="mini" wx:for="{{tabs}}" wx:key="key" class="home-tab {{activeTab === item.key ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="selectTab" aria-role="tab" aria-selected="{{activeTab === item.key}}" hover-class="none">{{item.label}}</button>
+    <view wx:if="{{tabMenuKey}}" class="home-dropdown-backdrop" bindtap="closeTabMenu" catchtouchmove="stopMenuEvent"></view>
+    <view class="home-tabs {{tabMenuKey ? 'dropdown-open' : ''}}" role="tablist" aria-label="首页板块">
+      <view wx:for="{{tabs}}" wx:key="key" class="home-tab-group">
+        <button size="mini" class="home-tab {{activeTab === item.key ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="selectTab" aria-role="tab" aria-selected="{{activeTab === item.key}}" aria-expanded="{{tabMenuKey === item.key}}" hover-class="none"><view class="home-tab-label"><text>{{item.label}}</text><view class="home-tab-arrow" data-key="{{item.key}}" catchtap="toggleTabMenu"><image class="tab-dropdown-chevron {{tabMenuKey === item.key ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view></view></button>
+        <view wx:if="{{tabMenuKey === item.key}}" class="tab-dropdown" aria-label="{{item.label}}筛选">
+          <button wx:for="{{item.options}}" wx:for-item="option" wx:key="key" class="tab-dropdown-option {{tabFilters[item.key] === option.key ? 'active' : ''}}" data-key="{{item.key}}" data-filter="{{option.key}}" bindtap="selectTabFilter" aria-pressed="{{tabFilters[item.key] === option.key}}" hover-class="none">{{option.label}}</button>
+        </view>
+      </view>
+      <view class="home-tab-indicator" style="left: {{tabIndicatorLeft}}px; width: {{tabIndicatorWidth}}px;" aria-hidden="true"></view>
     </view>
-    <scroll-view class="home-feed" scroll-y="{{!menuOpen && !commentPostId && !loginSheetOpen && !authChecking}}" enhanced show-scrollbar="{{false}}" enable-back-to-top refresher-enabled="{{activeTab === 'square' && !menuOpen && !commentPostId && !loginSheetOpen && !authChecking}}" refresher-triggered="{{pullRefreshing}}" refresher-threshold="48" refresher-default-style="none" refresher-background="#FFFFFF" bindrefresherrefresh="refreshFeed" bindscrolltolower="loadMoreFeed" lower-threshold="160">
-    <block wx:if="{{activeTab === 'square'}}">
+    <view class="home-panels-viewport">
+      <view class="home-panels {{activeTab === 'campus' ? 'show-campus' : ''}}">
+    <scroll-view class="home-feed" scroll-y="{{activeTab === 'square' && !menuOpen && !tabMenuKey && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" enhanced show-scrollbar="{{false}}" enable-back-to-top refresher-enabled="{{activeTab === 'square' && tabFilters.square === 'square' && !menuOpen && !tabMenuKey && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" refresher-triggered="{{pullRefreshing}}" refresher-threshold="48" refresher-default-style="none" refresher-background="#FFFFFF" bindrefresherrefresh="refreshFeed" bindscrolltolower="loadMoreFeed" lower-threshold="160">
+    <block wx:if="{{tabFilters.square === 'square'}}">
       <view wx:if="{{feedError}}" class="feed-error"><text>{{feedError}}</text><button size="mini" bindtap="retryFeed">重试</button></view>
       <block wx:if="{{feedLoading && !posts.length}}"><view wx:for="{{skeletons}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view></block>
-      <block wx:else><square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:share="prepareShare" /><view wx:if="{{!posts.length && !feedError}}" class="feed-empty"><view class="empty-heading">广场还很安静</view><view class="empty-caption">分享一个想法，开启第一段对话</view><button size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button></view><view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view><view wx:elif="{{posts.length && !feedHasMore}}" class="feed-end">已经看到这里了</view></block>
+      <block wx:else><square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" /><view wx:if="{{!posts.length && !feedError}}" class="feed-empty"><view class="empty-heading">广场还很安静</view><view class="empty-caption">写下一个想法，开启第一段对话</view><button size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button></view><view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view><view wx:elif="{{posts.length && !feedHasMore}}" class="feed-end">已经看到这里了</view></block>
     </block>
-    <view wx:elif="{{activeTab === 'following'}}" class="feed-empty"><view class="empty-heading">关注你感兴趣的人</view><view class="empty-caption">关注动态将在后续开放</view></view>
-    <view wx:else class="feed-empty"><view class="empty-heading">你的校园，你的圈子</view><view class="empty-caption">{{identity.isStudent ? '校园圈将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view><button wx:if="{{!identity.isStudent}}" size="mini" class="empty-publish" bindtap="openCampusCertification">去认证</button></view>
+    <view wx:elif="{{tabFilters.square === 'following'}}" class="feed-empty"><view class="empty-heading">关注你感兴趣的人</view><view class="empty-caption">关注动态将在后续开放</view></view>
     <view slot="refresher" class="home-refresh" role="status" aria-label="正在刷新动态"><view class="home-refresh-spinner"></view></view>
     </scroll-view>
+    <scroll-view class="home-feed" scroll-y="{{activeTab === 'campus' && !menuOpen && !tabMenuKey && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" enhanced show-scrollbar="{{false}}" enable-back-to-top>
+      <view wx:if="{{tabFilters.campus === 'following'}}" class="feed-empty"><view class="empty-heading">关注你感兴趣的人</view><view class="empty-caption">关注动态将在后续开放</view></view>
+    <view wx:else class="feed-empty"><view class="empty-heading">你的校园，你的圈子</view><view class="empty-caption">{{identity.isStudent ? '校园圈将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view><button wx:if="{{!identity.isStudent}}" size="mini" class="empty-publish" bindtap="openCampusCertification">去认证</button></view>
+    </scroll-view>
+      </view>
+    </view>
   </view>
-  <button wx:if="{{activeTab === 'square' && !menuOpen && !loginSheetOpen && !authChecking}}" size="mini" class="home-compose-button" bindtap="openComposer" aria-label="发布动态"><image src="/images/interface/feather-white.svg" /></button>
+  <button wx:if="{{activeTab === 'square' && tabFilters.square === 'square' && !tabMenuKey && !menuOpen && !loginSheetOpen && !authChecking && !composerOpen}}" size="mini" class="home-compose-button" bindtap="openComposer" aria-label="发布动态"><image src="/images/interface/plus-white.svg" /></button>
   <template is="account-menu" data="{{user: user, accountHint: accountHint, menuOpen: menuOpen, navHeight: navHeight, followerCount: followerCount, followingCount: followingCount, menuItems: menuItems, utilityMenuItems: utilityMenuItems, loading: loading, coverBusy: false, confirmingLogout: confirmingLogout}}" />
   <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: error, loading: loading}}" />
   <comments-sheet wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>
+
+<square-composer wx:if="{{composerOpen}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />

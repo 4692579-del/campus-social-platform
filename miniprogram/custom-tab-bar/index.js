@@ -2,6 +2,7 @@ Component({
   data: {
     authBlocked: false,
     commentsOpen: false,
+    composerOpen: false,
     menuOpen: false,
     menuInstant: false,
     selected: 0,
@@ -13,7 +14,26 @@ Component({
       { label: '搜索', path: '/pages/search/index', icon: 'search', iconSource: '/images/interface/search', iconExtension: 'svg' },
     ],
   },
+  lifetimes: {
+    attached() { this.syncPageState(); },
+    ready() { this.syncPageState(); },
+  },
+  pageLifetimes: { show() { this.syncPageState(); } },
   methods: {
+    syncPageState() {
+      const pages = getCurrentPages(), page = pages[pages.length - 1];
+      if (!page || !page.data) return;
+      // 相册/相机返回时底栏可能比页面晚恢复，始终以当前页面为准。
+      const next = {
+        composerOpen: Boolean(page.data.composerOpen),
+        commentsOpen: Boolean(page.data.commentPostId),
+        authBlocked: Boolean(page.data.authChecking || page.data.loginSheetOpen || page.data.composerOpen),
+        menuOpen: Boolean(page.data.menuOpen),
+        menuInstant: Boolean(page.data.menuInstant),
+      };
+      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => this.data[key] !== value));
+      if (Object.keys(changed).length) this.setData(changed);
+    },
     stopMenuTouch() {},
     closeProfileMenu() {
       const pages = getCurrentPages();
@@ -21,7 +41,8 @@ Component({
       if (page && typeof page.closeMenu === 'function') page.closeMenu();
     },
     switchTab(event) {
-      if (this.data.authBlocked || this.data.commentsOpen) return;
+      this.syncPageState();
+      if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen) return;
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }
       const index = Number(event.currentTarget.dataset.index);
       if (!Number.isInteger(index) || !this.data.items[index] || index === this.data.selected || this._switching) return;

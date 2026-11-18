@@ -3,18 +3,26 @@
 page { background: #fff; }
 .home-shell { position: relative; width: 100%; height: 100vh; overflow: hidden; }
 .home-page { display: flex; flex-direction: column; width: 100%; height: 100vh; padding-bottom: calc(89rpx + env(safe-area-inset-bottom)); box-sizing: border-box; background: #fff; color: #15191d; }
-.home-page { transition: transform 0.26s ease; }
-.home-shell.menu-open .home-page { transform: translateX(66.666667vw); }
+.home-page { position: relative; left: 0; transition: left 0.26s ease; }
+/* 不把含有增强滚动及图片轮播的整页长期提升为变换合成层。 */
+.home-shell.menu-open .home-page { left: 66.666667vw; }
 .home-shell.menu-instant .home-page, .home-shell.menu-instant .profile-menu-layer, .home-shell.menu-instant .menu-panel, .home-shell.menu-instant .menu-backdrop { transition: none; }
 .home-shell .home-avatar-button { position: fixed; z-index: 150; left: 24rpx; display: block; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: #f1f3f5; line-height: 1; transition: transform 0.26s ease; }
 .home-avatar-button::after { border: 0; }
 .home-avatar-button image { display: block; width: 100%; height: 100%; }
-.home-tabs { display: flex; align-items: stretch; flex-shrink: 0; margin: 12rpx 24rpx 0; border-bottom: 1rpx solid #e9ebf0; background: #fff; }
-.home-feed { flex: 1; width: 100%; height: 0; min-height: 0; }
-.home-page .home-tab { position: relative; display: flex; align-items: center; justify-content: center; flex: 1 1 0; width: 0; min-width: 0; height: 96rpx; margin: 0; padding: 0 8rpx 8rpx; box-sizing: border-box; border: 0; border-radius: 0; background: #fff; color: #777c88; font-size: 32rpx; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+.home-avatar-button .home-avatar-image { position: absolute; inset: 0; opacity: 0; }
+.home-avatar-button .home-avatar-image.is-ready { opacity: 1; }
+.home-shell.menu-open .home-avatar-button { opacity: 0; pointer-events: none; }
+.home-tabs { position: relative; display: flex; align-items: stretch; flex-shrink: 0; margin: 12rpx 24rpx 0; border-bottom: 1rpx solid #e9ebf0; background: #fff; }
+.home-panels-viewport { flex: 1; width: 100%; height: 0; min-height: 0; overflow: hidden; }
+.home-panels { position: relative; left: 0; display: flex; width: 200%; height: 100%; transition: left .26s ease; }
+.home-panels.show-campus { left: -100%; }
+.home-feed { flex: 0 0 50%; width: 50%; height: 100%; min-width: 0; min-height: 0; }
+.home-page .home-tab { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 96rpx; margin: 0; padding: 0 8rpx; box-sizing: border-box; border: 0; border-radius: 0; background: #fff; color: #777c88; font-size: 32rpx; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 .home-tab::after { border: 0; }
 .home-page .home-tab.selected { color: #15191d; font-weight: 700; }
-.home-tab.selected::before { content: ''; position: absolute; left: 50%; bottom: 0; width: 68rpx; height: 6rpx; border-radius: 6rpx; background: #4775fa; transform: translateX(-50%); }
+.home-tab-label { position: relative; display: inline-flex; align-items: center; height: 100%; padding-bottom: 8rpx; box-sizing: border-box; }
+.home-tab-indicator { position: absolute; z-index: 2; bottom: 0; height: 6rpx; border-radius: 6rpx; background: #4775fa; pointer-events: none; transition: left .26s ease, width .26s ease; }
 .home-refresh { display: flex; align-items: center; justify-content: center; width: 100%; height: 48px; background: #fff; pointer-events: none; }
 .home-refresh-spinner { width: 32rpx; height: 32rpx; box-sizing: border-box; border: 4rpx solid #e4ebff; border-top-color: #4775fa; border-right-color: #4775fa; border-radius: 50%; animation: refresh-spin .7s linear infinite; }
 @keyframes refresh-spin { to { transform: rotate(360deg); } }
@@ -35,3 +43,9 @@ page { background: #fff; }
 .skeleton-body view { height: 22rpx; margin: 8rpx 0 22rpx; border-radius: 8rpx; background: #f1f3f5; }
 .skeleton-body view:first-child { width: 45%; }
 .skeleton-body view:last-child { width: 75%; }
+
+.home-tab-group { position: relative; flex: 1 1 0; min-width: 0; }
+.home-tab-group .tab-dropdown { width: 150rpx; }
+.home-tabs.dropdown-open { z-index: 180; }
+.home-dropdown-backdrop { position: fixed; z-index: 170; inset: 0; background: transparent; }
+.home-tab-arrow { display: flex; align-items: center; justify-content: center; align-self: stretch; width: 48rpx; margin-right: -12rpx; }

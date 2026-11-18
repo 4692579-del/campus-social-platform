@@ -1,1 +1,7 @@
-{ "navigationStyle": "custom", "navigationBarTextStyle": "black", "backgroundColor": "#FFFFFF", "disableScroll": false }
+{
+  "navigationStyle": "custom",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#F3F5F7",
+  "disableScroll": true,
+  "usingComponents": { "square-composer": "/components/square-composer/index" }
+}

@@ -1,0 +1,21 @@
+<import src="../../templates/login-sheet.wxml" />
+<view class="square-page detail-page">
+  <view class="square-nav" style="height: {{navHeight}}px;">
+    <button class="square-back" style="top: {{navTop}}px; height: {{navButtonHeight}}px;" bindtap="back" aria-label="返回"><image src="/images/interface/chevron-left.svg" mode="aspectFit" /></button>
+    <view class="square-nav-title" style="top: {{navTop}}px; line-height: {{navButtonHeight}}px;">动态详情</view>
+  </view>
+  <view class="detail-body" style="top: {{navHeight}}px;">
+    <block wx:if="{{posts.length}}">
+      <comments-sheet wx:for="{{commentMounts}}" wx:key="key" id="detail-comments" post-id="{{postId}}" viewer="{{user}}" embedded top-offset="{{navHeight}}" bind:login="commentLogin" bind:close="onCommentsClose" bind:changed="commentChanged">
+        <view slot="post">
+          <view wx:if="{{error}}" class="inline-error">{{error}}<button class="retry-link" bindtap="retry">重试</button></view>
+          <square-post post="{{posts[0]}}" viewer="{{user}}" detail bind:react="reactPost" bind:reply="focusComments" bind:more="managePost" />
+        </view>
+      </comments-sheet>
+    </block>
+    <view wx:elif="{{unavailable || (!loading && !error)}}" class="detail-empty"><image src="/images/interface/alert-circle-muted.svg" /><view>动态已删除或不可见</view><text>返回看看其他动态吧</text></view>
+    <view wx:elif="{{error}}" class="inline-error">{{error}}<button class="retry-link" bindtap="retry">重试</button></view>
+    <view wx:else class="square-notice">正在读取动态…</view>
+  </view>
+  <template is="login-sheet" data="{{loginSheetOpen, loading: loginLoading, error: loginError, cancelText: '暂不登录'}}" />
+</view>

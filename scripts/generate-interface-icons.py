@@ -5,9 +5,18 @@ OUT = Path(__file__).resolve().parents[1] / 'miniprogram/images/interface'
 OUT.mkdir(parents=True, exist_ok=True)
 
 SHAPES = {
+    'maximize': ['<path d="M14 4h6v6M10 20H4v-6"/>'],
+    'minimize': ['<path d="M20 10h-6V4M4 14h6v6"/>'],
+    'file-lines': ['<path d="M14 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3V10Z"/>', '<path d="M14 3v7h7M7 8h3m-3 6h10m-10 4h6"/>'],
+    'sliders': ['<rect x="3" y="3" width="18" height="18" rx="4"/>', '<path d="M8 7v10m8-10v10M6 13h4m4-3h4"/>'],
+    'arrow-up': ['<path d="M12 20V4m-6 6 6-6 6 6"/>'],
+    'comment-image': ['<rect x="3" y="3" width="18" height="18" rx="4"/>', '<circle cx="8" cy="8" r="1" fill="#171B20" stroke="none"/>', '<path d="M3 16c3-4 6-4 9-1 3-6 6-6 9-4"/>'],
+    'comment-sticker': ['<path d="M14 3H7a4 4 0 0 0-4 4v10a4 4 0 0 0 4 4h10a4 4 0 0 0 4-4v-7Z"/>', '<path d="M14 3v5a2 2 0 0 0 2 2h5M7.5 14a5 5 0 0 0 9 0"/>', '<circle cx="8" cy="10" r=".8" fill="#171B20" stroke="none"/>'],
+    'comment-gif': ['<rect x="3" y="3" width="18" height="18" rx="4"/>', '<path d="M9 8H7v8h2v-4H8m4-4v8m3 0V8h3m-3 4h2"/>'],
+    'plus': ['<path d="M12 4v16M4 12h16"/>'],
+    'paper-plane': ['<path d="M5.2 4h13.6c1.8 0 2.9 1.9 2 3.5l-7.2 13c-.9 1.6-3.2 1.2-3.7-.6L8 13 3.4 7.8C2 6.2 3.1 4 5.2 4Z"/>', '<path d="m8 13 8.4-4.9"/>'],
     'menu-two': ['<path d="M3 8h18M3 16h12"/>'],
     'ellipsis': ['<path d="M5 12h.01M12 12h.01M19 12h.01"/>'],
-    'send': ['<path d="m22 2-7 20-4-9-9-4Z"/>', '<path d="M22 2 11 13"/>'],
     'message-square': ['<path d="M21 6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h1v4l5-4h6a3 3 0 0 0 3-3Z"/>', '<path d="M8 10h.01M12 10h.01M16 10h.01"/>'],
     'chart-bars': ['<path d="M5 20V10M10 20V4M15 20v-7M20 20V7"/>'],
     'message-circle': ['<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H9l-6 3 1.8-6A8.5 8.5 0 1 1 21 11.5Z"/>'],
@@ -101,7 +110,7 @@ SHAPES = {
 
 for name, shapes in SHAPES.items():
     colors = [('', '#171B20')]
-    if name in ('calendar', 'chevron-right', 'chevron-down', 'copy', 'message-circle', 'repeat', 'heart', 'heart-broken', 'alert-circle', 'share', 'chart-bars', 'send', 'ellipsis'):
+    if name in ('calendar', 'chevron-right', 'chevron-down', 'copy', 'message-circle', 'repeat', 'heart', 'heart-broken', 'alert-circle', 'share', 'chart-bars', 'ellipsis', 'paper-plane'):
         colors.append(('-muted', '#687580'))
     if name in ('album', 'bell', 'reply-bubble', 'search', 'message-square'):
         colors = [('', '#777C88'), ('-active', '#4775FA')]
@@ -109,7 +118,7 @@ for name, shapes in SHAPES.items():
         colors.append(('-muted', '#687580'))
     if name in ('menu', 'search', 'chevron-left'):
         colors.append(('-white', '#FFFFFF'))
-    if name == 'feather':
+    if name in ('feather', 'plus', 'arrow-up'):
         colors.append(('-white', '#FFFFFF'))
     if name in ('repeat', 'globe'):
         colors.append(('-active', '#4775FA'))

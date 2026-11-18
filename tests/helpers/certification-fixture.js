@@ -8,9 +8,9 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
 
 function fixture(options = {}) {
   const tables = new Map(['users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states'].map(name => [name, new Map()]));
-  const uploads = [], proofRequests = [], queries = [];
+  const uploads = [], proofRequests = [], queries = [], docReads = [];
   const hooks = { beforeTransaction: options.beforeTransaction };
-  let tail = Promise.resolve();
+  let tail = Promise.resolve(), transactionReads = 0;
   function collection(name, source, inTransaction = false) {
     assert.ok(source.has(name), '集合必须由部署者创建');
     const records = source.get(name);
@@ -19,6 +19,8 @@ function fixture(options = {}) {
         const ordering = [];
         let offset = 0, limit = Infinity;
         const query = {
+          count: async () => ({ total: [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
+            value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
           orderBy: (field, direction) => { ordering.push([field, direction]); return query; },
           skip: value => { offset = value; return query; },
           limit: value => { limit = value; return query; },
@@ -54,7 +56,15 @@ function fixture(options = {}) {
         records.set(data._id, { ...data });
       },
       doc: id => ({
-        get: async () => ({ data: records.has(id) ? { ...records.get(id) } : null }),
+        get: async () => {
+          docReads.push({ name, id, inTransaction });
+          if (inTransaction && hooks.serialTransactionReads) {
+            if (transactionReads) throw Object.assign(new Error('Concurrent reads in one transaction'), { code: 'TRANSACTION_CONCURRENT_READ' });
+            transactionReads++;
+            try { await Promise.resolve(); } finally { transactionReads--; }
+          }
+          return { data: records.has(id) ? { ...records.get(id) } : null };
+        },
         set: async ({ data }) => {
           if (inTransaction && options.failCollection === name) throw new Error('simulated write failure');
           records.set(id, { ...data, _id: id });
@@ -84,12 +94,13 @@ function fixture(options = {}) {
           tables.get(name).clear();
           for (const [id, row] of rows) tables.get(name).set(id, row);
         }
-        return { result, errMsg: 'runTransaction:ok' };
+        return hooks.transactionResult === 'direct' ? result : { result, errMsg: 'runTransaction:ok' };
       } finally { release(); }
     },
   };
   const handle = createUserService(db, {
     checkText: options.checkText || (async () => true),
+    processSquareImages: options.processSquareImages,
     randomAccountId: options.randomAccountId,
     proofStorageReady: options.ready !== false,
     uploadProof: async value => {
@@ -105,7 +116,7 @@ function fixture(options = {}) {
     verifyProof: async file => { proofRequests.push(file); return options.proofAvailable !== false; },
   });
   const alice = { openid: 'alice', env: 'test' }, bob = { openid: 'bob', env: 'test' }, admin = { openid: 'admin', env: 'test' };
-  const f = { db, handle, alice, bob, admin, uploads, proofRequests, queries, hooks,
+  const f = { db, handle, alice, bob, admin, uploads, proofRequests, queries, docReads, hooks,
     accountIds: tables.get('account_ids'),
     users: tables.get('users'), applications: tables.get('certification_applications'), reviews: tables.get('certification_reviews'),
     squarePosts: tables.get('square_posts'), squareReplies: tables.get('square_replies'), squareInteractions: tables.get('square_interactions'), squareReports: tables.get('square_reports'),

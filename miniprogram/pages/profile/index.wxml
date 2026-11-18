@@ -1,14 +1,31 @@
 <import src="../../templates/login-sheet.wxml" />
 <view class="profile-shell">
-  <view class="profile-header-controls" style="top: {{navTop - 4}}px; height: {{navButtonHeight + 8}}px; right: {{searchRight}}px;">
-    <button size="mini" class="profile-menu-toggle" style="width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="backToHome" aria-label="返回首页"><image src="/images/interface/chevron-left-white.svg" mode="aspectFit" /></button>
+  <view class="profile-navigation {{navBlurOpacity === 0 ? 'is-clear' : ''}}" style="height: {{navHeight}}px;">
+    <view class="profile-nav-background" aria-hidden="true">
+      <view class="profile-nav-blur" style="opacity: {{navBlurOpacity}};">
+        <view class="profile-nav-scene blurred-cover" style="height: {{coverArtHeight}}px; transform: translateY(-{{navCoverOffset}}px);">
+          <image wx:if="{{coverFileID && !coverFailed}}" class="cover-image" src="{{coverFileID}}" mode="aspectFill" />
+        </view>
+      </view>
+      <view class="profile-nav-tint" style="opacity: {{navShadeOpacity}};"></view>
+    </view>
+    <view class="profile-header-controls" style="top: {{navTop - 4}}px; height: {{navButtonHeight + 8}}px;">
+      <button size="mini" class="profile-menu-toggle" style="width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="backToHome" aria-label="返回首页"><image src="/images/interface/chevron-left-white.svg" mode="aspectFit" /></button>
+      <view class="profile-nav-title" style="left: {{navTitleInset}}px; right: {{navTitleInset}}px; opacity: {{navTitleOpacity}};" aria-hidden="{{navTitleOpacity === 0}}"><text class="profile-nav-name">{{user.nickname}}</text><text class="profile-nav-count">{{postCountText}}</text></view>
+      <button size="mini" class="profile-search-button" style="left: {{searchLeft}}px; width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="openSearch" aria-label="搜索"><image src="/images/interface/search-white.svg" mode="aspectFit" /></button>
+    </view>
   </view>
+  <scroll-view class="profile-scroll" scroll-y="{{!authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !composerOpen}}" enhanced bounces="{{false}}" show-scrollbar="{{false}}" enable-back-to-top bindscroll="onProfileScroll" bindscrolltoupper="onProfileScrollUpper" upper-threshold="1" bindscrolltolower="loadMoreOwnPosts" lower-threshold="160" bindtouchstart="startProfilePull" bindtouchmove="moveProfilePull" bindtouchend="finishProfilePull" bindtouchcancel="cancelProfilePull">
   <view class="profile-page">
-  <view class="profile-cover" style="height: calc({{navHeight}}px + 260rpx);">
+  <view class="profile-cover" style="height: {{coverHeight}}px;">
+    <view class="profile-cover-art" style="height: {{coverArtHeight}}px;">
     <image wx:if="{{coverFileID && !coverFailed}}" class="cover-image" src="{{coverFileID}}" mode="aspectFill" binderror="onCoverError" />
     <view class="cover-shade"></view>
+    </view>
+    <view class="profile-pull-indicator" style="top: calc({{coverHeight + (profileRefreshing ? 0 : profilePullOffset / 2)}}px - 100rpx); opacity: {{profileRefreshing ? 1 : pullOpacity}};" role="status" aria-label="{{profileRefreshing ? '正在刷新' : '下拉刷新'}}"><view style="transform: rotate({{pullRotation}}deg);"><view class="profile-pull-spinner {{profileRefreshing ? 'is-refreshing' : ''}}"></view></view></view>
   </view>
 
+  <view class="profile-white {{pullDragging ? 'is-pulling' : ''}}" style="transform: translateY({{profilePullOffset}}px);">
   <view class="profile-body">
     <image class="profile-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
     <view wx:if="{{error && !loginSheetOpen}}" class="cs-error profile-error">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading || coverBusy}}">重新读取</button></view>
@@ -18,6 +35,7 @@
       <view wx:elif="{{identity.isAdmin}}" class="role-badge">管理员</view>
       <view wx:elif="{{user}}" class="verified-badge unverified-badge" bindtap="openCertification" aria-role="button" aria-label="未认证，查看学校认证"><image class="verification-icon" src="/images/verification/unverified.png" mode="aspectFit" /><text>未认证</text></view>
     </view>
+    <view wx:if="{{user.accountId}}" class="profile-account">@{{user.accountId}}</view>
     <view wx:if="{{user.bio}}" class="profile-bio">{{user.bio}}</view>
     <view wx:if="{{joinedText}}" class="joined-row" bindtap="openAccountAbout" aria-role="button" aria-label="加入日期，查看关于你的账号"><image class="calendar-icon" src="/images/interface/calendar-muted.svg" mode="aspectFit" /><text>{{joinedText}}</text><image class="account-chevron" src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /></view>
     <view class="profile-stats"><view><text class="stat-count">{{likeCount}}</text><text>获赞</text></view><view><text class="stat-count">{{followingCount}}</text><text>关注</text></view><view><text class="stat-count">{{followerCount}}</text><text>粉丝</text></view></view>
@@ -31,31 +49,45 @@
     </view>
   </view>
 
+  <view class="profile-timeline" style="min-height: calc(100vh - {{navHeight}}px);">
   <view wx:if="{{postsMenuOpen}}" class="posts-menu-backdrop" bindtap="closePostsMenu" catchtouchmove="stopMenuEvent"></view>
-  <view class="content-tabs {{postsMenuOpen ? 'posts-menu-open' : ''}}" role="tablist">
+  <view class="content-tabs {{postsMenuOpen ? 'posts-menu-open' : ''}}" style="top: {{navHeight}}px;" role="tablist">
     <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
       <image class="content-tab-icon" src="{{item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
       <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.label}}</text>
-      <image wx:if="{{item.key === 'posts' && selectedContent === 'posts'}}" class="posts-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
+      <image wx:if="{{item.key === 'posts' && selectedContent === 'posts'}}" class="tab-dropdown-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
     </button>
-    <view wx:if="{{postsMenuOpen}}" class="posts-menu" aria-label="动态来源">
-      <button class="posts-menu-option {{postScope === 'square' ? 'active' : ''}}" data-scope="square" bindtap="selectPostScope" aria-label="广场动态" aria-pressed="{{postScope === 'square'}}">广场动态</button>
-      <button class="posts-menu-option {{postScope === 'campus' ? 'active' : ''}}" data-scope="campus" bindtap="selectPostScope" aria-label="校园圈" aria-pressed="{{postScope === 'campus'}}">校园圈</button>
+    <view wx:if="{{postsMenuOpen}}" class="posts-menu tab-dropdown" aria-label="动态来源">
+      <button class="tab-dropdown-option {{postScope === 'square' ? 'active' : ''}}" data-scope="square" bindtap="selectPostScope" aria-label="广场动态" aria-pressed="{{postScope === 'square'}}">动态广场</button>
+      <button class="tab-dropdown-option {{postScope === 'campus' ? 'active' : ''}}" data-scope="campus" bindtap="selectPostScope" aria-label="校园圈" aria-pressed="{{postScope === 'campus'}}">校园圈</button>
     </view>
   </view>
   <block wx:if="{{selectedContent === 'posts' && postScope === 'square'}}">
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
     <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
     <block wx:else>
-      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:share="prepareShare" />
+      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" />
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>
     </block>
   </block>
   <view wx:elif="{{selectedContent === 'posts'}}" class="content-empty"><view class="empty-title">{{isVerified ? '校园圈动态将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view></view>
+  <block wx:elif="{{selectedContent === 'album'}}">
+    <view wx:if="{{albumError}}" class="profile-post-error"><text>{{albumError}}</text><button bindtap="retryAlbum">重试</button></view>
+    <view class="profile-album"><image wx:for="{{albumImages}}" wx:key="_id" src="{{item.fileID}}" mode="aspectFill" lazy-load data-index="{{index}}" bindtap="previewAlbum" /></view>
+    <view wx:if="{{albumLoading && !albumImages.length}}" class="profile-post-end">正在读取相册…</view>
+    <view wx:elif="{{!albumImages.length && !albumError}}" class="content-empty"><view class="empty-title">还没有发布图片</view></view>
+    <view wx:if="{{albumMoreLoading}}" class="profile-post-end">正在加载…</view>
+    <button wx:elif="{{albumHasMore}}" class="album-more" bindtap="loadMoreOwnPosts">加载更多图片</button>
+  </block>
   <view wx:else class="content-empty"><view class="empty-title">{{emptyText}}</view></view>
   </view>
+  </view>
+  </view>
+  </scroll-view>
   <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: error, loading: loading}}" />
   <comments-sheet wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>
+
+<square-composer wx:if="{{composerOpen}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />

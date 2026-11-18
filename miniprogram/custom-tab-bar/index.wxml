@@ -1,4 +1,4 @@
-<view wx:if="{{!authBlocked && !commentsOpen}}" class="tab-bar-viewport {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
+<view wx:if="{{!authBlocked && !commentsOpen && !composerOpen}}" class="tab-bar-viewport {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
   <view class="tab-bar">
     <view class="tab-items">
       <button wx:for="{{items}}" wx:key="path" class="tab-item" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" hover-class="tab-item-pressed">

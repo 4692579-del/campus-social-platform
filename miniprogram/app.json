@@ -6,6 +6,7 @@
     "pages/tasks/index",
     "pages/search/index",
     "pages/square-compose/index",
+    "pages/square-detail/index",
     "pages/profile/index",
     "pages/account-about/index",
     "pages/edit-profile/index",
