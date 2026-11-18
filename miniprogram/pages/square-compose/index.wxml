@@ -1,0 +1,10 @@
+<import src="../../templates/login-sheet.wxml" />
+<view class="square-page compose-page" style="padding-top: {{navHeight}}px;">
+  <view class="square-nav" style="height: {{navHeight}}px;"><button size="mini" class="square-back" bindtap="cancel" disabled="{{publishing}}" aria-label="关闭并保留草稿" style="top: {{navTop}}px; height: {{navButtonHeight}}px;"><image src="/images/interface/x.svg" /></button><view class="square-nav-title" style="top: {{navTop}}px; line-height: {{navButtonHeight}}px;">发布动态</view></view>
+  <view class="compose-top"><image class="compose-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="audience-chip"><image src="/images/interface/globe-active.svg" /><text>动态广场</text></view><button size="mini" class="publish-button" bindtap="publish" disabled="{{!canPublish || publishing || !user}}" loading="{{publishing}}">{{publishing ? '发布中' : '发布'}}</button></view>
+  <view class="compose-editor"><textarea value="{{content}}" bindinput="onInput" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="2000" auto-height disabled="{{publishing || !user || loginSheetOpen}}" show-confirm-bar="{{false}}" cursor-spacing="30" /><view class="compose-count {{count > 1000 ? 'over-limit' : ''}}">{{count}} / 1000</view></view>
+  <view class="audience-note"><image src="/images/interface/globe-active.svg" /><text>公开 · 仅发布至动态广场</text></view>
+  <view class="draft-note">离开时会自动保留草稿</view>
+  <view wx:if="{{error}}" class="inline-error">{{error}}</view>
+  <template is="login-sheet" data="{{authChecking: false, loginSheetOpen: loginSheetOpen, error: loginError, loading: loginLoading}}" />
+</view>

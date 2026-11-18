@@ -1,8 +1,8 @@
-.operator-card { background: #fff4c6; }
+.operator-card { background: #eef3ff; }
 .operator-name { margin: 24rpx 0 12rpx; word-break: break-all; }
 .permission-row { display: flex; justify-content: space-between; gap: 20rpx; padding: 24rpx 0; border-bottom: 1rpx solid #f0f0f0; font-size: 28rpx; }
 .permission-note { font-size: 24rpx; margin-top: 20rpx; }
-.verified { color: #756018; }
+.verified { color: #3d63c6; }
 .module-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16rpx; margin-bottom: 22rpx; }
 .back-button { margin-top: 24rpx; }
 .review-entry { margin-top: 24rpx; }

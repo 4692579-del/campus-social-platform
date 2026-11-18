@@ -1,0 +1,24 @@
+<template name="account-menu">
+<view class="account-menu profile-menu-layer {{menuOpen ? 'is-open' : ''}}" aria-hidden="{{!menuOpen}}" bindtap="closeMenu" catchtouchmove="stopMenuEvent">
+    <view class="menu-backdrop" bindtap="closeMenu" aria-role="button" aria-label="关闭菜单"></view>
+    <view class="menu-panel" catchtap="stopMenuEvent" role="dialog" aria-modal="true" aria-label="个人主页菜单">
+      <view class="menu-account" style="padding-top: calc({{navHeight}}px + 20rpx);">
+        <image class="menu-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" bindtap="openProfile" aria-role="button" aria-label="进入个人主页" />
+        <view class="menu-nickname">{{user ? user.nickname : accountHint || '未登录'}}</view>
+        <view wx:if="{{user}}" class="menu-account-id">ID：{{user.accountId || '暂未分配'}}</view>
+        <view class="menu-account-stats"><view><text class="menu-stat-count">{{followerCount}}</text><text>粉丝</text></view><view><text class="menu-stat-count">{{followingCount}}</text><text>关注</text></view></view>
+      </view>
+      <scroll-view class="menu-scroll" scroll-y="{{menuOpen}}">
+        <view class="menu-items">
+          <button size="mini" wx:for="{{menuItems}}" wx:key="key" class="menu-item" data-key="{{item.key}}" bindtap="selectMenuItem"><image wx:if="{{item.key === 'certification'}}" class="menu-item-icon" src="/images/verification/black.svg" mode="aspectFit" /><image wx:else class="menu-item-icon" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" /><text>{{item.label}}</text></button>
+        </view>
+        <view class="menu-utilities">
+          <view wx:for="{{utilityMenuItems}}" wx:key="key" class="menu-utility-section"><button size="mini" class="menu-item menu-utility-item" data-key="{{item.key}}" bindtap="selectMenuItem"><image class="menu-item-icon" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" /><text>{{item.label}}</text></button></view>
+        </view>
+        <view class="menu-footer">
+          <button size="mini" class="menu-logout" bindtap="logout" disabled="{{!user || loading || coverBusy || confirmingLogout}}">退出登录</button>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</template>

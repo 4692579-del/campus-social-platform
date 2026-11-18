@@ -8,7 +8,7 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
   proofBase64, requestId: 'test-request-00000001', ...extra });
 
 function fixture({ ready = true, beforeTransaction, failUserUpdate = false, failUpload = false } = {}) {
-  let tables = new Map([['users', new Map()], ['certification_applications', new Map()]]);
+  let tables = new Map([['users', new Map()], ['account_ids', new Map()], ['certification_applications', new Map()]]);
   const uploads = [];
   let tail = Promise.resolve();
   function collection(name, source, inTransaction = false) {
@@ -164,7 +164,10 @@ test('未建档、无可信身份、管理员及封禁账号不能提交，前�
 
 test('上传期间被封禁或提升为管理员，事务重读权限并拒绝保存', async () => {
   for (const changes of [{ status: 'banned' }, { role: 'admin' }]) {
-    const f = fixture({ beforeTransaction: tables => Object.assign(tables.get('users').get(userIdFor('alice')), changes) });
+    const f = fixture({ beforeTransaction: tables => {
+      const user = tables.get('users').get(userIdFor('alice'));
+      if (user) Object.assign(user, changes);
+    } });
     await f.login();
     assert.equal((await f.submit()).code, changes.status ? 'ACCOUNT_DISABLED' : 'FORBIDDEN');
     assert.equal(f.applications.size, 0);

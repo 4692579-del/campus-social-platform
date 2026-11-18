@@ -3,41 +3,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createUserService, userIdFor } = require('../cloudfunctions/userService/service');
 
-function fixture({ beforeConditionalUpdate } = {}) {
-  const records = new Map();
-  const db = {
-    serverDate: () => 'server-time',
-    collection(name) {
-      assert.equal(name, 'users');
-      return {
-        where(query) {
-          const matches = record => Object.entries(query).every(([key, value]) => record[key] === value);
-          return {
-            get: async () => ({ data: [...records.values()].filter(matches).map(record => ({ ...record })) }),
-            update: async ({ data }) => {
-              if (beforeConditionalUpdate) beforeConditionalUpdate(records, query);
-              let updated = 0;
-              for (const [id, record] of records) {
-                if (!matches(record)) continue;
-                records.set(id, { ...record, ...data });
-                updated += 1;
-              }
-              return { stats: { updated } };
-            },
-          };
-        },
-        async add({ data }) {
-          if (records.has(data._id)) throw new Error('duplicate id');
-          records.set(data._id, { ...data });
-        },
-        doc(id) { return { update: async ({ data }) => {
-          assert.ok(records.has(id));
-          records.set(id, { ...records.get(id), ...data });
-        } }; },
-      };
-    },
-  };
-  return { records, handle: createUserService(db), alice: { openid: 'alice', env: 'campus-test' }, bob: { openid: 'bob', env: 'campus-test' } };
+function fixture(options = {}) {
+  const f = require('./helpers/certification-fixture').fixture({ ...options, serverTime: 'server-time' });
+  return { records: f.users, handle: f.handle,
+    alice: { openid: 'alice', env: 'campus-test' }, bob: { openid: 'bob', env: 'campus-test' } };
 }
 
 test('首次登录建档为普通用户，返回可信角色但不泄露 openid', async () => {

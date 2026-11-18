@@ -8,5 +8,5 @@
 .reason-input { box-sizing: border-box; width: 100%; height: 210rpx; padding: 22rpx; background: #f6f6f6; border-radius: 16rpx; font-size: 28rpx; }
 .decision-button { margin-top: 26rpx; }
 .rejection { margin-top: 24rpx; color: #a44127; line-height: 1.7; font-size: 26rpx; }
-.notice { padding: 26rpx; border-radius: 20rpx; background: #fff4c6; color: #775b10; font-size: 26rpx; line-height: 1.7; margin-bottom: 24rpx; }
+.notice { padding: 26rpx; border-radius: 20rpx; background: #eef3ff; color: #3d63c6; font-size: 26rpx; line-height: 1.7; margin-bottom: 24rpx; }
 .back-button { margin-top: 24rpx; }

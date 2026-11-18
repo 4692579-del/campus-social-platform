@@ -3,7 +3,8 @@ const crypto = require('crypto');
 const MAX_PROOF_BYTES = 1024 * 1024;
 const COLLECTION = 'certification_applications';
 const EXPECTED_CODES = ['INVALID_CERTIFICATION', 'INVALID_PROOF', 'CERTIFICATION_PENDING',
-  'ALREADY_CERTIFIED', 'CERTIFICATION_STATE_ERROR', 'CERTIFICATION_NOT_READY'];
+  'ALREADY_CERTIFIED', 'CERTIFICATION_STATE_ERROR', 'CERTIFICATION_NOT_READY',
+  'INVALID_WITHDRAWAL', 'CERTIFICATION_CHANGED', 'CERTIFICATION_WITHDRAWN'];
 
 function fail(code, message) {
   const error = new Error(message);
@@ -59,9 +60,9 @@ function validateApplication(value) {
 
 // 材料 fileID、请求标识及内部校验信息不返回客户端；姓名学号也不混入公开个人资料。
 function ownApplication(record) {
-  if (!record) return null;
+  if (!record || record.status === 'withdrawn') return null;
   return {
-    _id: record._id, schoolName: record.schoolName, realName: record.realName,
+    _id: record._id, revision: record.revision, schoolName: record.schoolName, realName: record.realName,
     studentNumber: record.studentNumber, status: record.status,
     submittedAt: record.submittedAt, rejectionReason: record.rejectionReason || '',
     hasProof: Boolean(record.proofFileID),
@@ -70,6 +71,11 @@ function ownApplication(record) {
 }
 
 function canSubmit(user, previous, incoming) {
+  // 撤回后迟到的旧提交重试不能把申请重新发出去；重新填写时必须使用新的提交标识。
+  if (previous && ((previous.status === 'withdrawn' && previous.requestId === incoming.requestId) ||
+      (previous.withdrawnRequestIds || []).includes(incoming.requestId))) {
+    fail('CERTIFICATION_WITHDRAWN', '这次申请已撤回，请重新填写并提交');
+  }
   if (user.certificationStatus === 'approved' || (previous && previous.status === 'approved')) {
     fail('ALREADY_CERTIFIED', '你已通过学校认证，无需重复申请');
   }
@@ -80,7 +86,7 @@ function canSubmit(user, previous, incoming) {
     fail('CERTIFICATION_PENDING', '已有待审核申请，请勿重复提交');
   }
   if (!['unverified', 'rejected'].includes(user.certificationStatus) ||
-      (previous && previous.status !== 'rejected')) {
+      (previous && !['rejected', 'withdrawn'].includes(previous.status))) {
     fail('CERTIFICATION_STATE_ERROR', '认证状态异常，请联系管理员核查');
   }
   return true;
@@ -97,6 +103,42 @@ function createCertificationService(db, { uploadProof, proofStorageReady = false
       return result.data || null;
     };
     if (action === 'getCertification') return ownApplication(await readApplication());
+
+    if (action === 'withdrawCertification') {
+      if (!value || typeof value !== 'object' || Array.isArray(value) ||
+          Object.keys(value).some(key => !['applicationId', 'revision', 'status'].includes(key)) ||
+          value.applicationId !== applicationId || !Number.isSafeInteger(value.revision) || value.revision < 1 ||
+          !['pending', 'approved'].includes(value.status)) {
+        fail('INVALID_WITHDRAWAL', '撤回信息无效，请刷新认证状态后重试');
+      }
+      await db.runTransaction(async transaction => {
+        const userRef = transaction.collection('users').doc(currentUser._id);
+        const applicationRef = transaction.collection(COLLECTION).doc(applicationId);
+        const user = (await userRef.get()).data;
+        const existing = (await applicationRef.get()).data;
+        checkApplicant(user);
+        if (!existing || existing.userId !== currentUser._id || existing.revision !== value.revision) {
+          fail('CERTIFICATION_CHANGED', '申请已变化，请刷新认证状态后重试');
+        }
+        // 同一版本的重复撤回可以安全重试，但不能撤回后来重新提交的新版本。
+        if (existing.status === 'withdrawn' && existing.withdrawnFromStatus === value.status &&
+            user.role === 'user' && user.certificationStatus === 'unverified' && !user.schoolId && !user.schoolName) return;
+        if (existing.status !== value.status || user.certificationStatus !== value.status) {
+          fail('CERTIFICATION_CHANGED', '认证状态已变化，请刷新后重新确认操作');
+        }
+        const now = db.serverDate();
+        // 保留私有记录及递增版本，防止旧审核、旧撤回、旧提交重试影响新的申请。
+        // 管理端和本人查询都不展示 withdrawn 记录，重新申请时覆盖最新槽位。
+        await applicationRef.update({ data: {
+          status: 'withdrawn', withdrawnFromStatus: value.status, withdrawnAt: now, updatedAt: now,
+          withdrawnRequestIds: [...new Set([...(existing.withdrawnRequestIds || []), existing.requestId])],
+        } });
+        await userRef.update({ data: {
+          role: 'user', certificationStatus: 'unverified', schoolId: '', schoolName: '', updatedAt: now,
+        } });
+      });
+      return ownApplication(await readApplication());
+    }
 
     const incoming = validateApplication(value);
     const previous = await readApplication();
@@ -130,6 +172,7 @@ function createCertificationService(db, { uploadProof, proofStorageReady = false
         status: 'pending', rejectionReason: '', reviewerId: '', reviewedAt: null, approvedSchoolName: '', schoolId: '',
         createdAt: existing ? existing.createdAt : now, submittedAt: now, updatedAt: now,
         revision: existing ? (existing.revision || 1) + 1 : 1,
+        withdrawnRequestIds: existing ? existing.withdrawnRequestIds || [] : [],
       } });
       // 仅更新认证状态，保留角色与 schoolId；审核通过才能授予学生身份和学校归属。
       await userRef.update({ data: { certificationStatus: 'pending', updatedAt: now } });

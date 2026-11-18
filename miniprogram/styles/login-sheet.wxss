@@ -1,0 +1,15 @@
+.profile-auth-layer { position: fixed; z-index: 2500; inset: 0; visibility: hidden; pointer-events: none; transition: visibility 0s linear 0.26s; }
+.profile-auth-layer.is-active { visibility: visible; pointer-events: auto; transition-delay: 0s; }
+.auth-mask { position: absolute; inset: 0; background: rgba(15, 23, 37, 0.4); opacity: 0; transition: opacity 0.26s ease; }
+.has-sheet .auth-mask { opacity: 1; }
+.auth-checking { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); padding: 18rpx 28rpx; border-radius: 18rpx; background: #fff; color: #687580; font-size: 26rpx; white-space: nowrap; }
+.login-sheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 44rpx 32rpx calc(24rpx + env(safe-area-inset-bottom)); border-radius: 32rpx 32rpx 0 0; box-sizing: border-box; background: #fff; box-shadow: 0 -10rpx 40rpx rgba(15, 23, 37, 0.08); transform: translateY(100%); transition: transform 0.26s ease; }
+.has-sheet .login-sheet { transform: translateY(0); animation: login-sheet-rise 0.26s ease; }
+@keyframes login-sheet-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.login-sheet-title { font-size: 38rpx; font-weight: 700; color: #171b20; line-height: 1.4; }
+.login-sheet-description { margin: 16rpx 0 32rpx; font-size: 27rpx; color: #687580; line-height: 1.7; }
+.login-sheet-error { margin-bottom: 24rpx; padding: 20rpx; border-radius: 16rpx; background: #fff2ed; color: #a44127; font-size: 26rpx; line-height: 1.6; }
+.account-login .login-sheet-primary, .account-login .login-sheet-cancel { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 84rpx; margin: 0; padding: 0 20rpx; border: 0; border-radius: 18rpx; box-sizing: border-box; background: #4775fa; color: #fff; font-size: 30rpx; font-weight: 600; line-height: 1; }
+.login-sheet-primary::after, .login-sheet-cancel::after { border: 0; }
+.account-login .login-sheet-primary[disabled] { background: #9db6ff; color: #fff; }
+.account-login .login-sheet-cancel { height: 72rpx; margin-top: 12rpx; background: transparent; color: #687580; font-size: 27rpx; font-weight: 400; }

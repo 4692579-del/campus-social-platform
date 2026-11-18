@@ -33,7 +33,7 @@ Page({
     this.setData(append ? { loadingMore: true, error: '' } :
       { loading: true, error: '', items: [], authorized: false, hasMore: false, nextOffset: 0 });
     try {
-      const user = await userService.restore();
+      const user = await userService.restore({ force: false });
       if (!user) {
         const error = new Error('请先到“我的”页面登录');
         error.code = 'UNAUTHENTICATED';
@@ -63,5 +63,5 @@ Page({
   openDetail(event) {
     if (this.data.authorized) wx.navigateTo({ url: '/pages/admin-certification-detail/index?id=' + encodeURIComponent(event.currentTarget.dataset.id) });
   },
-  backToAdmin() { wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/profile/index' }) }); },
+  backToAdmin() { wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/index' }) }); },
 });

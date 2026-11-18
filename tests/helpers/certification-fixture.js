@@ -7,7 +7,7 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
   proofBase64, requestId: 'test-request-00000001', ...extra });
 
 function fixture(options = {}) {
-  const tables = new Map(['users', 'certification_applications', 'certification_reviews'].map(name => [name, new Map()]));
+  const tables = new Map(['users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states'].map(name => [name, new Map()]));
   const uploads = [], proofRequests = [], queries = [];
   const hooks = { beforeTransaction: options.beforeTransaction };
   let tail = Promise.resolve();
@@ -23,8 +23,10 @@ function fixture(options = {}) {
           skip: value => { offset = value; return query; },
           limit: value => { limit = value; return query; },
           get: async () => {
+            if (options.readError && options.readError.collection === name) throw Object.assign(new Error(options.readError.message || 'read failed'), { code: options.readError.code });
             queries.push({ name, condition, ordering, offset, limit });
-            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) => row[key] === value));
+            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
+              value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
             rows.sort((a, b) => {
               for (const [field, direction] of ordering) {
                 const difference = a[field] === b[field] ? 0 : a[field] < b[field] ? -1 : 1;
@@ -34,6 +36,16 @@ function fixture(options = {}) {
             });
             return { data: rows.slice(offset, offset + limit).map(row => ({ ...row })) };
           },
+        };
+        query.update = async ({ data }) => {
+          if (options.beforeConditionalUpdate) options.beforeConditionalUpdate(records, condition);
+          let updated = 0;
+          for (const [id, row] of records) {
+            if (!Object.entries(condition).every(([key, value]) => row[key] === value)) continue;
+            records.set(id, { ...row, ...data });
+            updated += 1;
+          }
+          return { stats: { updated } };
         };
         return query;
       },
@@ -56,8 +68,9 @@ function fixture(options = {}) {
     };
   }
   const db = {
+    command: { gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }) },
     collection: name => collection(name, tables),
-    serverDate: () => '2026-11-14T10:00:00.000Z',
+    serverDate: () => options.serverTime || '2026-11-14T10:00:00.000Z',
     async runTransaction(callback) {
       let release;
       const previous = tail;
@@ -76,18 +89,27 @@ function fixture(options = {}) {
     },
   };
   const handle = createUserService(db, {
+    checkText: options.checkText || (async () => true),
+    randomAccountId: options.randomAccountId,
     proofStorageReady: options.ready !== false,
     uploadProof: async value => {
       uploads.push(value);
       if (options.failUpload) throw new Error('upload unavailable');
       return 'cloud://test.bucket/' + value.cloudPath;
     },
-    getProofUrl: async file => { proofRequests.push(file); return options.proofUrl || 'https://example.com/short-lived-proof?test-only'; },
+    getProofUrl: async file => {
+      proofRequests.push(file);
+      if (options.beforeProofUrl) await options.beforeProofUrl();
+      return options.proofUrl || 'https://example.com/short-lived-proof?test-only';
+    },
     verifyProof: async file => { proofRequests.push(file); return options.proofAvailable !== false; },
   });
   const alice = { openid: 'alice', env: 'test' }, bob = { openid: 'bob', env: 'test' }, admin = { openid: 'admin', env: 'test' };
-  const f = { handle, alice, bob, admin, uploads, proofRequests, queries, hooks,
+  const f = { db, handle, alice, bob, admin, uploads, proofRequests, queries, hooks,
+    accountIds: tables.get('account_ids'),
     users: tables.get('users'), applications: tables.get('certification_applications'), reviews: tables.get('certification_reviews'),
+    squarePosts: tables.get('square_posts'), squareReplies: tables.get('square_replies'), squareInteractions: tables.get('square_interactions'), squareReports: tables.get('square_reports'),
+    squareReplyChildren: tables.get('square_reply_children'), squareCommentStates: tables.get('square_comment_states'),
     async login(identity = alice) { return (await handle({ action: 'login' }, identity)).user; },
     async loginAdmin(identity = admin) { const account = await f.login(identity); f.users.get(account._id).role = 'admin'; return account; },
     submit(value = application(), identity = alice) { return handle({ action: 'submitCertification', application: value }, identity); },

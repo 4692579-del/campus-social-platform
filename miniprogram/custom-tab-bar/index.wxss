@@ -1,0 +1,12 @@
+:host { display: block; }
+.tab-bar-viewport { position: fixed; z-index: 100; left: 0; right: 0; bottom: 0; height: calc(88rpx + constant(safe-area-inset-bottom) + 1rpx); height: calc(88rpx + env(safe-area-inset-bottom) + 1rpx); overflow: hidden; pointer-events: none; }
+.tab-bar { position: absolute; left: 0; bottom: 0; width: 100%; box-sizing: border-box; background: #fff; border-top: 1rpx solid #e9ebf0; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); pointer-events: auto; transition: transform 0.26s ease; }
+.menu-open .tab-bar { transform: translateX(66.666667vw); }
+.menu-instant .tab-bar, .menu-instant .tab-menu-shade { transition: none; }
+.tab-menu-shade { position: absolute; z-index: 1; inset: 0; background: transparent; opacity: 0; pointer-events: none; transition: opacity 0.26s ease; }
+.menu-open .tab-menu-shade { opacity: 1; pointer-events: auto; }
+.tab-items { display: flex; align-items: center; height: 88rpx; }
+.tab-item { flex: 1; height: 88rpx; padding: 0; margin: 0; min-width: 0; border-radius: 0; background: transparent; display: flex; align-items: center; justify-content: center; overflow: visible; line-height: 1; }
+.tab-item::after { border: 0; }
+.tab-item-pressed { opacity: 0.65; }
+.tab-icon { display: block; width: 44rpx; height: 44rpx; }

@@ -62,7 +62,7 @@ function checkProofPath(record, env) {
 }
 
 function checkPending(record, revision) {
-  if (!record) fail('APPLICATION_NOT_FOUND', '申请不存在或已移除，请刷新列表');
+  if (!record || record.status === 'withdrawn') fail('APPLICATION_NOT_FOUND', '申请已撤回或不存在，请刷新列表');
   if (record.revision !== revision) fail('STALE_APPLICATION', '申请已重新提交，请刷新后核对最新材料');
   if (record.status !== 'pending') fail('APPLICATION_ALREADY_REVIEWED', '该申请已被审核，请刷新查看结果');
 }
@@ -70,7 +70,7 @@ function checkPending(record, revision) {
 function createCertificationReviewService(db, { getProofUrl, verifyProof } = {}) {
   async function findApplication(applicationId) {
     const record = (await db.collection(APPLICATIONS).doc(applicationId).get()).data;
-    if (!record) fail('APPLICATION_NOT_FOUND', '申请不存在或已移除，请刷新列表');
+    if (!record || record.status === 'withdrawn') fail('APPLICATION_NOT_FOUND', '申请已撤回或不存在，请刷新列表');
     if (record._id !== `cert_${record.userId}`) fail('INVALID_APPLICANT', '申请人与记录不一致，请核查');
     return record;
   }
@@ -99,6 +99,10 @@ function createCertificationReviewService(db, { getProofUrl, verifyProof } = {})
       if (typeof getProofUrl !== 'function') fail('PROOF_UNAVAILABLE', '认证材料暂不可查看，请稍后重试');
       const url = await getProofUrl(file);
       if (typeof url !== 'string' || !url.startsWith('https://')) fail('PROOF_UNAVAILABLE', '认证材料暂不可查看，请稍后重试');
+      const latest = await findApplication(applicationId);
+      if (latest.revision !== revision || latest.proofFileID !== file) {
+        fail('STALE_APPLICATION', '申请已变化，请刷新后核对最新材料');
+      }
       // 临时链接仅在管理员主动查看时生成，不出现在普通资料和申请列表中。
       return { url, expiresIn: 120, revision };
     }

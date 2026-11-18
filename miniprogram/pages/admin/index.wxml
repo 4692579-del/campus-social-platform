@@ -3,7 +3,7 @@
   <view wx:elif="{{error}}">
     <view class="cs-error">{{error}}</view>
     <button class="cs-primary" bindtap="loadDashboard">重新验证</button>
-    <button class="cs-secondary back-button" bindtap="backToProfile">返回我的页面</button>
+    <button class="cs-secondary back-button" bindtap="backToProfile">返回上一页</button>
   </view>
   <block wx:elif="{{dashboard}}">
     <view class="cs-card operator-card">

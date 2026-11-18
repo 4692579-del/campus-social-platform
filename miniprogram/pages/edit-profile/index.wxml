@@ -1,23 +1,38 @@
-<view class="cs-page">
-  <view class="cs-error" wx:if="{{error}}">{{error}}</view>
-  <view class="cs-card" wx:if="{{loading}}"><view class="cs-muted">正在读取个人资料…</view></view>
-  <form wx:elif="{{user}}" bindsubmit="save">
-    <view class="cs-card">
-      <view class="cs-title">让同学认识你</view>
-      <view class="cs-muted intro">选择头像，填上你喜欢的昵称。</view>
-      <button class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{saving}}">
-        <image class="edit-avatar" src="{{avatar || '/images/avatar.png'}}" mode="aspectFill" />
-        <view class="avatar-action">更换头像</view>
-      </button>
-      <view class="field-label">昵称</view>
-      <input class="nickname-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving}}" placeholder="请输入昵称" />
-      <view class="cs-muted field-hint">1—20 个字，可以使用微信昵称，也可以自己填写。</view>
-      <view class="status-row"><text>{{user.role === 'admin' ? '账号身份' : '学校认证'}}</text><text class="cs-tag">{{user.role === 'admin' ? '管理员' : user.certificationStatus === 'approved' ? '已认证' : user.certificationStatus === 'pending' ? '待审核' : user.certificationStatus === 'rejected' ? '已驳回' : '未认证'}}</text></view>
+<form class="edit-page" bindsubmit="save">
+  <view class="edit-header" style="padding-top: {{navHeight}}px;">
+    <view class="toolbar-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px; line-height: {{navButtonHeight}}px;">编辑个人资料</view>
+    <view class="edit-toolbar">
+      <button size="mini" class="toolbar-button cancel-button" bindtap="cancel" disabled="{{saving || choosingCover}}">取消</button>
+      <button size="mini" class="toolbar-button done-button" form-type="submit" loading="{{saving}}" disabled="{{loading || saving || choosingCover || !user || !dirty}}">{{saving ? '保存中' : '完成'}}</button>
     </view>
-    <button class="cs-primary" form-type="submit" loading="{{saving}}" disabled="{{saving}}">{{saving ? '正在保存…' : '保存资料'}}</button>
-  </form>
-  <view wx:else>
-    <button class="cs-primary" bindtap="backToProfile">返回我的页面</button>
-    <button class="cs-secondary retry" bindtap="loadProfile">重新读取</button>
   </view>
-</view>
+  <view wx:if="{{loading}}" class="page-notice">正在读取个人资料…</view>
+  <block wx:elif="{{user}}">
+    <view class="edit-cover" style="height: calc({{navHeight}}px + 260rpx);">
+      <image wx:if="{{cover && !coverFailed}}" class="cover-image" src="{{cover}}" mode="aspectFill" binderror="onCoverError" />
+      <button size="mini" class="cover-change" bindtap="chooseCover" disabled="{{saving || choosingCover}}" loading="{{choosingCover}}">{{choosingCover ? '选择中' : '更换封面'}}</button>
+    </view>
+    <view class="avatar-row">
+      <button size="mini" class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{saving || choosingCover}}" aria-label="更换头像">
+        <image class="edit-avatar" src="{{avatar || '/images/avatar.png'}}" mode="aspectFill" />
+        <view class="avatar-overlay"><view class="camera-icon"><view class="camera-lens"></view></view><view class="camera-plus">+</view></view>
+      </button>
+    </view>
+    <view wx:if="{{error}}" class="cs-error edit-error">{{error}}</view>
+    <view class="field-row">
+      <view class="field-label">昵称</view>
+      <input class="field-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving}}" placeholder="填写你的昵称" placeholder-class="placeholder" />
+    </view>
+    <view class="field-row bio-row">
+      <view class="field-label">简介</view>
+      <view class="bio-editor"><textarea class="bio-input" name="bio" value="{{bio}}" bindinput="onBioChange" maxlength="320" disabled="{{saving}}" placeholder="在你的个人资料中添加简介" placeholder-class="placeholder" /><view class="bio-count">{{bioLength}}/160</view></view>
+    </view>
+    <button size="mini" class="field-row location-row" bindtap="showLocationNotice" disabled="{{saving}}"><view class="field-label">位置</view><view class="placeholder field-value">添加你的位置</view><view class="row-chevron"></view></button>
+    <view class="field-row birthday-row">
+      <view class="field-label">出生日期</view>
+      <picker class="date-picker" mode="date" start="1900-01-01" end="{{today}}" value="{{birthDate || today}}" bindchange="onBirthDateChange" disabled="{{saving}}"><view class="date-value {{birthDate ? '' : 'placeholder'}}">{{birthDate || '添加出生日期'}}<view class="row-chevron"></view></view></picker>
+      <button wx:if="{{birthDate}}" size="mini" class="clear-date" bindtap="clearBirthDate" disabled="{{saving}}">清空</button>
+    </view>
+  </block>
+  <view wx:else class="page-notice"><view>{{error || '请先登录后编辑资料'}}</view><button class="cs-secondary retry" bindtap="loadProfile">重新读取</button><button class="toolbar-button" bindtap="backToProfile">返回上一页</button></view>
+</form>

@@ -1,0 +1,4 @@
+<view class="search-page has-tab-bar">
+  <view class="search-field"><image src="/images/interface/search.svg" mode="aspectFit" /><input value="{{keyword}}" bindinput="onInput" bindconfirm="search" confirm-type="search" maxlength="100" placeholder="搜索" placeholder-class="search-placeholder" /></view>
+  <view class="search-notice">搜索功能即将开放</view>
+</view>

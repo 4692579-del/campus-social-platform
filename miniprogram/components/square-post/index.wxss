@@ -1,0 +1,23 @@
+:host { display: block; }
+.post-card { display: flex; gap: 20rpx; padding: 28rpx 28rpx 18rpx; background: #fff; border-bottom: 1rpx solid #edf0f3; color: #171b20; }
+.post-avatar { display: block; width: 76rpx; height: 76rpx; flex-shrink: 0; border-radius: 50%; background: #f0f2f4; }
+.post-main { flex: 1; min-width: 0; }
+.post-heading { display: flex; align-items: center; gap: 8rpx; min-height: 36rpx; }
+.post-name { max-width: 330rpx; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 29rpx; font-weight: 700; }
+.author-badge { display: block; width: 24rpx; height: 24rpx; flex-shrink: 0; }
+.post-time { flex-shrink: 0; font-size: 23rpx; color: #87919c; white-space: nowrap; }
+.post-header-actions { display: flex; align-items: center; gap: 16rpx; flex-shrink: 0; margin-left: auto; }
+.post-header-actions .post-follow, .post-header-actions .post-follow[disabled] { display: flex; align-items: center; justify-content: center; flex: 0 0 96rpx; width: 96rpx; min-width: 0; box-sizing: border-box; height: 48rpx; padding: 0; margin: 0; border: 0; border-radius: 16rpx; background: #f0f1f4; color: #171b20; font-size: 25rpx; font-weight: 650; line-height: 1; opacity: 1; }
+.post-follow::after { border: 0; }
+.post-header-actions .post-more { display: flex; align-items: center; justify-content: center; flex: 0 0 44rpx; width: 44rpx; min-width: 0; height: 48rpx; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; line-height: 1; }
+.post-more::after { border: 0; }
+.post-more image { display: block; width: 32rpx; height: 32rpx; }
+.post-handle { color: #87919c; font-size: 23rpx; line-height: 1.6; }
+.post-text { display: block; margin-top: 12rpx; font-size: 29rpx; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.expand-post { margin-top: 8rpx; color: #4775fa; font-size: 27rpx; line-height: 1.6; }
+.post-actions { display: flex; align-items: center; margin-top: 16rpx; }
+.post-actions .post-action { display: flex; align-items: center; justify-content: flex-start; flex: 1 1 0; width: 0; min-width: 0; gap: 10rpx; height: 58rpx; padding: 0; margin: 0; box-sizing: border-box; background: transparent; border: 0; border-radius: 0; color: #87919c; font-size: 23rpx; line-height: 1; }
+.post-action::after { border: 0; }
+.post-action image { width: 32rpx; height: 32rpx; flex-shrink: 0; }
+.post-actions .liked { color: #e34b76; }
+.post-actions .reposted { color: #4775fa; }

@@ -13,7 +13,7 @@ Page({
     this._requestPending = true;
     this.setData({ loading: true, dashboard: null, error: '' });
     try {
-      const user = await userService.restore();
+      const user = await userService.restore({ force: false });
       if (!user) throw new Error('请先到“我的”页面登录');
       const dashboard = await userService.getAdminDashboard();
       if (!dashboard || !dashboard.operator || dashboard.operator.role !== 'admin') {
@@ -31,5 +31,5 @@ Page({
   openCertifications() {
     if (this.data.dashboard) wx.navigateTo({ url: '/pages/admin-certifications/index' });
   },
-  backToProfile() { wx.switchTab({ url: '/pages/profile/index' }); },
+  backToProfile() { wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/index' }) }); },
 });

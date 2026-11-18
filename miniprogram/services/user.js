@@ -3,8 +3,32 @@ const SESSION_KEY = 'campus.session.v1';
 let pendingLogin = null;
 let pendingRestore = null;
 let sessionVersion = 0;
+const CACHE_MAX_AGE = 60 * 1000;
+let profileCheckedAt = 0;
+let accountInfoCache = null;
+let certificationCache = null;
+let pendingAccountInfo = null;
+let pendingCertification = null;
+let dataVersion = 0;
+
+// 只在本次运行内复用云端返回的数据，不把本地缓存当作操作权限。
+function getCachedUser() {
+  return wx.getStorageSync(SESSION_KEY) ? getApp().globalData.currentUser || null : null;
+}
+function getCachedAccountInfo() {
+  const user = getCachedUser();
+  return user && accountInfoCache && accountInfoCache.value.user._id === user._id
+    ? { ...accountInfoCache.value, user } : null;
+}
+function getCachedCertification() {
+  const user = getCachedUser();
+  return user && certificationCache && certificationCache.value.user._id === user._id
+    ? { ...certificationCache.value, user } : null;
+}
+function fresh(time) { return Date.now() - time < CACHE_MAX_AGE; }
 
 async function request(action, extra, resultKey = 'user') {
+  const version = sessionVersion;
   let response;
   try {
     response = await wx.cloud.callFunction({ name: 'userService', data: { action, ...extra } });
@@ -14,7 +38,7 @@ async function request(action, extra, resultKey = 'user') {
   }
   const result = response.result;
   if (!result || !result.success) {
-    if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) logout();
+    if (version === sessionVersion && result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) logout();
     const error = new Error((result && result.message) || '服务暂时不可用，请稍后重试');
     error.code = (result && result.code) || 'SERVICE_ERROR';
     throw error;
@@ -23,6 +47,12 @@ async function request(action, extra, resultKey = 'user') {
 }
 
 function remember(user) {
+  if (JSON.stringify(getApp().globalData.currentUser) !== JSON.stringify(user)) {
+    dataVersion += 1;
+    accountInfoCache = null;
+    certificationCache = null;
+  }
+  profileCheckedAt = user ? Date.now() : 0;
   getApp().globalData.currentUser = user;
   if (user) wx.setStorageSync(SESSION_KEY, true);
   else wx.removeStorageSync(SESSION_KEY);
@@ -32,22 +62,28 @@ function remember(user) {
 function login() {
   if (pendingLogin) return pendingLogin;
   const version = sessionVersion;
-  pendingLogin = request('login').then(user => {
+  const promise = request('login').then(user => {
     if (version !== sessionVersion) throw new Error('登录已取消，请重试');
+    dataVersion += 1;
     return remember(user);
-  }).finally(() => { pendingLogin = null; });
+  }).finally(() => { if (pendingLogin === promise) pendingLogin = null; });
+  pendingLogin = promise;
   return pendingLogin;
 }
 
-function restore() {
+function restore({ force = true } = {}) {
   if (!wx.getStorageSync(SESSION_KEY)) return Promise.resolve(null);
+  const cached = getCachedUser();
+  if (!force && cached && fresh(profileCheckedAt)) return Promise.resolve(cached);
   if (pendingRestore) return pendingRestore;
   const version = sessionVersion;
-  // 本地仅保存“曾登录”标记；每次恢复都向云端确认，缓存不是权限凭证。
-  pendingRestore = request('getProfile').then(user => {
+  const revision = dataVersion;
+  const promise = request('getProfile').then(user => {
     if (version !== sessionVersion) return null;
+    if (revision !== dataVersion) return getCachedUser();
     return remember(user);
-  }).finally(() => { pendingRestore = null; });
+  }).finally(() => { if (pendingRestore === promise) pendingRestore = null; });
+  pendingRestore = promise;
   return pendingRestore;
 }
 
@@ -55,12 +91,31 @@ async function updateProfile(profile) {
   const version = sessionVersion;
   const user = await request('updateProfile', { profile });
   if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
+  dataVersion += 1;
   return remember(user);
 }
 
 function logout() {
   sessionVersion += 1;
+  dataVersion += 1;
+  pendingLogin = null;
+  pendingRestore = null;
+  pendingAccountInfo = null;
+  pendingCertification = null;
   remember(null);
+}
+
+async function updateCover(coverFileID) {
+  if (!wx.getStorageSync(SESSION_KEY)) {
+    const error = new Error('请先登录后设置封面');
+    error.code = 'UNAUTHENTICATED';
+    throw error;
+  }
+  const version = sessionVersion;
+  const user = await request('updateCover', { coverFileID });
+  if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
+  dataVersion += 1;
+  return remember(user);
 }
 
 // 这只是服务入口，访问权限必须由云函数检查，不能由客户端决定。
@@ -68,17 +123,69 @@ function getAdminDashboard() {
   return request('getAdminDashboard', {}, 'dashboard');
 }
 
-async function certificationRequest(action, application) {
+async function getAccountInfo({ force = true } = {}) {
+  if (!wx.getStorageSync(SESSION_KEY)) {
+    const error = new Error('请先到“我的”页面登录');
+    error.code = 'UNAUTHENTICATED';
+    throw error;
+  }
+  const cached = getCachedAccountInfo();
+  if (!force && cached && fresh(accountInfoCache.time)) return cached;
+  if (pendingAccountInfo) return pendingAccountInfo;
   const version = sessionVersion;
-  const result = await request(action, application ? { application } : {}, 'certification');
+  const revision = dataVersion;
+  const promise = request('getAccountInfo', {}, 'accountInfo').then(info => {
+    if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
+    if (!info || !info.user || !info.nicknameHistory) throw new Error('账号信息读取失败，请重试');
+    if (revision !== dataVersion) throw new Error('账号资料已更新，请重新读取');
+    remember(info.user);
+    accountInfoCache = { value: info, time: Date.now() };
+    return info;
+  }).finally(() => { if (pendingAccountInfo === promise) pendingAccountInfo = null; });
+  pendingAccountInfo = promise;
+  return promise;
+}
+
+async function findUserByAccountId(accountId) {
+  if (!wx.getStorageSync(SESSION_KEY)) throw new Error('请先登录');
+  const version = sessionVersion;
+  const result = await request('findUserByAccountId', { accountId }, 'searchResult');
   if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
-  if (!result || !result.user) throw new Error('认证信息读取失败，请重试');
-  remember(result.user);
   return result;
 }
 
-function getCertification() { return certificationRequest('getCertification'); }
+async function certificationRequest(action, application) {
+  const version = sessionVersion;
+  const revision = dataVersion;
+  const result = await request(action, application ? { application } : {}, 'certification');
+  if (version !== sessionVersion) throw new Error('登录状态已变更，请重新登录');
+  if (!result || !result.user) throw new Error('认证信息读取失败，请重试');
+  if (action === 'getCertification' && revision !== dataVersion) throw new Error('认证资料已更新，请重新读取');
+  if (action !== 'getCertification') dataVersion += 1;
+  remember(result.user);
+  certificationCache = { value: result, time: Date.now() };
+  return result;
+}
+
+function getCertification({ force = true } = {}) {
+  const cached = getCachedCertification();
+  if (!force && cached && fresh(certificationCache.time)) return Promise.resolve(cached);
+  if (pendingCertification) return pendingCertification;
+  const promise = certificationRequest('getCertification').finally(() => {
+    if (pendingCertification === promise) pendingCertification = null;
+  });
+  pendingCertification = promise;
+  return promise;
+}
 function submitCertification(application) { return certificationRequest('submitCertification', application); }
+function withdrawCertification(applicationId, revision, status) {
+  if (!wx.getStorageSync(SESSION_KEY)) {
+    const error = new Error('请先到“我的”页面登录');
+    error.code = 'UNAUTHENTICATED';
+    return Promise.reject(error);
+  }
+  return certificationRequest('withdrawCertification', { applicationId, revision, status });
+}
 
 async function reviewRequest(action, data) {
   if (!wx.getStorageSync(SESSION_KEY)) {
@@ -103,5 +210,5 @@ function reviewCertification(applicationId, revision, review) {
   return reviewRequest('reviewCertification', { applicationId, revision, review });
 }
 
-module.exports = { login, restore, updateProfile, logout, getAdminDashboard, getCertification, submitCertification,
+module.exports = { login, restore, getSessionVersion: () => sessionVersion, getCachedUser, getCachedAccountInfo, getCachedCertification, updateProfile, updateCover, logout, getAccountInfo, findUserByAccountId, getAdminDashboard, getCertification, submitCertification, withdrawCertification,
   listCertifications, getCertificationDetail, getCertificationProof, reviewCertification };

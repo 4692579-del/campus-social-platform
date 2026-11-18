@@ -1,0 +1,15 @@
+@import "../../styles/square-pages.wxss";
+.compose-page { padding-bottom: calc(40rpx + env(safe-area-inset-bottom)); }
+.compose-top { display: flex; align-items: center; gap: 18rpx; padding: 28rpx; }
+.compose-avatar { width: 76rpx; height: 76rpx; border-radius: 50%; background: #f1f3f5; }
+.audience-chip { display: flex; align-items: center; gap: 8rpx; padding: 10rpx 18rpx; border: 1rpx solid #c6d4ff; border-radius: 28rpx; color: #4775fa; font-size: 25rpx; font-weight: 600; }
+.audience-chip image, .audience-note image { width: 27rpx; height: 27rpx; flex-shrink: 0; }
+.compose-page .publish-button { display: flex; align-items: center; justify-content: center; height: 66rpx; min-width: 116rpx; margin: 0 0 0 auto; padding: 0 24rpx; border: 0; border-radius: 18rpx; background: #4775fa; color: #fff; font-size: 28rpx; font-weight: 700; line-height: 1; }
+.compose-page .publish-button[disabled] { background: #b5c8ff; color: #fff; }
+.compose-editor { padding: 8rpx 28rpx 24rpx 122rpx; }
+.compose-editor textarea { display: block; width: 100%; min-height: 420rpx; font-size: 33rpx; line-height: 1.75; color: #171b20; box-sizing: border-box; }
+.compose-placeholder { color: #98a1ad; }
+.compose-count { margin-top: 28rpx; text-align: right; font-size: 24rpx; color: #98a1ad; font-variant-numeric: tabular-nums; }
+.over-limit { color: #d84a4a; }
+.audience-note { display: flex; align-items: center; gap: 10rpx; margin: 0 28rpx 0 122rpx; padding: 24rpx 0; border-top: 1rpx solid #edf0f3; color: #4775fa; font-size: 25rpx; }
+.draft-note { margin: 12rpx 28rpx 0 122rpx; font-size: 24rpx; color: #98a1ad; }

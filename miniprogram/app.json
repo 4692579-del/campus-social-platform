@@ -1,7 +1,13 @@
 {
   "pages": [
     "pages/home/index",
+    "pages/market/index",
+    "pages/messages/index",
+    "pages/tasks/index",
+    "pages/search/index",
+    "pages/square-compose/index",
     "pages/profile/index",
+    "pages/account-about/index",
     "pages/edit-profile/index",
     "pages/certification/index",
     "pages/admin/index",
@@ -11,20 +17,24 @@
     "pages/example/index"
   ],
   "window": {
-    "backgroundColor": "#F6F6F6",
+    "backgroundColor": "#FFFFFF",
     "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#FFD84D",
+    "navigationBarBackgroundColor": "#FFFFFF",
     "navigationBarTitleText": "校园生活",
     "navigationBarTextStyle": "black"
   },
   "tabBar": {
+    "custom": true,
     "color": "#777777",
-    "selectedColor": "#574100",
+    "selectedColor": "#4775FA",
     "backgroundColor": "#FFFFFF",
     "borderStyle": "white",
     "list": [
-      { "pagePath": "pages/home/index", "text": "校园" },
-      { "pagePath": "pages/profile/index", "text": "我的" }
+      { "pagePath": "pages/home/index", "text": "首页" },
+      { "pagePath": "pages/market/index", "text": "集市" },
+      { "pagePath": "pages/messages/index", "text": "私信" },
+      { "pagePath": "pages/tasks/index", "text": "任务" },
+      { "pagePath": "pages/search/index", "text": "搜索" }
     ]
   },
   "sitemapLocation": "sitemap.json",

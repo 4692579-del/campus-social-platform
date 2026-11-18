@@ -168,3 +168,19 @@ test('隐藏列表后忽略迟到的请求，重新显示时可以再次请求',
   f.service.listCertifications = async () => ({ items: [], hasMore: false, nextOffset: 0 });
   await f.page.refresh(); assert.equal(f.page.data.authorized, true);
 });
+
+test('申请撤回后，材料读取和审核失败都清空已打开详情，刷新列表移除原条目', async () => {
+  const removed = () => Object.assign(new Error('申请已撤回或不存在，请刷新列表'), { code: 'APPLICATION_NOT_FOUND' });
+  const proof = fixture(); await inspectProof(proof);
+  proof.service.getCertificationProof = async () => { throw removed(); };
+  await proof.page.loadProof();
+  assert.equal(proof.page.data.detail, null); assert.equal(proof.page.data.proofUrl, '');
+  const review = fixture(); await inspectProof(review);
+  review.service.reviewCertification = async () => { throw removed(); };
+  await review.page.approve(approval());
+  assert.equal(review.page.data.detail, null); assert.equal(review.page.data.proofUrl, '');
+  const listing = fixture('admin-certifications'); await listing.page.refresh();
+  assert.equal(listing.page.data.items.length, 1);
+  listing.service.listCertifications = async () => ({ items: [], hasMore: false, nextOffset: 0 });
+  await listing.page.refresh(); assert.equal(listing.page.data.items.length, 0);
+});

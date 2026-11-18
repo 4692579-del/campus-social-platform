@@ -192,12 +192,12 @@ page {
 
 /* AI助手相关样式 */
 .notice-box {
-  background: linear-gradient(135deg, #fff8e6 0%, #fff3d9 100%);
-  border-left: 4rpx solid #ff9800;
+  background: linear-gradient(135deg, #f4f7ff 0%, #eef3ff 100%);
+  border-left: 4rpx solid #4775fa;
   border-radius: 8rpx;
   padding: 20rpx 24rpx;
   margin: 20rpx 0;
-  box-shadow: 0 2rpx 8rpx rgba(255, 152, 0, 0.1);
+  box-shadow: 0 2rpx 8rpx rgba(71, 117, 250, 0.1);
 }
 
 .notice-text {
@@ -207,7 +207,7 @@ page {
 }
 
 .notice-highlight {
-  color: #ff6f00;
+  color: #3d63c6;
   font-weight: 600;
 }
 

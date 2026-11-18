@@ -1,1 +1,1 @@
-{ "navigationBarTitleText": "学校身份认证" }
+{ "navigationStyle": "custom", "navigationBarTitleText": "校园认证", "navigationBarTextStyle": "black", "backgroundColor": "#FFFFFF" }

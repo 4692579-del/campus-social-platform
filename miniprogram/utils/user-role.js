@@ -5,12 +5,13 @@ const CERTIFICATION_TEXT = {
 };
 
 function describeUser(user) {
-  if (!user) return { roleText: '', certificationText: '未认证', isAdmin: false };
+  if (!user) return { roleText: '', certificationText: '未认证', isAdmin: false, isStudent: false };
   const isAdmin = user.role === 'admin';
   return {
     roleText: ROLE_TEXT[user.role] || '身份待同步',
     certificationText: isAdmin ? '管理员不参与学生认证' : (CERTIFICATION_TEXT[user.certificationStatus] || '状态待确认'),
     isAdmin,
+    isStudent: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
   };
 }
 

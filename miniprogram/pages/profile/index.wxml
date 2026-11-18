@@ -1,32 +1,61 @@
-<view class="cs-page">
-  <view class="cs-error" wx:if="{{error}}">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading}}">重新连接</button></view>
-  <view class="cs-card account-card" wx:if="{{user}}">
-    <image class="cs-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
-    <view class="account-info"><view class="nickname">{{user.nickname}}</view><view class="cs-tag">{{identity.roleText}}</view><view class="identity-note">{{identity.certificationText}}</view></view>
+<import src="../../templates/login-sheet.wxml" />
+<view class="profile-shell">
+  <view class="profile-header-controls" style="top: {{navTop - 4}}px; height: {{navButtonHeight + 8}}px; right: {{searchRight}}px;">
+    <button size="mini" class="profile-menu-toggle" style="width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="backToHome" aria-label="返回首页"><image src="/images/interface/chevron-left-white.svg" mode="aspectFit" /></button>
   </view>
-  <view class="cs-card login-card" wx:else>
-    <view class="login-avatar">Hi</view>
-    <view class="cs-title">你好，新同学</view>
-    <view class="cs-muted login-note">登录后设置个人资料，让校园里的相遇有个开始。</view>
-    <button class="cs-primary" bindtap="login" loading="{{loading}}" disabled="{{loading}}">{{loading ? '正在连接…' : '微信登录'}}</button>
-    <view class="login-caption">登录用于建立校园账号；昵称和头像由你自行设置。</view>
+  <view class="profile-page">
+  <view class="profile-cover" style="height: calc({{navHeight}}px + 260rpx);">
+    <image wx:if="{{coverFileID && !coverFailed}}" class="cover-image" src="{{coverFileID}}" mode="aspectFill" binderror="onCoverError" />
+    <view class="cover-shade"></view>
   </view>
-  <view class="cs-card" wx:if="{{user.role === 'student' && user.schoolName}}"><view class="cs-tag">认证学校</view><view class="cs-title section-note">{{user.schoolName}}</view></view>
-  <view class="cs-card" wx:if="{{user}}">
-    <view class="cs-title">个人资料</view>
-    <view class="cs-muted section-note">一个喜欢的名字，一张代表你的头像。</view>
-    <button class="cs-primary" bindtap="editProfile">编辑昵称与头像</button>
+
+  <view class="profile-body">
+    <image class="profile-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
+    <view wx:if="{{error && !loginSheetOpen}}" class="cs-error profile-error">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading || coverBusy}}">重新读取</button></view>
+    <view class="profile-heading">
+      <view class="nickname">{{user ? user.nickname : loading ? '正在读取资料…' : '你好，新同学'}}</view>
+      <view wx:if="{{isVerified}}" class="verified-badge" bindtap="openCertification" aria-role="button" aria-label="已认证，查看认证详情"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>已认证</text></view>
+      <view wx:elif="{{identity.isAdmin}}" class="role-badge">管理员</view>
+      <view wx:elif="{{user}}" class="verified-badge unverified-badge" bindtap="openCertification" aria-role="button" aria-label="未认证，查看学校认证"><image class="verification-icon" src="/images/verification/unverified.png" mode="aspectFit" /><text>未认证</text></view>
+    </view>
+    <view wx:if="{{user.bio}}" class="profile-bio">{{user.bio}}</view>
+    <view wx:if="{{joinedText}}" class="joined-row" bindtap="openAccountAbout" aria-role="button" aria-label="加入日期，查看关于你的账号"><image class="calendar-icon" src="/images/interface/calendar-muted.svg" mode="aspectFit" /><text>{{joinedText}}</text><image class="account-chevron" src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /></view>
+    <view class="profile-stats"><view><text class="stat-count">{{likeCount}}</text><text>获赞</text></view><view><text class="stat-count">{{followingCount}}</text><text>关注</text></view><view><text class="stat-count">{{followerCount}}</text><text>粉丝</text></view></view>
+
+    <view wx:if="{{user}}" class="profile-actions">
+      <button size="mini" wx:if="{{identity.isAdmin}}" class="profile-action" bindtap="openAdmin">管理工作台</button>
+      <button size="mini" wx:elif="{{!isVerified}}" class="profile-action primary-profile-action" bindtap="openCertification">{{certificationAction}}</button>
+      <button size="mini" wx:else class="profile-action primary-profile-action" bindtap="publishPost">发布动态</button>
+      <button size="mini" class="profile-action" bindtap="editProfile" disabled="{{coverBusy}}">编辑资料</button>
+      <button size="mini" class="profile-action share-action" bindtap="shareProfile" aria-label="分享主页"><image class="share-icon" src="/images/interface/share.svg" mode="aspectFit" /></button>
+    </view>
   </view>
-  <view class="cs-card admin-entry" wx:if="{{identity.isAdmin}}">
-    <view class="cs-title">管理工作台</view>
-    <view class="cs-muted section-note">使用独立管理员账号，处理校园平台管理事务。</view>
-    <button class="cs-primary" bindtap="openAdmin">进入管理工作台</button>
+
+  <view wx:if="{{postsMenuOpen}}" class="posts-menu-backdrop" bindtap="closePostsMenu" catchtouchmove="stopMenuEvent"></view>
+  <view class="content-tabs {{postsMenuOpen ? 'posts-menu-open' : ''}}" role="tablist">
+    <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
+      <image class="content-tab-icon" src="{{item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
+      <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.label}}</text>
+      <image wx:if="{{item.key === 'posts' && selectedContent === 'posts'}}" class="posts-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
+    </button>
+    <view wx:if="{{postsMenuOpen}}" class="posts-menu" aria-label="动态来源">
+      <button class="posts-menu-option {{postScope === 'square' ? 'active' : ''}}" data-scope="square" bindtap="selectPostScope" aria-label="广场动态" aria-pressed="{{postScope === 'square'}}">广场动态</button>
+      <button class="posts-menu-option {{postScope === 'campus' ? 'active' : ''}}" data-scope="campus" bindtap="selectPostScope" aria-label="校园圈" aria-pressed="{{postScope === 'campus'}}">校园圈</button>
+    </view>
   </view>
-  <view class="cs-card certification" wx:else>
-    <view class="cs-tag">学校身份</view>
-    <view class="cs-title section-note">认证，让校园连接更安心</view>
-    <view class="cs-muted section-note">{{!user ? '登录后可提交学校认证申请。' : user.certificationStatus === 'pending' ? '申请已提交，等待管理员审核。' : user.certificationStatus === 'approved' ? '学校身份已认证，可查看认证结果。' : user.certificationStatus === 'rejected' ? '申请已驳回，可查看原因并重新提交。' : '填写学校、姓名和学号，提交材料申请学生认证。'}}</view>
-    <button wx:if="{{user}}" class="cs-primary" bindtap="openCertification">{{user.certificationStatus === 'unverified' ? '申请学校认证' : '查看认证申请'}}</button>
+  <block wx:if="{{selectedContent === 'posts' && postScope === 'square'}}">
+    <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
+    <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
+    <block wx:else>
+      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:share="prepareShare" />
+      <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
+      <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
+      <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>
+    </block>
+  </block>
+  <view wx:elif="{{selectedContent === 'posts'}}" class="content-empty"><view class="empty-title">{{isVerified ? '校园圈动态将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view></view>
+  <view wx:else class="content-empty"><view class="empty-title">{{emptyText}}</view></view>
   </view>
-  <button wx:if="{{user}}" class="cs-secondary" bindtap="logout" disabled="{{loading}}">退出登录</button>
+  <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: error, loading: loading}}" />
+  <comments-sheet wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>

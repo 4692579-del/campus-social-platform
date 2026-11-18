@@ -20,7 +20,7 @@ Page({
     const generation = this._generation = (this._generation || 0) + 1;
     this.setData({ loading: true, detail: null, proofUrl: '', proofLoaded: false, proofLoading: false, error: '', notice: '' });
     try {
-      const user = await userService.restore();
+      const user = await userService.restore({ force: false });
       if (!user) throw new Error('请先到“我的”页面登录');
       const detail = await userService.getCertificationDetail(this._applicationId);
       if (generation === this._generation) this.showDetail(detail);
@@ -48,7 +48,7 @@ Page({
       this.setData({ proofUrl: proof.url });
     } catch (error) {
       if (generation !== this._generation) return;
-      const denied = ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(error.code);
+      const denied = ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE', 'APPLICATION_NOT_FOUND'].includes(error.code);
       this.setData({ error: error.message || '材料读取失败，请重试',
         ...(denied ? { detail: null, schoolName: '', rejectionReason: '' } : {}),
         ...(error.code === 'STALE_APPLICATION' ? { reviewBlocked: true } : {}) });
@@ -98,7 +98,7 @@ Page({
         decision === 'approved' ? '认证已通过，用户重新进入个人页面即可看到学生身份。' : '申请已驳回，用户可查看原因并重新提交。' });
     } catch (error) {
       if (generation !== this._generation) return;
-      const denied = ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(error.code);
+      const denied = ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE', 'APPLICATION_NOT_FOUND'].includes(error.code);
       if (denied) {
         this.setData({ detail: null, proofUrl: '', proofLoaded: false, schoolName: '', rejectionReason: '', error: error.message });
         return;
@@ -111,7 +111,7 @@ Page({
         this.showDetail(latest);
         this.setData({ notice: latest.status === 'pending' ? '请重新核对最新信息和材料后再操作。' : '当前显示云端最新审核结果。' });
       } catch (queryError) {
-        if (generation === this._generation && ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(queryError.code)) {
+        if (generation === this._generation && ['FORBIDDEN', 'ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE', 'APPLICATION_NOT_FOUND'].includes(queryError.code)) {
           this.setData({ detail: null, proofUrl: '', schoolName: '', rejectionReason: '', error: queryError.message });
         }
         // 其他查询失败保留原错误并暂停审核，等待用户主动重新读取。
