@@ -10,26 +10,49 @@ const reply = { _id: 'reply', content: '真实评论', author: { nickname: '同�
 function fixture(options = {}) {
   let definition, current = options.guest ? null : user, version = 0;
   const events = [], requests = [], toasts = [];
+  let aiListener;
   const users = { getCachedUser: () => current, getSessionVersion: () => version };
   const square = { cachedReplies: () => options.cached || null,
+    ...(options.ai ? { processAIReply: options.ai, subscribeAI: listener => { aiListener = listener; return () => { aiListener = null; }; } } : {}),
     cachedChildren: () => options.cachedChildren || null,
     listChildren: async (postId, rootId, args) => { requests.push({ type: 'children', postId, rootId, ...args }); return options.children ? options.children(args) : { items: [], hasMore: false, nextOffset: 0 }; },
     commentState: async (postId, replyId, kind, active) => { requests.push({ type: 'state', postId, replyId, kind, active }); return options.state(replyId, kind, active); },
     listReplies: async (postId, args) => { requests.push({ type: 'list', postId, ...args }); return options.list ? options.list(args) : { items: [], hasMore: false, nextOffset: 0 }; },
-    reply: async (postId, content, requestId, replyToId) => { requests.push({ type: 'send', postId, content, requestId, replyToId }); return options.send ? options.send() : { post: { _id: id, replyCount: 1 }, reply: { ...reply, content } }; },
+    reply: async (postId, content, requestId, replyToId, askAI = false) => { requests.push({ type: 'send', postId, content, requestId, replyToId, askAI }); return options.send ? options.send() : { post: { _id: id, replyCount: 1 }, reply: { ...reply, content } }; },
+    deleteReply: async (postId, replyId) => { requests.push({ type: 'delete', postId, replyId }); return options.remove(replyId); },
+    reportReply: async (postId, replyId, reason) => { requests.push({ type: 'report', postId, replyId, reason }); return options.report ? options.report() : {}; },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/comments-sheet/index.js'), 'utf8'), {
     Component: value => { definition = value; }, wx: { hideKeyboard() {}, showToast: value => toasts.push(value.title),
+      showActionSheet: args => { requests.push({ type: 'sheet', itemList: args.itemList }); args.success((options.choices || []).shift() || { tapIndex: 0 }); },
+      showModal: args => { requests.push({ type: 'modal', title: args.title }); args.success({ confirm: options.confirm !== false }); },
       getWindowInfo: () => options.window || { windowHeight: 812, statusBarHeight: 44 },
       getMenuButtonBoundingClientRect: () => options.capsule || { top: 52, height: 32 } },
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
   });
   const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current },
     setData(value) { applyPageData(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
-  return { component, events, requests, toasts, attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
+  return { component, events, requests, toasts, emitAI: result => aiListener && aiListener(result), attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
     logout() { current = null; version++; },
   };
 }
+
+test('AI生成独立于发送，正式评论立即展示并清空输入；AI随后作为新楼中回复显示且无成功弹窗', async () => {
+  let finishAI;
+  const root = { ...reply, _id: 'r_' + 'c'.repeat(40), aiStatus: 'queued', aiCanManage: true, replyCount: 0 };
+  const f = fixture({ send: async () => ({ post: { _id: id }, reply: root }), ai: () => new Promise(resolve => { finishAI = resolve; }) });
+  await f.attach(); const c = f.component;
+  c.input({ detail: { value: '@小萃 你怎么看' } }); await c.send();
+  assert.equal(c.data.sending, false); assert.equal(c.data.text, ''); assert.equal(c.data.items[0]._id, root._id); assert.ok(finishAI);
+  const child = { ...reply, _id: 'c_' + 'd'.repeat(40), rootId: root._id, replyToId: root._id, author: { nickname: '小萃小萃', isAI: true } };
+  c.applyCommentRow({ ...root, aiStatus: 'done', replyCount: 1 });
+  f.emitAI({ postId: id, reply: child, created: true });
+  assert.equal(c.data.items[0].freshChildren[0].author.isAI, true); assert.equal(c.data.items[0].freshChildren[0].content, child.content);
+  assert.equal(c.data.items[0].showExpand, false); assert.equal(f.toasts.length, 0);
+  f.detach(); finishAI({ status: 'done' });
+  f.emitAI({ postId: id, reply: { ...child, content: '迟到内容' }, created: true });
+  assert.equal(c.data.items[0].freshChildren[0].content, child.content);
+});
 
 test('评论面板首帧复用缓存，读取不会覆盖输入，分页在同一面板完成', async () => {
   let finish;
@@ -43,6 +66,36 @@ test('评论面板首帧复用缓存，读取不会覆盖输入，分页在同�
   assert.equal(f.requests.at(-1).offset, 20);
   finish({ items: [reply, { ...reply, _id: 'older' }], hasMore: false, nextOffset: 21 }); await more;
   assert.equal(f.component.data.items.length, 2);
+});
+
+test('点击问问小萃插入可退格删除的胶囊，手动输入昵称不唤起，零宽标记不进入正文', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.askXiaocui(); assert.equal(c.data.askAI, true); assert.equal(c.data.canSend, true); assert.equal(c.data.count, 3);
+  const marker = c.data.inputValue; assert.equal(marker.length, 1);
+  c.askXiaocui(); assert.equal(c.data.inputValue, marker);
+  c.input({ detail: { value: marker + '怎么看' } }); assert.equal(c.data.text, '怎么看'); assert.equal(c.data.count, 7);
+  await c.send(); const sent = f.requests.find(row => row.type === 'send');
+  assert.equal(sent.content, '@小萃 怎么看'); assert.equal(sent.askAI, true); assert.ok(!sent.content.includes(marker));
+  assert.equal(c.data.askAI, false); assert.equal(c.data.inputValue, '');
+  c.askXiaocui(); c.input({ detail: { value: '' } });
+  assert.equal(c.data.askAI, false); assert.equal(c.data.canSend, false);
+  c.input({ detail: { value: '@小萃小萃 怎么看' } }); await c.send();
+  assert.equal(f.requests.filter(row => row.type === 'send').at(-1).askAI, false);
+  c.askXiaocui(); c.input({ detail: { value: marker + '保留正文' } });
+  c.input({ detail: { value: '保留正文' } }); assert.equal(c.data.askAI, false); assert.equal(c.data.text, '保留正文');
+});
+
+test('胶囊发送失败保留选择与正文和提交标识，胶囊本身也可发送且总长度受300字限制', async () => {
+  let fail = true;
+  const f = fixture({ send: () => { if (fail) throw new Error('网络失败'); return { reply }; } }); await f.attach(); const c = f.component;
+  c.askXiaocui(); const marker = c.data.inputValue;
+  c.input({ detail: { value: marker + '字'.repeat(297) } }); assert.equal(c.data.canSend, false);
+  c.input({ detail: { value: marker + '字'.repeat(296) } }); assert.equal(c.data.canSend, true);
+  await c.send(); assert.equal(c.data.askAI, true); assert.equal(c.data.text.length, 296); assert.equal(c.data.count, 300);
+  const requestId = f.requests.filter(row => row.type === 'send')[0].requestId;
+  fail = false; await c.send(); assert.equal(f.requests.filter(row => row.type === 'send')[1].requestId, requestId);
+  c.askXiaocui(); await c.send();
+  assert.equal(f.requests.filter(row => row.type === 'send').at(-1).content, '@小萃');
 });
 
 const touch = y => ({ touches: [{ clientY: y }] });
@@ -133,7 +186,7 @@ test('评论发送失败保留正文和提交标识，成功后才清空并同�
   assert.equal(f.requests.filter(request => request.type === 'send')[0].requestId, f.requests.filter(request => request.type === 'send')[1].requestId);
   assert.equal(f.component.data.text, ''); assert.equal(f.component.data.items[0].content, reply.content);
   assert.equal(f.events[0].name, 'changed'); assert.equal(f.events[0].detail.id, id);
-  assert.deepEqual(f.toasts, ['评论已发布']);
+  assert.deepEqual(f.toasts, []);
 });
 
 test('游客可读评论，发送需登录；超长内容不能提交，登录失效不会卡住发送状态', async () => {
@@ -176,6 +229,41 @@ const commentEvent = (id, kind) => ({ currentTarget: { dataset: { id, kind } } }
 const rootComment = { ...reply, _id: 'root', replyCount: 0, likeCount: 0 };
 const childComment = { ...reply, _id: 'child', rootId: 'root', replyToId: 'root', replyToName: '同学', ancestorIds: ['root'] };
 const roots = count => ({ items: [{ ...rootComment, replyCount: count }], hasMore: false, nextOffset: 1 });
+
+test('评论菜单区分本人删除与他人举报；删除子回复同步数量且保留编辑正文', async () => {
+  const ownChild = { ...childComment, isOwn: true };
+  const f = fixture({ cached: roots(1), list: () => roots(1), cachedChildren: { items: [ownChild], hasMore: false, nextOffset: 1 },
+    children: () => ({ items: [ownChild], hasMore: false, nextOffset: 1 }),
+    remove: () => ({ deletedId: 'child', rootId: 'root', root: rootComment }) });
+  await f.attach(); const c = f.component;
+  await c.toggleThread(commentEvent('root'));
+  c.selectReply(commentEvent('child')); c.input({ detail: { value: '保留草稿' } });
+  await c.manageComment(commentEvent('child'));
+  assert.equal(f.requests.find(row => row.type === 'sheet').itemList[0], '删除评论');
+  assert.equal(c.data.items[0].visibleChildren.length, 0); assert.equal(c.data.items[0].replyCount, 0);
+  assert.equal(c.data.replyTarget, null); assert.equal(c.data.text, '保留草稿');
+  assert.equal(f.events.at(-1).name, 'changed');
+  await c.manageComment(commentEvent('root'));
+  assert.equal(f.requests.filter(row => row.type === 'sheet').at(-2).itemList[0], '举报评论');
+  assert.equal(f.requests.find(row => row.type === 'report').reason, 'spam');
+  assert.equal(f.toasts.at(-1), '举报已提交');
+});
+
+test('删除取消或失败保留评论，切换账号后菜单不得继续提交，游客先登录', async () => {
+  const own = { ...rootComment, isOwn: true };
+  const data = { items: [own], hasMore: false, nextOffset: 1 };
+  const cancelled = fixture({ cached: data, list: () => data, confirm: false }); await cancelled.attach();
+  await cancelled.component.manageComment(commentEvent('root'));
+  assert.equal(cancelled.requests.some(row => row.type === 'delete'), false);
+  const failed = fixture({ cached: data, list: () => data, remove: () => { throw new Error('删除失败'); } }); await failed.attach();
+  await failed.component.manageComment(commentEvent('root'));
+  assert.equal(failed.component.data.items.length, 1); assert.equal(failed.toasts.at(-1), '删除失败');
+  const changed = fixture({ cached: data, list: () => data }); await changed.attach();
+  const menu = changed.component.manageComment(commentEvent('root')); changed.logout(); await menu;
+  assert.equal(changed.requests.some(row => row.type === 'delete'), false);
+  const guest = fixture({ guest: true, cached: data, list: () => data }); await guest.attach();
+  await guest.component.manageComment(commentEvent('root')); assert.equal(guest.events.at(-1).name, 'login');
+});
 
 test('点赞、心碎与恢复立即绘制，连续操作的旧响应不覆盖最后选择，失败恢复已确认状态', async () => {
   const writes = [];

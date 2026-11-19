@@ -57,7 +57,11 @@ page { height: 100%; overflow: hidden; background: #fff; }
 .content-tab { position: relative; flex: 1; min-width: 0; margin: 0; padding: 28rpx 0 24rpx; border-radius: 0; background: #fff; display: flex; align-items: center; justify-content: center; gap: 12rpx; line-height: 1; }
 .content-tab-icon { width: 40rpx; height: 40rpx; flex-shrink: 0; }
 .content-tab-label { font-size: 26rpx; font-weight: 700; color: #171b20; white-space: nowrap; }
-.content-tab.selected::before { content: ''; position: absolute; left: 18%; right: 18%; bottom: 0; height: 6rpx; border-radius: 6rpx; background: #4775fa; }
+.content-tab-indicator { position: absolute; bottom: 0; width: 16%; height: 6rpx; border-radius: 6rpx; background: #4775fa; pointer-events: none; transition: left .26s ease; }
+.profile-panels-viewport { position: relative; width: 100%; overflow: hidden; }
+.profile-panels { position: relative; width: 400%; transition: left .26s ease; }
+.profile-panel { position: absolute; top: 0; width: 25%; pointer-events: none; }
+.profile-panel.is-active { position: relative; pointer-events: auto; }
 .posts-menu-backdrop { position: fixed; inset: 0; z-index: 160; background: transparent; }
 .posts-menu-open { z-index: 170; }
 .posts-menu { left: 24rpx; transform: none; }

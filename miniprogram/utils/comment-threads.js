@@ -1,4 +1,5 @@
 const { postView } = require('./post-view');
+const { newestComments, oldestComments } = require('./comment-order');
 
 function rowView(row) {
   const value = postView(row);
@@ -7,13 +8,14 @@ function rowView(row) {
     threadId: row.rootId || row._id, addressed: Boolean(row.rootId && row.replyToId !== row.rootId) };
 }
 function commentGroups(roots, threads) {
-  return roots.map(root => {
+  return newestComments(roots).map(root => {
     const thread = threads.get(root._id) || { items: [], fresh: new Set() };
     const folded = new Set(thread.items.filter(row => row.folded).map(row => row._id));
-    const rows = thread.items.filter(row => !(row.ancestorIds || []).some(id => folded.has(id))).map(rowView);
+    const rows = oldestComments(thread.items).filter(row => !(row.ancestorIds || []).some(id => folded.has(id))).map(rowView);
     const fresh = rows.filter(row => thread.fresh.has(row._id));
     const remainingCount = Math.max(0, (root.replyCount || 0) - fresh.length);
     return { ...rowView(root), children: !root.folded && thread.open ? rows.filter(row => !thread.fresh.has(row._id)) : [],
+      visibleChildren: !root.folded && thread.open ? rows : [],
       freshChildren: root.folded ? [] : fresh, threadLoading: thread.loading || false, threadError: thread.error || '',
       threadHasMore: thread.hasMore || false, threadOpen: Boolean(thread.open),
       remainingCount,

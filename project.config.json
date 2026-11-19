@@ -19,6 +19,7 @@
     "checkSiteMap": true,
     "uploadWithSourceMap": true,
     "compileHotReLoad": false,
+    "ignoreDevUnusedFiles": false,
     "useMultiFrameRuntime": true,
     "useApiHook": true,
     "useApiHostProcess": true,
@@ -75,7 +76,9 @@
   "srcMiniprogramRoot": "miniprogram/",
   "packOptions": {
     "ignore": [],
-    "include": []
+    "include": [
+      { "type": "folder", "value": "pages/xiaocui-about" }
+    ]
   },
   "editorSetting": {
     "tabIndent": "insertSpaces",

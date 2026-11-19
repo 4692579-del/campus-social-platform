@@ -12,7 +12,7 @@ const reaction = (f, id, active = true, kind = 'like', identity = f.alice) =>
 
 test('真实云函数入口兼容微信自动附带的userInfo，发帖回复仍使用可信上下文身份', async () => {
   const f = fixture(); const alice = await f.login(); await f.login(f.bob);
-  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
+  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './content-check' ? require('../cloudfunctions/userService/content-check') : name === './deepseek' ? require('../cloudfunctions/userService/deepseek') : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
     init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
     openapi: { security: { msgSecCheck: async () => ({ result: { suggest: 'pass' } }) } },
   } };
@@ -131,13 +131,27 @@ test('个人动态从可信账号筛选、按时间分页，隐藏内容及其�
 
 test('内容长度、文字校验拒绝和服务异常均不写入动态', async () => {
   const f = fixture(); await f.login();
-  for (const content of ['', '   ', '字'.repeat(1001), '非法\u0001字符']) assert.equal((await publish(f, content)).code, 'INVALID_POST');
+  for (const content of ['', '   ', '字'.repeat(151), '非法\u0001字符']) assert.equal((await publish(f, content)).code, 'INVALID_POST');
   const rejected = fixture({ checkText: async () => false }); await rejected.login();
   assert.equal((await publish(rejected)).code, 'CONTENT_REJECTED');
   assert.equal(rejected.squarePosts.size, 0);
   const failed = fixture({ checkText: async () => { throw new Error('timeout'); } }); await failed.login();
   assert.equal((await publish(failed)).code, 'CONTENT_CHECK_UNAVAILABLE');
   assert.equal(failed.squarePosts.size, 0);
+});
+
+test('动态150字包含空格、换行和标点且不按UTF16拆分表情，回复保持300字', async () => {
+  const f = fixture(); await f.login();
+  for (const [index, content] of ['字'.repeat(149) + '！', '😊'.repeat(150), '字'.repeat(148) + ' \n'].entries()) {
+    const result = await publish(f, content, f.alice, `length-valid-request${index}`);
+    assert.equal(result.success, true, result.message);
+  }
+  for (const content of ['字'.repeat(150) + '！', '字'.repeat(150) + ' ', '\n' + '字'.repeat(150), '😊'.repeat(151)]) {
+    assert.equal((await publish(f, content)).code, 'INVALID_POST');
+  }
+  const id = (await publish(f)).square.post._id;
+  const reply = await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: id, content: '回'.repeat(300), requestId: 'reply-length-300001' } }, f.alice);
+  assert.equal(reply.success, true, reply.message);
 });
 
 test('点赞采用目标状态，重复和并发请求不会虚增计数，可取消', async () => {
@@ -188,7 +202,8 @@ test('回复与计数同时提交、重试不重复；失败事务不留下半�
 
 test('预览截取280字，详情展示全文；认证徽章随作者实际状态变化，非广场及隐藏动态不外泄', async () => {
   const f = fixture(); const user = await f.login();
-  const content = '😊'.repeat(400), id = (await publish(f, content)).square.post._id;
+  const content = '😊'.repeat(400), id = (await publish(f, '旧版已发布动态')).square.post._id;
+  f.squarePosts.get(id).content = content;
   const preview = (await f.handle({ action: 'listSquarePosts' }, f.bob)).square.items[0];
   assert.equal(Array.from(preview.content).length, 280);
   assert.equal(preview.truncated, true);

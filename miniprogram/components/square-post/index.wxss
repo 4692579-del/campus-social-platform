@@ -32,3 +32,11 @@
 .post-date { position: relative; margin-top: 16rpx; padding: 12rpx 0; color: #8b949e; font-size: 23rpx; line-height: 1.6; }
 /* 跨过头像列及两侧内边距，让时间下方的分隔线完整铺满卡片。 */
 .post-date::after { content: ''; position: absolute; left: -106rpx; right: -16rpx; bottom: 0; border-bottom: 1rpx solid #dce1e7; pointer-events: none; }
+
+/* 详情头部保留头像列，正文及其后的图片、声明、时间和互动统一铺满内容宽度。 */
+.post-card.is-detail { position: relative; display: block; }
+.is-detail .post-avatar { position: absolute; top: 28rpx; left: 16rpx; }
+.is-detail .post-author-details { min-height: 76rpx; margin-left: 90rpx; }
+.is-detail .post-handle { display: block; }
+.is-detail .post-text { margin-top: 24rpx; }
+.is-detail .post-date::after { left: -16rpx; }

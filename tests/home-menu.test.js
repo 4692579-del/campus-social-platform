@@ -9,6 +9,15 @@ const menuConfig = require('../miniprogram/utils/account-menu');
 
 const user = { _id: 'alice', nickname: '真实昵称', avatarFileID: 'cloud://real/avatar.png', accountId: '12345678', role: 'user', certificationStatus: 'unverified', schoolId: '' };
 
+test('关于小萃AI排在设置前，进入额度页保留菜单直到新页面覆盖', async () => {
+  const f = fixture({ cachedUser: user }); f.page.onLoad(); await f.page.onShow(); f.page.openMenu();
+  const keys = menuConfig.utilityMenuItems.map(item => item.key); assert.equal(keys.indexOf('xiaocui') + 1, keys.indexOf('settings'));
+  f.page.selectMenuItem({ currentTarget: { dataset: { key: 'xiaocui' } } });
+  assert.equal(f.routes[0], '/pages/xiaocui-about/index'); assert.equal(f.page.data.menuOpen, true);
+  f.page.onHide(); assert.equal(f.page.data.menuOpen, true);
+  await f.page.onShow(); assert.equal(f.page.data.menuOpen, false);
+});
+
 function fixture(options = {}) {
   let definition;
   const routes = [], navigation = [], toasts = [], modals = [], requests = [], feedRequests = [], bar = {};

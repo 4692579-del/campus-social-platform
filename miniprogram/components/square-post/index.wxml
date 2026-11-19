@@ -9,7 +9,9 @@
 <view class="post-card {{detail ? 'is-detail' : ''}}" bindtap="open">
   <image class="post-avatar" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
   <view class="post-main">
-    <view class="post-heading"><text class="post-name">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><button wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-follow" catchtap="stopEvent" disabled aria-label="关注功能暂未开放">关注</button><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <view class="post-author-details"><view class="post-heading"><text class="post-name">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><button wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-follow" catchtap="stopEvent" disabled aria-label="关注功能暂未开放">关注</button><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text>
+    </view>
     <text class="post-text" selectable>{{detail || expanded ? (post.fullContent || post.content) : post.content}}</text>
     <view wx:if="{{post.truncated && !detail}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
     <view wx:if="{{imageFiles.length}}" class="post-image-gallery" catchtap="stopEvent">

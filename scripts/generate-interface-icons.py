@@ -5,6 +5,7 @@ OUT = Path(__file__).resolve().parents[1] / 'miniprogram/images/interface'
 OUT.mkdir(parents=True, exist_ok=True)
 
 SHAPES = {
+    'crown': ['<path d="m3 6 4 4 5-7 5 7 4-4-2 12H5ZM5 21h14"/>'],
     'maximize': ['<path d="M14 4h6v6M10 20H4v-6"/>'],
     'minimize': ['<path d="M20 10h-6V4M4 14h6v6"/>'],
     'file-lines': ['<path d="M14 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3V10Z"/>', '<path d="M14 3v7h7M7 8h3m-3 6h10m-10 4h6"/>'],

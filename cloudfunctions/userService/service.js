@@ -3,6 +3,7 @@ const { createCertificationService, EXPECTED_CODES } = require('./certification'
 const { createCertificationReviewService, REVIEW_ACTIONS, REVIEW_CODES } = require('./certification-review');
 const { createAccountIdService, isAccountId, ACCOUNT_ID_CODES } = require('./account-id');
 const { createSquareService, SQUARE_ACTIONS, SQUARE_CODES } = require('./square');
+const { createAIUsage, USAGE_CODES } = require('./ai-usage');
 
 function fail(code, message) {
   const error = new Error(message);
@@ -130,7 +131,7 @@ function createUserService(db, options) {
     try {
       if (!identity || !identity.openid) fail('UNAUTHENTICATED', '请在微信小程序中登录');
       const action = event && event.action;
-      if (!['login', 'getProfile', 'getAccountInfo', 'backfillAccountIds', 'findUserByAccountId', 'updateProfile', 'updateCover', 'getAdminDashboard', 'getCertification', 'submitCertification', 'withdrawCertification', ...REVIEW_ACTIONS, ...SQUARE_ACTIONS].includes(action)) {
+      if (!['login', 'getProfile', 'getAIUsage', 'getAccountInfo', 'backfillAccountIds', 'findUserByAccountId', 'updateProfile', 'updateCover', 'getAdminDashboard', 'getCertification', 'submitCertification', 'withdrawCertification', ...REVIEW_ACTIONS, ...SQUARE_ACTIONS].includes(action)) {
         fail('INVALID_ACTION', '不支持此操作');
       }
       const id = userIdFor(identity.openid);
@@ -167,6 +168,7 @@ function createUserService(db, options) {
       if (!['user', 'student', 'admin'].includes(user.role)) {
         fail('INVALID_ROLE', '账号身份异常，请联系管理员');
       }
+      if (action === 'getAIUsage') return { success: true, aiUsage: await createAIUsage(db, options).get(id) };
       // 第一阶段曾把未认证账号默认写为 student。只修正这个明确的旧数据组合。
       // 条件更新可防止查询后账号被设为 admin 时，被迟到的请求覆盖管理员身份。
       if (user.role === 'student' && user.certificationStatus === 'unverified' && user.schoolId === '') {
@@ -257,7 +259,7 @@ function createUserService(db, options) {
         return { success: false, code: 'COMMENTS_STORAGE_NOT_READY', message: '评论服务尚未配置完成，请稍后再试' };
       }
       const expected = ['UNAUTHENTICATED', 'INVALID_ACTION', 'INVALID_PROFILE', 'INVALID_NICKNAME',
-        'INVALID_AVATAR', 'INVALID_COVER', 'INVALID_BIO', 'INVALID_BIRTH_DATE', 'NOT_REGISTERED', 'ACCOUNT_DISABLED', 'INVALID_ROLE', 'FORBIDDEN', ...ACCOUNT_ID_CODES, ...EXPECTED_CODES, ...REVIEW_CODES, ...SQUARE_CODES].includes(error.code);
+        'INVALID_AVATAR', 'INVALID_COVER', 'INVALID_BIO', 'INVALID_BIRTH_DATE', 'NOT_REGISTERED', 'ACCOUNT_DISABLED', 'INVALID_ROLE', 'FORBIDDEN', ...USAGE_CODES, ...ACCOUNT_ID_CODES, ...EXPECTED_CODES, ...REVIEW_CODES, ...SQUARE_CODES].includes(error.code);
       // 不记录 event、姓名、学号或图片内容，只记录错误类别便于排查。
       if (!expected) console.error('userService failed:', error.code || 'UNKNOWN_ERROR');
       return {

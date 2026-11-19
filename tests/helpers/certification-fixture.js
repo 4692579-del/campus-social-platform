@@ -7,7 +7,7 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
   proofBase64, requestId: 'test-request-00000001', ...extra });
 
 function fixture(options = {}) {
-  const tables = new Map(['users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states'].map(name => [name, new Map()]));
+  const tables = new Map(['users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states', 'square_ai_jobs'].map(name => [name, new Map()]));
   const uploads = [], proofRequests = [], queries = [], docReads = [];
   const hooks = { beforeTransaction: options.beforeTransaction };
   let tail = Promise.resolve(), transactionReads = 0;
@@ -66,6 +66,7 @@ function fixture(options = {}) {
           return { data: records.has(id) ? { ...records.get(id) } : null };
         },
         set: async ({ data }) => {
+          if (options.rejectImmutableId && Object.prototype.hasOwnProperty.call(data, '_id')) throw Object.assign(new Error('Cannot update immutable _id'), { code: 'IMMUTABLE_ID' });
           if (inTransaction && options.failCollection === name) throw new Error('simulated write failure');
           records.set(id, { ...data, _id: id });
         },
@@ -99,6 +100,7 @@ function fixture(options = {}) {
     },
   };
   const handle = createUserService(db, {
+    generateAI: options.generateAI, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
     checkText: options.checkText || (async () => true),
     processSquareImages: options.processSquareImages,
     randomAccountId: options.randomAccountId,
@@ -121,6 +123,7 @@ function fixture(options = {}) {
     users: tables.get('users'), applications: tables.get('certification_applications'), reviews: tables.get('certification_reviews'),
     squarePosts: tables.get('square_posts'), squareReplies: tables.get('square_replies'), squareInteractions: tables.get('square_interactions'), squareReports: tables.get('square_reports'),
     squareReplyChildren: tables.get('square_reply_children'), squareCommentStates: tables.get('square_comment_states'),
+    aiJobs: tables.get('square_ai_jobs'),
     async login(identity = alice) { return (await handle({ action: 'login' }, identity)).user; },
     async loginAdmin(identity = admin) { const account = await f.login(identity); f.users.get(account._id).role = 'admin'; return account; },
     submit(value = application(), identity = alice) { return handle({ action: 'submitCertification', application: value }, identity); },

@@ -6,8 +6,9 @@ const media = require('../../services/post-images');
 const { declarations, declarationKey } = require('../../utils/content-declaration');
 
 Component({
-  data: { user: null, content: '', images: [], count: 0, countProgress: 0, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
-    viewportHeight: 812, sheetTop: 104, settingsHeight: 470, keyboardHeight: 0, editorFocused: false, closing: false,
+  data: { user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
+    optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [],
+    viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, closing: false,
     panel: '', exitConfirmVisible: false, replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none',
     audiences: [{ key: 'anyone', label: '任何人' }, { key: 'friends', label: '我的萃友' },
       { key: 'followers', label: '我的粉丝' }, { key: 'following', label: '我的关注' }],
@@ -19,19 +20,23 @@ Component({
       this._unloaded = true;
       this._authVersion = (this._authVersion || 0) + 1;
       clearTimeout(this._closeTimer);
+      clearTimeout(this._limitHintTimer);
     },
   },
   pageLifetimes: {
     resize() { this.measure(); },
     hide() {
+      this.cancelOptimization();
+      this.hideLimitHint();
       this.setData({ keyboardHeight: 0, editorFocused: false });
     },
     show() {
       if (this._unloaded) return;
       const current = users.getCachedUser();
       if ((current && current._id) !== (this.data.user && this.data.user._id)) {
+        this.hideLimitHint();
         if (current) this.onLoggedIn(current);
-        else { this._editorOwnerId = null; this._savedContent = ''; this._savedImages = []; this._savedDeclaration = 'none'; this.setData({ user: null, content: '', images: [], declaration: 'none', count: 0, countProgress: 0, canPublish: false, exitConfirmVisible: false }); this.requestLogin(); }
+        else { this.cancelOptimization(); this._editorOwnerId = null; this._savedContent = ''; this._savedImages = []; this._savedDeclaration = 'none'; this._optimizedOriginal = null; this.setData({ user: null, content: '', images: [], declaration: 'none', count: 0, remainingCount: 150, countWarning: false, countProgress: 0, canPublish: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], exitConfirmVisible: false }); this.requestLogin(); }
       }
     },
   },
@@ -51,7 +56,10 @@ Component({
         const keyboardResize = this._layoutWidth === width && (this.data.editorFocused || this.data.keyboardHeight);
         const height = keyboardResize ? Math.max(info.windowHeight || 812, this.data.viewportHeight) : info.windowHeight || 812;
         this._layoutWidth = width;
-        this.setData({ viewportHeight: height, sheetTop: top, settingsHeight: Math.min(height - top - 16, 940 * width / 750) });
+        const settingsMaxHeight = Math.max(0, height - top - 16);
+        // 按内容撑高；短屏缩紧选项行，为标题、两组小标题、完成按钮及安全区留足空间。
+        const settingsRowHeight = Math.min(92, Math.max(52, Math.floor((settingsMaxHeight * 750 / width - 440) / 8)));
+        this.setData({ viewportHeight: height, sheetTop: top, settingsMaxHeight, settingsRowHeight });
       } catch (error) { /* 旧设备保留默认安全位置。 */ }
     },
     async initialize() {
@@ -68,12 +76,14 @@ Component({
       const changed = this._editorOwnerId !== user._id;
       this._editorOwnerId = user._id;
       if (changed) {
+        this.cancelOptimization(); this._optimizedOriginal = null;
+        this.hideLimitHint();
         this._savedContent = '';
         this._savedDeclaration = 'none';
         this._savedImages = []; this._knownUploads = new Set();
-        this.setData({ images: [] });
+        this.setData({ images: [], declaration: 'none', noticeOrder: [] });
         this.setContent(''); this._requestId = null;
-        this.setData({ replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none', panel: '', exitConfirmVisible: false, error: '' });
+        this.setData({ replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none', panel: '', exitConfirmVisible: false, error: '', optimizeError: '', canUndoOptimization: false });
       }
       this.setData({ user });
       if (!changed) return;
@@ -85,22 +95,85 @@ Component({
           this._savedImages = images.map(image => image.fileID);
           this._knownUploads = new Set(this._savedImages);
           this._savedDeclaration = declarationKey(draft.declaration);
-          this.setData({ images, declaration: this._savedDeclaration });
+          this.setData({ images, declaration: this._savedDeclaration, ...this.noticeState(false, this._savedDeclaration) });
           this._savedContent = draft.content;
           this._requestId = draft.requestId || token();
           this.setContent(draft.content);
         }
       } catch (error) { /* 无草稿时直接开始输入。 */ }
     },
+    noticeState(canOptimize = this.data.canOptimize, declaration = this.data.declaration) {
+      const visible = { optimize: canOptimize, declaration: declaration !== 'none' };
+      const noticeOrder = this.data.noticeOrder.filter(key => visible[key]);
+      for (const key of ['optimize', 'declaration']) if (visible[key] && !noticeOrder.includes(key)) noticeOrder.push(key);
+      return { noticeOrder };
+    },
     setContent(content) {
+      const changed = content !== this.data.content;
+      if (changed) { this._editRevision = (this._editRevision || 0) + 1; this._optimizedOriginal = null; }
       const count = Array.from(content).length;
-      this.setData({ content, count, countProgress: Math.min(360, Math.round(count * 36) / 100), canPublish: Boolean(content.trim() || this.data.images.length) && count <= 1000 });
+      const remainingCount = Math.max(0, 150 - count);
+      const canOptimize = Boolean(content.trim()) && count <= 150;
+      this.setData({ content, count, remainingCount, countWarning: remainingCount <= 20,
+        canOptimize, ...this.noticeState(canOptimize), ...(changed ? { canUndoOptimization: false, optimizeError: '' } : {}),
+        countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length) && count <= 150 });
     },
     onInput(event) {
       if (this._unloaded || this._closing || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
-      this._requestId = token();
-      this.setContent(event.detail.value);
+      const characters = Array.from(event.detail.value);
+      const content = characters.slice(0, 150).join('');
+      if (content !== this.data.content) this._requestId = token();
+      this.setContent(content);
+      if (characters.length >= 150) this.showLimitHint();
+      else this.hideLimitHint();
       this.setData({ error: '' });
+      // 即使截断结果与上一次绑定值相同，也让原生输入框丢弃超出的粘贴/输入。
+      return content;
+    },
+    cancelOptimization() {
+      this._optimizationSequence = (this._optimizationSequence || 0) + 1;
+      if (this.data.optimizing) this.setData({ optimizing: false });
+    },
+    async optimizeContent() {
+      if (this.busy() || this.data.optimizing || !this.data.canOptimize || this.data.panel || this.data.exitConfirmVisible || this.data.loginSheetOpen) return;
+      const user = users.getCachedUser(), version = users.getSessionVersion();
+      if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
+      const original = this.data.content, revision = this._editRevision;
+      const sequence = this._optimizationSequence = (this._optimizationSequence || 0) + 1;
+      const current = () => !this._unloaded && !this._closing && this._optimizationSequence === sequence && users.getSessionVersion() === version && this._editorOwnerId === user._id;
+      this.hideLimitHint();
+      this.setData({ optimizing: true, optimizeError: '' });
+      try {
+        const result = await square.optimizeContent(original);
+        if (!current() || revision !== this._editRevision || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
+        if (typeof result !== 'string' || !result.trim()) throw new Error('暂未生成优化内容，请重试');
+        // 不经过用户输入事件：即使结果恰好150字，也不弹超限气泡。
+        const content = Array.from(result).slice(0, 150).join('');
+        this.hideLimitHint();
+        this.setContent(content);
+        this._requestId = token();
+        this._optimizedOriginal = original;
+        this.setData({ canUndoOptimization: content !== original, error: '' });
+      } catch (error) {
+        if (current() && revision === this._editRevision) this.setData({ optimizeError: error.message || '优化失败，已保留原文' });
+      } finally { if (current()) this.setData({ optimizing: false }); }
+    },
+    undoOptimization() {
+      if (this.busy() || this.data.optimizing || !this.data.canUndoOptimization || typeof this._optimizedOriginal !== 'string') return;
+      const original = this._optimizedOriginal;
+      this.hideLimitHint(); this.setContent(original); this._requestId = token();
+      this.setData({ canUndoOptimization: false, optimizeError: '' });
+    },
+    showLimitHint() {
+      clearTimeout(this._limitHintTimer);
+      this.setData({ limitHintVisible: true });
+      this._limitHintTimer = setTimeout(() => {
+        if (!this._unloaded && !this._closing) this.setData({ limitHintVisible: false });
+      }, 2500);
+    },
+    hideLimitHint() {
+      clearTimeout(this._limitHintTimer);
+      if (this.data.limitHintVisible) this.setData({ limitHintVisible: false });
     },
     saveDraft() {
       const user = users.getCachedUser();
@@ -119,6 +192,7 @@ Component({
     async saveAndClose() {
       if (this.busy()) return;
       if (!this.data.content.trim() && !this.data.images.length) { wx.showToast({ title: '请先写点内容或选择图片', icon: 'none' }); return; }
+      this.cancelOptimization();
       this.setData({ savingDraft: true, error: '' });
       const version = users.getSessionVersion();
       try {
@@ -205,10 +279,12 @@ Component({
       const value = event.currentTarget.dataset.key;
       if (this.busy() || this.data.declaration === value || !this.data.declarations.some(item => item.key === value)) return;
       this._requestId = token();
-      this.setData({ declaration: value });
+      this.setData({ declaration: value, ...this.noticeState(this.data.canOptimize, value) });
     },
     finishClose(published = false) {
       if (this._closing || this._unloaded) return;
+      this.cancelOptimization();
+      this.hideLimitHint();
       this._closing = true;
       this._authVersion = (this._authVersion || 0) + 1;
       this.setData({ closing: true, editorFocused: false, panel: '', exitConfirmVisible: false, loginSheetOpen: false });
@@ -220,6 +296,7 @@ Component({
       const user = users.getCachedUser(), version = users.getSessionVersion();
       if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
       this._requestId = this._requestId || token();
+      this.cancelOptimization();
       this.setData({ publishing: true, error: '' });
       try {
         const images = this.data.images.length ? await this.uploadSelectedImages() : [];
@@ -267,6 +344,7 @@ Component({
     },
     cancel() {
       if (this.busy() || this.data.exitConfirmVisible) return;
+      this.cancelOptimization();
       const imageKeys = this.data.images.map(image => image.fileID || image.key);
       if ((this.data.content.length || this.data.images.length) && (this.data.content !== (this._savedContent || '') || this.data.declaration !== (this._savedDeclaration || 'none') || JSON.stringify(imageKeys) !== JSON.stringify(this._savedImages || []))) {
         this.setData({ exitConfirmVisible: true, panel: '', keyboardHeight: 0, editorFocused: false, error: '' });

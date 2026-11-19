@@ -1,5 +1,6 @@
 const users = require('./user');
 const { projectComment, reactComment } = require('../utils/comment-state');
+const { newestComments, oldestComments } = require('../utils/comment-order');
 const TTL = 60000;
 let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
 const posts = new Map(), postTimes = new Map(), replies = new Map(), pending = new Map(), revisions = new Map();
@@ -7,10 +8,15 @@ const deleted = new Set();
 const likeWrites = new Map(), postListeners = new Set();
 const children = new Map(), comments = new Map(), commentVersions = new Map();
 const commentWrites = new Map(), commentListeners = new Set();
+const aiWrites = new Map(), aiListeners = new Set();
+const deletedComments = new Set();
+let commentRemovals = 0;
+const commentGone = row => deletedComments.has(row._id) || row.rootId && deletedComments.has(row.rootId);
+function subscribeAI(listener) { aiListeners.add(listener); return () => aiListeners.delete(listener); }
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { owner = key; generation += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); likeWrites.clear(); }
+  if (key !== owner) { owner = key; generation += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
 }
 function cachedFeed() { session(); return feed && feed.value; }
@@ -33,6 +39,7 @@ function cachedChildren(id, rootId) { session(); return children.get(`${id}:${ro
 function cachedComment(id) { session(); return comments.get(id) || null; }
 function subscribeComment(listener) { commentListeners.add(listener); return () => commentListeners.delete(listener); }
 function saveComment(row, changed = false, notify = false) {
+  if (commentGone(row)) return;
   comments.set(row._id, row);
   if (changed) commentVersions.set(row._id, ++mutation);
   for (const list of [...replies.values(), ...children.values()]) list.items = list.items.map(item => item._id === row._id ? row : item);
@@ -116,7 +123,7 @@ async function call(action, data = {}, authenticated = false) {
   if (!result || !result.success) {
     if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) users.logout();
     throw Object.assign(new Error(result && result.code !== 'INVALID_ACTION' ? result.message :
-      action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
+      ['processSquareAIReply', 'optimizeSquareContent'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
         ['listSquareReplyChildren', 'setSquareCommentState'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
@@ -182,18 +189,26 @@ function listChildren(id, rootId, { offset = 0, force = false } = {}) {
 function readComments(id, rootId, { offset, force }) {
   session();
   try { unavailable(id); } catch (error) { return Promise.reject(error); }
+  if (rootId && deletedComments.has(rootId)) return Promise.reject(new Error('评论不存在或已不可见'));
   const store = rootId ? children : replies, key = rootId ? `${id}:${rootId}` : id;
   if (!force && !offset && store.has(key) && Date.now() - store.get(key).time < TTL) return Promise.resolve(store.get(key));
   return merged(`replies:${key}:${offset}`, async () => {
     const revision = revisions.get(id);
     const versions = new Map(commentVersions);
-    const result = await call(rootId ? 'listSquareReplyChildren' : 'listSquareReplies', { postId: id, offset, ...(rootId ? { rootId } : {}) });
+    const beforeRemovals = commentRemovals;
+    let result = await call(rootId ? 'listSquareReplyChildren' : 'listSquareReplies', { postId: id, offset, ...(rootId ? { rootId } : {}) });
+    if (beforeRemovals !== commentRemovals) {
+      const currentRemovals = commentRemovals;
+      result = await call(rootId ? 'listSquareReplyChildren' : 'listSquareReplies', { postId: id, offset: 0, ...(rootId ? { rootId } : {}) });
+      offset = 0;
+      if (currentRemovals !== commentRemovals) throw new Error('评论已更新，请重试');
+    }
     unavailable(id);
+    if (rootId && deletedComments.has(rootId)) throw new Error('评论不存在或已不可见');
     const previous = store.get(key);
     const rows = result.items.map(row => pendingComment(versions.get(row._id) !== commentVersions.get(row._id) && comments.has(row._id) ? comments.get(row._id) : row));
     const value = { ...result, time: Date.now(), items: (offset || revision !== revisions.get(id)) && previous ? [...new Map([...previous.items, ...rows].map(item => [item._id, item])).values()] : rows };
-    const timestamp = item => new Date(item.createdAt && item.createdAt.$date || item.createdAt).getTime() || 0;
-    value.items.sort((a, b) => timestamp(a) - timestamp(b));
+    value.items = (rootId ? oldestComments : newestComments)(value.items.filter(row => !commentGone(row)));
     store.set(key, value);
     for (const row of value.items) comments.set(row._id, row);
     return value;
@@ -282,20 +297,63 @@ async function saveLike(id, write) {
     throw error;
   }
 }
-async function reply(id, content, requestId, replyToId) {
-  const result = await call('publishSquareReply', { post: { postId: id, content, requestId, scope: 'square', ...(replyToId ? { replyToId } : {}) } }, true);
+async function reply(id, content, requestId, replyToId, askAI = false) {
+  const result = await call('publishSquareReply', { post: { postId: id, content, requestId, scope: 'square', ...(replyToId ? { replyToId } : {}), ...(askAI === true ? { askAI: true } : {}) } }, true);
   unavailable(id);
   revisions.set(id, ++mutation);
   updatePost(result.post);
   const rootId = result.reply.rootId;
   const store = rootId ? children : replies, key = rootId ? `${id}:${rootId}` : id;
   const existing = store.get(key);
-  if (existing) existing.items = [...new Map([...existing.items, result.reply].map(item => [item._id, item])).values()];
+  if (existing) existing.items = (rootId ? oldestComments : newestComments)([...new Map([...existing.items, result.reply].map(item => [item._id, item])).values()]);
   else store.set(key, { items: [result.reply], hasMore: true, nextOffset: 0, time: 0 });
   result.reply = pendingComment(result.reply);
   saveComment(result.reply, true);
   if (result.root) { result.root = pendingComment(result.root); saveComment(result.root, true); }
   return result;
+}
+function processAIReply(id, replyId) {
+  session();
+  if (deletedComments.has(replyId)) return Promise.reject(new Error('评论不存在或已不可见'));
+  if (aiWrites.has(replyId)) return aiWrites.get(replyId);
+  const version = generation, beforeRemovals = commentRemovals;
+  const request = call('processSquareAIReply', { postId: id, replyId }, true).then(async result => {
+    unavailable(id);
+    if ([result.target, result.root, result.reply].filter(Boolean).some(commentGone)) throw new Error('评论不存在或已不可见');
+    if (beforeRemovals !== commentRemovals) {
+      // 删除与生成交错时重新取任务的已完成结果，不沿用删除前的数量快照。
+      const removalVersion = commentRemovals, created = result.created;
+      result = { ...await call('processSquareAIReply', { postId: id, replyId }, true), created };
+      unavailable(id);
+      if (removalVersion !== commentRemovals || [result.target, result.root, result.reply].filter(Boolean).some(commentGone)) throw new Error('评论已更新，请重试');
+    }
+    revisions.set(id, ++mutation);
+    const before = cachedPost(id);
+    if (result.post) updatePost({ ...result.post, replyCount: Math.max(result.post.replyCount || 0, before && before.replyCount || 0) });
+    for (const row of [result.target, result.root].filter(Boolean)) saveComment(pendingComment({ ...row,
+      replyCount: Math.max(row.replyCount || 0, comments.get(row._id) && comments.get(row._id).replyCount || 0) }), true, true);
+    if (result.reply) {
+      const row = pendingComment(result.reply), key = `${id}:${row.rootId}`, previous = children.get(key);
+      children.set(key, { ...(previous || { hasMore: true, nextOffset: 0, time: 0 }),
+        items: oldestComments([...new Map([...(previous ? previous.items : []), row].map(item => [item._id, item])).values()]) });
+      saveComment(row, true);
+      for (const listener of aiListeners) { try { listener({ postId: id, ...result, reply: row }); } catch (error) { /* 页面展示不影响已提交回复。 */ } }
+    }
+    return result;
+  }).catch(error => {
+    session();
+    if (generation === version && !deleted.has(id) && error.code !== 'SESSION_CHANGED') {
+      const row = comments.get(replyId);
+      if (row) saveComment({ ...row, aiStatus: 'failed', aiCanRetry: true, aiMessage: error.message || 'AI 请求失败，请重试' }, true, true);
+    }
+    throw error;
+  }).finally(() => {
+    session();
+    if (generation === version && users.invalidateAIUsage) users.invalidateAIUsage();
+    if (aiWrites.get(replyId) === request) aiWrites.delete(replyId);
+  });
+  aiWrites.set(replyId, request);
+  return request;
 }
 function warmReplyChildren(id, rows) {
   session();
@@ -308,6 +366,7 @@ function commentState(id, replyId, kind, active, sourceRow) {
   if (!users.getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
   try { unavailable(id); } catch (error) { return Promise.reject(error); }
   const existing = commentWrites.get(replyId), row = comments.get(replyId) || sourceRow;
+  if (deletedComments.has(replyId) || row && commentGone(row)) return Promise.reject(new Error('评论不存在或已不可见'));
   if (!row) return call('setSquareCommentState', { postId: id, replyId, kind, active }, true).then(result => {
     unavailable(id); saveComment(result.reply, true, true); return result.reply;
   });
@@ -361,8 +420,42 @@ async function deletePost(id) {
   removePost(id, true);
   return id;
 }
+async function deleteReply(id, replyId) {
+  const result = await call('deleteSquareReply', { postId: id, replyId }, true);
+  if (result.deletedId !== replyId || !result.post) throw new Error('删除未确认，请重试');
+  unavailable(id);
+  deletedComments.add(replyId); commentRemovals += 1;
+  revisions.set(id, ++mutation);
+  for (const [key, row] of comments) if (commentGone(row)) {
+    comments.delete(key); commentWrites.delete(key); commentVersions.set(key, ++mutation);
+  }
+  for (const [key, cached] of [...replies, ...children]) {
+    const removed = cached.items.filter(row => commentGone(row)).length;
+    cached.items = cached.items.filter(row => !commentGone(row));
+    cached.nextOffset = Math.max(0, cached.nextOffset - removed); cached.time = 0;
+    if (!result.rootId && key === `${id}:${replyId}`) children.delete(key);
+  }
+  updatePost(result.post);
+  if (result.root) saveComment(pendingComment(result.root), true, true);
+  for (const listener of commentListeners) {
+    try { listener({ _id: replyId, rootId: result.rootId || '', postId: id, status: 'deleted' }); } catch (error) { /* 页面展示不影响删除提交。 */ }
+  }
+  return result;
+}
+function reportReply(id, replyId, reason) { return call('reportSquareReply', { postId: id, replyId, reason }, true); }
+function optimizeContent(content) {
+  session();
+  const version = generation;
+  return merged(`polish:${content}`, async () => {
+    try {
+    const result = await call('optimizeSquareContent', { content }, true);
+    if (!result || typeof result.content !== 'string' || !result.content.trim()) throw new Error('暂未生成优化内容，请重试');
+    return Array.from(result.content).slice(0, 150).join('');
+    } finally { session(); if (generation === version && users.invalidateAIUsage) users.invalidateAIUsage(); }
+  });
+}
 async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost };
+module.exports = { cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };

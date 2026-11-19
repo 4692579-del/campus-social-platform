@@ -24,7 +24,7 @@ Page({
     menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: true, loginSheetOpen: false,
     menuItems, utilityMenuItems,
-    likeCount: 0, followingCount: 0, followerCount: 0, selectedContent: 'posts',
+    likeCount: 0, followingCount: 0, followerCount: 0, selectedContent: 'posts', contentIndex: 0,
     contentTabs: [
       { key: 'posts', label: '动态', icon: 'posts', empty: '还没有发布动态' },
       { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/interface/message-square', iconExtension: 'svg', empty: '还没有回复' },
@@ -462,6 +462,7 @@ Page({
   selectMenuItem(event) {
     if (this.interactionBlocked()) return;
     const item = [...this.data.menuItems, ...this.data.utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
+    if (item && item.key === 'xiaocui') { wx.navigateTo({ url: '/pages/xiaocui-about/index' }); return; }
     if (item && item.key === 'certification') {
       if (!this.data.user) { wx.showToast({ title: '请先登录后进行认证', icon: 'none' }); return; }
       if (this.data.identity.isAdmin) { wx.showToast({ title: '管理员账号无需学生认证', icon: 'none' }); return; }
@@ -479,7 +480,7 @@ Page({
       this.setData({ postsMenuOpen: !this.data.postsMenuOpen });
       return;
     }
-    this.setData({ selectedContent: tab.key, emptyText: tab.empty, postsMenuOpen: false });
+    this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false });
     if (tab.key === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
     if (tab.key === 'album') return this.loadAlbum();
   },
@@ -603,7 +604,7 @@ Page({
         userService.logout();
         this.closeMenu();
         this.applyUser(null);
-        this.setData({ error: '', selectedContent: 'posts', emptyText: '还没有发布动态' });
+        this.setData({ error: '', selectedContent: 'posts', contentIndex: 0, emptyText: '还没有发布动态' });
       },
       fail: () => {
         if (!this._unloaded && version === this._logoutVersion) wx.showToast({ title: '暂时无法确认，请重试', icon: 'none' });

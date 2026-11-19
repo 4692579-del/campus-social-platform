@@ -2,7 +2,7 @@
 <view class="account-menu profile-menu-layer {{menuOpen ? 'is-open' : ''}}" aria-hidden="{{!menuOpen}}" bindtap="closeMenu" catchtouchmove="stopMenuEvent">
     <view class="menu-backdrop" bindtap="closeMenu" aria-role="button" aria-label="关闭菜单"></view>
     <view class="menu-panel" catchtap="stopMenuEvent" role="dialog" aria-modal="true" aria-label="个人主页菜单">
-      <view class="menu-account" style="padding-top: calc({{navHeight}}px + 20rpx);">
+      <view class="menu-account" style="padding-top: calc({{navHeight}}px - 64rpx);">
         <image class="menu-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" bindtap="openProfile" aria-role="button" aria-label="进入个人主页" />
         <view class="menu-nickname">{{user ? user.nickname : accountHint || '未登录'}}</view>
         <view wx:if="{{user}}" class="menu-account-id">@{{user.accountId || '暂未分配'}}</view>

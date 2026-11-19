@@ -72,8 +72,17 @@ module.exports = {
     this._stopPostUpdates = square.subscribePost(post => {
       if (current(this, snapshot()) && this.data.user && this.data.user._id === users.getCachedUser()._id) paintLike(this, post._id, post);
     });
+    if (typeof square.subscribeAI === 'function') this._stopAIUpdates = square.subscribeAI(result => {
+      if (!current(this, snapshot()) || !this.data.user || this.data.user._id !== users.getCachedUser()._id || !result.post || !Number.isSafeInteger(result.post.replyCount)) return;
+      const values = {};
+      for (const key of ['posts', 'ownPosts']) if (Array.isArray(this.data[key])) {
+        const index = this.data[key].findIndex(row => row._id === result.postId);
+        if (index >= 0) values[`${key}[${index}].replyCount`] = result.post.replyCount;
+      }
+      if (Object.keys(values).length) this.setData(values);
+    });
   },
-  stopPostUpdates() { if (this._stopPostUpdates) this._stopPostUpdates(); this._stopPostUpdates = null; },
+  stopPostUpdates() { if (this._stopPostUpdates) this._stopPostUpdates(); if (this._stopAIUpdates) this._stopAIUpdates(); this._stopPostUpdates = null; this._stopAIUpdates = null; },
   async reactPost(event) {
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
     const { id, kind } = event.detail;

@@ -13,7 +13,7 @@ function composerFixture(options = {}) {
     login: async () => { current = { ...user }; version++; return current; },
     logout: () => { current = null; version++; },
   };
-  const square = { publish: async (content, id, images = [], declaration = 'none') => {
+  const square = { optimizeContent: async content => { requests.push({ optimize: content }); return options.optimize ? options.optimize(content) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none') => {
     calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}) });
     return options.publish ? options.publish(content, id, images, declaration) : { _id: 'p_' + 'a'.repeat(40), content, images, declaration };
   } };

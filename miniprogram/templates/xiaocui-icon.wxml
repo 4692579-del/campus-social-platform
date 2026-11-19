@@ -1,0 +1,9 @@
+<template name="xiaocui-icon">
+  <view class="xiaocui-icon" aria-hidden="true">
+    <view class="xiaocui-icon-float">
+      <image class="xiaocui-icon-body" src="/images/ai/xiaocui-body.svg" mode="aspectFit" />
+      <view class="xiaocui-icon-eye xiaocui-icon-eye-left"></view>
+      <view class="xiaocui-icon-eye xiaocui-icon-eye-right"></view>
+    </view>
+  </view>
+</template>

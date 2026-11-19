@@ -1,0 +1,29 @@
+<import src="../../templates/xiaocui-icon.wxml" />
+<view class="ai-about-page">
+  <view class="ai-about-header" style="height: {{navHeight}}px;">
+    <view class="ai-about-nav" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">
+      <button size="mini" class="ai-about-back" bindtap="back" hover-class="ai-about-back-pressed" aria-label="返回"><image class="ai-about-back-icon" src="/images/interface/chevron-left.svg" mode="aspectFit" /></button>
+      <text class="ai-about-title">关于小萃AI</text>
+    </view>
+  </view>
+  <view class="ai-about-content">
+    <view class="ai-about-hero">
+      <view class="ai-about-mark"><template is="xiaocui-icon" /></view>
+      <text class="ai-about-name">小萃AI</text>
+      <text class="ai-about-tagline">灵感随时来，表达更轻松</text>
+    </view>
+    <view class="ai-usage-card">
+      <view class="ai-usage-heading"><text>使用额度</text><button size="mini" wx:if="{{user}}" class="ai-usage-refresh" bindtap="refresh" disabled="{{refreshing}}" hover-class="ai-usage-refresh-pressed" aria-label="刷新额度"><image class="ai-usage-refresh-icon {{refreshing ? 'is-refreshing' : ''}}" src="/images/interface/refresh.svg" mode="aspectFit" /></button></view>
+      <block wx:if="{{usage && user}}">
+        <view class="ai-usage-summary"><text class="ai-usage-label">今日用量</text><view class="ai-usage-number"><text>{{percentText}}%</text><text>已使用</text></view></view>
+        <view class="ai-usage-track" aria-role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{usage.usedPercent}}" aria-label="{{'今日额度已使用' + percentText + '%'}}"><view class="ai-usage-fill {{usage.usedPercent >= 95 ? 'is-low' : ''}}" style="width: {{usage.usedPercent}}%;"></view></view>
+        <view wx:if="{{usage.exhausted}}" class="ai-usage-exhausted">今日额度已用完，明日再来找小萃吧</view>
+      </block>
+      <view wx:elif="{{user}}" class="ai-usage-empty"><view wx:if="{{loading}}" class="ai-usage-skeleton"></view><text wx:else>{{error ? '暂时无法读取额度' : '正在读取额度…'}}</text></view>
+      <view wx:else class="ai-usage-empty"><text>登录后可查看使用额度</text></view>
+      <view class="ai-usage-reset"><image src="/images/interface/clock-muted.svg" mode="aspectFit" /><text>每日0点重置额度</text></view>
+      <view wx:if="{{error && user}}" class="ai-usage-error"><text>{{error}}</text><button size="mini" bindtap="refresh" disabled="{{refreshing}}">重试</button></view>
+    </view>
+    <view class="ai-about-note"><text>AI也会有疏漏，重要信息请核实。</text></view>
+  </view>
+</view>

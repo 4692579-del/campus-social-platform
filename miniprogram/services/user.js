@@ -10,6 +10,34 @@ let certificationCache = null;
 let pendingAccountInfo = null;
 let pendingCertification = null;
 let dataVersion = 0;
+let aiUsageCache = null, pendingAIUsage = null, aiUsageRevision = 0;
+
+function getCachedAIUsage() {
+  const user = getCachedUser();
+  return user && aiUsageCache && aiUsageCache.owner === user._id && Date.parse(aiUsageCache.value.resetsAt) > Date.now() ? aiUsageCache.value : null;
+}
+function invalidateAIUsage() {
+  aiUsageRevision++;
+  if (aiUsageCache) aiUsageCache.time = 0;
+  pendingAIUsage = null;
+}
+async function getAIUsage({ force = false } = {}) {
+  const user = getCachedUser();
+  if (!user) throw Object.assign(new Error('登录后可查看使用额度'), { code: 'UNAUTHENTICATED' });
+  const cached = getCachedAIUsage();
+  if (!force && cached && Date.now() - aiUsageCache.time < 15000) return cached;
+  if (pendingAIUsage) return pendingAIUsage;
+  const version = sessionVersion, revision = aiUsageRevision, owner = user._id;
+  const promise = request('getAIUsage', {}, 'aiUsage').then(value => {
+    if (version !== sessionVersion || !getCachedUser() || getCachedUser()._id !== owner) throw new Error('登录状态已变更，请重新登录');
+    if (revision !== aiUsageRevision) return getAIUsage({ force: false });
+    if (!value || !Number.isFinite(value.usedPercent) || value.usedPercent < 0 || value.usedPercent > 100 || !Number.isFinite(Date.parse(value.resetsAt))) throw new Error('额度信息读取失败，请重试');
+    aiUsageCache = { owner, value, time: Date.now() };
+    return value;
+  }).finally(() => { if (pendingAIUsage === promise) pendingAIUsage = null; });
+  pendingAIUsage = promise;
+  return promise;
+}
 
 // 只在本次运行内复用云端返回的数据，不把本地缓存当作操作权限。
 function getCachedUser() {
@@ -47,6 +75,7 @@ async function request(action, extra, resultKey = 'user') {
 }
 
 function remember(user) {
+  if ((getApp().globalData.currentUser || {})._id !== (user || {})._id) { aiUsageCache = null; invalidateAIUsage(); }
   if (JSON.stringify(getApp().globalData.currentUser) !== JSON.stringify(user)) {
     dataVersion += 1;
     accountInfoCache = null;
@@ -102,6 +131,8 @@ function logout() {
   pendingRestore = null;
   pendingAccountInfo = null;
   pendingCertification = null;
+  aiUsageCache = null;
+  invalidateAIUsage();
   remember(null);
 }
 
@@ -210,5 +241,5 @@ function reviewCertification(applicationId, revision, review) {
   return reviewRequest('reviewCertification', { applicationId, revision, review });
 }
 
-module.exports = { login, restore, getSessionVersion: () => sessionVersion, getCachedUser, getCachedAccountInfo, getCachedCertification, updateProfile, updateCover, logout, getAccountInfo, findUserByAccountId, getAdminDashboard, getCertification, submitCertification, withdrawCertification,
+module.exports = { login, restore, getSessionVersion: () => sessionVersion, getCachedUser, getCachedAIUsage, getAIUsage, invalidateAIUsage, getCachedAccountInfo, getCachedCertification, updateProfile, updateCover, logout, getAccountInfo, findUserByAccountId, getAdminDashboard, getCertification, submitCertification, withdrawCertification,
   listCertifications, getCertificationDetail, getCertificationProof, reviewCertification };

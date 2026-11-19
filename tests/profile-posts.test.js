@@ -78,7 +78,14 @@ test('动态箭头切换来源，评论保留原面板，正文可进入详情',
   assert.equal(f.page.data.ownPosts[0].likeCount, 1);
   f.page.selectContent(event('replies')); assert.equal(f.page.data.postsMenuOpen, false);
   assert.equal(f.page.data.selectedContent, 'replies');
-  f.page.selectContent(event('posts')); assert.equal(f.page.data.postsMenuOpen, false);
+  assert.equal(f.page.data.contentIndex, 1);
+  f.page.selectContent(event('reposts')); assert.equal(f.page.data.contentIndex, 2);
+  await f.page.selectContent(event('album')); assert.equal(f.page.data.contentIndex, 3);
+  f.page.selectContent(event('posts')); assert.equal(f.page.data.postsMenuOpen, false); assert.equal(f.page.data.contentIndex, 0);
+  assert.equal(f.page.data.ownPosts[0]._id, post._id);
+  // 连续点击的最终面板与小蓝条使用同一索引，不依赖动画结束回调。
+  for (const key of ['album', 'posts', 'reposts', 'replies']) f.page.selectContent(event(key));
+  assert.equal(f.page.data.selectedContent, 'replies'); assert.equal(f.page.data.contentIndex, 1);
 });
 
 test('读取失败保留已有动态可重试，分页、离开页面和换账号均不让迟到数据覆盖', async () => {

@@ -17,6 +17,59 @@ async function setup(options) {
   return { f, postId, rootId, alice, bob };
 }
 
+test('评论删除校验本人权限；楼中回复只删本条，一级删除隐藏整组且计数幂等', async () => {
+  const { f, postId, rootId } = await setup();
+  f.hooks.serialTransactionReads = true;
+  const child = (await reply(f, postId, rootId, f.bob)).square.reply;
+  const nested = (await reply(f, postId, child._id)).square.reply;
+  const remove = (replyId, who = f.alice) => f.handle({ action: 'deleteSquareReply', postId, replyId, authorId: 'forged' }, who);
+  assert.equal((await list(f, postId)).square.items[0].isOwn, true);
+  assert.equal((await list(f, postId, f.bob)).square.items[0].isOwn, false);
+  assert.equal((await remove(child._id)).code, 'FORBIDDEN');
+  assert.equal((await remove(child._id, { openid: '', env: 'test' })).success, false);
+  const removed = await remove(child._id, f.bob);
+  assert.equal(removed.success, true, removed.message);
+  assert.equal(removed.square.root.replyCount, 1); assert.equal(removed.square.post.replyCount, 2);
+  assert.deepEqual((await list(f, postId, f.alice, rootId)).square.items.map(row => row._id), [nested._id]);
+  await remove(child._id, f.bob); assert.equal(f.squarePosts.get(postId).replyCount, 2);
+  assert.equal((await state(f, postId, child._id, 'like', true)).success, false);
+  const rootRemoved = await remove(rootId);
+  assert.equal(rootRemoved.square.post.replyCount, 0);
+  assert.equal((await list(f, postId)).square.items.length, 0);
+  assert.equal((await list(f, postId, f.alice, rootId)).success, false);
+  assert.equal((await reply(f, postId, nested._id)).success, false);
+  assert.equal((await state(f, postId, nested._id, 'fold', true)).success, false);
+  await remove(rootId); assert.equal(f.squarePosts.get(postId).replyCount, 0);
+});
+
+test('评论举报真实入库并去重，拒绝伪造身份、本人举报、无效原因和已删除分组', async () => {
+  const { f, postId, rootId, bob } = await setup();
+  const child = (await reply(f, postId, rootId)).square.reply;
+  const report = (replyId, who = f.bob, reason = 'abuse') => f.handle({ action: 'reportSquareReply', postId, replyId, reason, reporterId: 'forged' }, who);
+  assert.equal((await report(rootId, f.alice)).code, 'FORBIDDEN');
+  assert.equal((await report(rootId, f.bob, 'invalid')).success, false);
+  assert.equal((await report(rootId)).success, true);
+  assert.equal((await report(rootId)).square.alreadyReported, true);
+  await report(child._id);
+  assert.equal(f.squareReports.size, 2);
+  const saved = [...f.squareReports.values()][0];
+  assert.equal(saved.targetType, 'comment'); assert.equal(saved.commentContent, '真实回复');
+  assert.equal(saved.reporterId, bob._id); assert.equal(saved.status, 'pending');
+  await f.handle({ action: 'deleteSquareReply', postId, replyId: rootId }, f.alice);
+  assert.equal((await report(child._id)).success, false);
+});
+
+test('评论删除事务失败不得提前删行或改变计数，状态停用时不可操作', async () => {
+  const options = {}, { f, postId, rootId, alice } = await setup(options);
+  options.failCollection = 'square_posts';
+  assert.equal((await f.handle({ action: 'deleteSquareReply', postId, replyId: rootId }, f.alice)).success, false);
+  assert.equal(f.squareReplies.get(rootId).status, 'published'); assert.equal(f.squarePosts.get(postId).replyCount, 1);
+  options.failCollection = '';
+  f.users.get(alice._id).status = 'banned';
+  assert.equal((await f.handle({ action: 'deleteSquareReply', postId, replyId: rootId }, f.alice)).success, false);
+  assert.equal(f.squareReplies.get(rootId).status, 'published');
+});
+
 test('SDK直接返回事务回调值时，评论点赞和心碎仍正确返回已保存状态', async () => {
   const { f, postId, rootId } = await setup(); f.hooks.transactionResult = 'direct';
   const liked = await state(f, postId, rootId, 'like', true);
@@ -47,12 +100,33 @@ test('二十条不同作者的评论批量读取资料，权限和认证仍使�
   f.queries.length = 0; f.docReads.length = 0;
   const result = await list(f, postId);
   assert.equal(result.success, true); assert.equal(result.square.items.length, 20);
-  assert.equal(result.square.items[19].author.nickname, '同学19');
+  assert.equal(result.square.items[0].author.nickname, '同学19');
   assert.equal(f.queries.filter(query => query.name === 'users' && query.condition._id.operation === 'in').length, 1);
   assert.equal(f.queries.filter(query => query.name === 'users').length, 2); // 一次可信身份查询、一次作者批量查询。
   assert.equal(f.docReads.filter(read => read.name === 'users').length, 0);
   f.users.get(authors[0]).status = 'banned';
-  assert.equal((await list(f, postId)).square.items[0].author.nickname, '账号暂不可用');
+  assert.equal((await list(f, postId)).square.items[19].author.nickname, '账号暂不可用');
+});
+
+test('一级评论从最新分页，楼中回复从最早分页，时间相同使用稳定排序键', async () => {
+  const { f, postId, rootId, alice } = await setup(); f.squareReplies.clear();
+  for (let i = 0; i < 23; i++) {
+    const data = { postId, authorId: alice._id, status: 'published', content: `顺序${i}`,
+      createdAt: '2026-11-19T00:00:00.000Z', sortKey: String(i).padStart(16, '0') };
+    const id = i === 0 ? rootId : 'r_' + String(i).padStart(40, '0');
+    f.squareReplies.set(id, { _id: id, ...data });
+    f.squareReplyChildren.set('c_' + String(i).padStart(40, '0'), { _id: 'c_' + String(i).padStart(40, '0'), ...data, rootId, replyToId: rootId });
+  }
+  for (const action of ['listSquareReplies', 'listSquareReplyChildren']) {
+    const args = { action, postId, ...(action === 'listSquareReplyChildren' ? { rootId } : {}) };
+    const children = action === 'listSquareReplyChildren';
+    const first = (await f.handle(args, f.alice)).square;
+    assert.equal(first.items[0].content, children ? '顺序0' : '顺序22'); assert.equal(first.items[19].content, children ? '顺序19' : '顺序3');
+    assert.equal(first.hasMore, true); assert.equal(first.items[0].sortKey, children ? '0000000000000000' : '0000000000000022');
+    const second = (await f.handle({ ...args, offset: first.nextOffset }, f.alice)).square;
+    assert.deepEqual(second.items.map(row => row.content), children ? ['顺序20', '顺序21', '顺序22'] : ['顺序2', '顺序1', '顺序0']);
+    assert.equal(second.hasMore, false);
+  }
 });
 
 test('评论反应直接返回已提交事务的真实状态，不再串行重读评论和个人状态', async () => {

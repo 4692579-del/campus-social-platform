@@ -270,6 +270,7 @@ Page({
     if (this._menuNavigating || this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
     const item = [...this.data.menuItems, ...this.data.utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
     if (!item) return;
+    if (item.key === 'xiaocui') { this.navigateFromMenu('/pages/xiaocui-about/index', '小萃AI页面打开失败，请重试'); return; }
     if (item.key === 'profile') { this.openProfile(); return; }
     if (item.key === 'certification') {
       if (!this.data.user) {

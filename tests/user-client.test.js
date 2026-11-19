@@ -4,6 +4,40 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+test('AI额度复用会话缓存并合并查询，生成完成后失效，旧查询不能覆盖新用量', async () => {
+  const pending = [];
+  const f = clientFixture(({ data }) => data.action === 'login' ? Promise.resolve({ result: { success: true, user: { _id: 'alice' } } }) : new Promise(resolve => pending.push(resolve)));
+  await f.service.login();
+  const first = f.service.getAIUsage(), second = f.service.getAIUsage();
+  assert.equal(pending.length, 1);
+  const value = usedPercent => ({ day: '2050-01-01', usedPercent, resetsAt: '2050-01-02T00:00:00Z' });
+  pending.shift()({ result: { success: true, aiUsage: value(1) } });
+  assert.equal((await first).usedPercent, 1); assert.equal((await second).usedPercent, 1);
+  await f.service.getAIUsage(); assert.equal(pending.length, 0);
+  const old = f.service.getAIUsage({ force: true });
+  f.service.invalidateAIUsage();
+  const fresh = f.service.getAIUsage(); assert.equal(pending.length, 2);
+  pending[1]({ result: { success: true, aiUsage: value(5) } }); await fresh;
+  pending[0]({ result: { success: true, aiUsage: value(2) } }); await old;
+  assert.equal(f.service.getCachedAIUsage().usedPercent, 5);
+});
+
+test('AI额度退出登录后清理并忽略迟到响应，跨过重置时间不展示昨天额度', async () => {
+  let resolve;
+  let clock = Date.parse('2050-01-01T15:59:59Z');
+  class Clock extends Date { static now() { return clock; } }
+  const f = clientFixture(({ data }) => data.action === 'login' ? Promise.resolve({ result: { success: true, user: { _id: 'alice' } } }) : new Promise(done => { resolve = done; }), { Date: Clock });
+  await assert.rejects(f.service.getAIUsage(), error => error.code === 'UNAUTHENTICATED');
+  await f.service.login();
+  const request = f.service.getAIUsage();
+  resolve({ result: { success: true, aiUsage: { usedPercent: 90, resetsAt: '2050-01-01T16:00:00Z' } } }); await request;
+  assert.equal(f.service.getCachedAIUsage().usedPercent, 90);
+  clock += 2000; assert.equal(f.service.getCachedAIUsage(), null);
+  const late = f.service.getAIUsage(); f.service.logout();
+  resolve({ result: { success: true, aiUsage: { usedPercent: 0, resetsAt: '2050-01-02T16:00:00Z' } } });
+  await assert.rejects(late, /登录状态已变更/); assert.equal(f.service.getCachedAIUsage(), null);
+});
+
 function clientFixture(callFunction, options = {}) {
   const storage = new Map();
   const app = { globalData: { currentUser: null } };

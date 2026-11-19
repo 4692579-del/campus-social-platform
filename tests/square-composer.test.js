@@ -5,15 +5,130 @@ const input = value => ({ detail: { value } });
 const option = key => ({ currentTarget: { dataset: { key } } });
 const panel = name => ({ currentTarget: { dataset: { panel: name } } });
 
-test('字数圆环使用真实字符数，草稿、输入和清空同步更新，满额后封顶且超限仍不能发布', async () => {
-  const storage = new Map([['square.draft.alice', { content: '字'.repeat(250), requestId: 'ring-draft' }]]);
+test('优化与声明按实际出现先后排序；隐藏再出现排到末尾，改字和切换声明种类不乱序', async () => {
+  const f = composerFixture(); await f.attach(); const c = f.component;
+  assert.deepEqual(Array.from(c.data.noticeOrder), []);
+  c.onInput(input('先写正文')); c.selectDeclaration(option('ai'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize', 'declaration']);
+  c.onInput(input('继续写正文')); c.selectDeclaration(option('opinion'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize', 'declaration']);
+  c.onInput(input(''));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['declaration']);
+  c.onInput(input('后写正文'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['declaration', 'optimize']);
+  c.selectDeclaration(option('none'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize']);
+  c.selectDeclaration(option('fiction'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize', 'declaration']);
+});
+
+test('恢复原文入口出现及消失保留按钮顺序，切换账号重置顺序且草稿恢复不重复插入', async () => {
+  const f = composerFixture({ optimize: async () => '优化正文' }); await f.attach(); const c = f.component;
+  c.onInput(input('原文')); c.selectDeclaration(option('ai'));
+  await c.optimizeContent();
+  assert.equal(c.data.canUndoOptimization, true);
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize', 'declaration']);
+  c.undoOptimization();
+  assert.equal(c.data.canUndoOptimization, false);
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize', 'declaration']);
+  f.setUser({ ...user, _id: 'bob' }); f.show();
+  assert.deepEqual(Array.from(c.data.noticeOrder), []);
+  c.selectDeclaration(option('opinion')); c.onInput(input('新账号正文'));
+  assert.deepEqual(Array.from(c.data.noticeOrder), ['declaration', 'optimize']);
+  const restored = composerFixture({ storage: new Map([['square.draft.alice', { content: '草稿正文', declaration: 'ai' }]]) });
+  await restored.attach();
+  assert.deepEqual(Array.from(restored.component.data.noticeOrder), ['declaration', 'optimize']);
+  restored.component.setContent('草稿正文');
+  assert.equal(restored.component.data.noticeOrder.length, 2);
+});
+
+test('正文优化在150字边界静默截断，含emoji空格符号，不触发上限气泡，可恢复原文且不自动保存发布', async () => {
+  let finish;
+  const f = composerFixture({ optimize: () => new Promise(resolve => { finish = resolve; }) }); await f.attach(); const c = f.component;
+  c.onInput(input('')); assert.equal(c.data.canOptimize, false);
+  c.onInput(input('字'.repeat(150))); assert.equal(c.data.limitHintVisible, true);
+  const original = c.data.content, requestId = c._requestId;
+  c.setData({ images: [{ key: 'keep-image', path: '/image.jpg' }], declaration: 'opinion' });
+  const task = c.optimizeContent();
+  assert.equal(c.data.optimizing, true); assert.equal(c.data.content, original); assert.equal(c.data.limitHintVisible, false);
+  await c.optimizeContent(); assert.equal(f.requests.filter(row => row.optimize).length, 1);
+  finish('😊 空格，\n'.repeat(40)); await task;
+  assert.equal(c.data.optimizing, false); assert.equal(c.data.count, 150); assert.equal(c.data.remainingCount, 0);
+  assert.equal(c.data.limitHintVisible, false); assert.equal(f.timers.size, 0); assert.equal(c.data.canPublish, true);
+  assert.equal(c.data.images[0].key, 'keep-image'); assert.equal(c.data.declaration, 'opinion');
+  assert.equal(f.storage.size, 0); assert.equal(f.calls.length, 0); assert.notEqual(c._requestId, requestId);
+  assert.equal(c.data.canUndoOptimization, true);
+  c.undoOptimization(); assert.equal(c.data.content, original); assert.equal(c.data.limitHintVisible, false);
+  assert.equal(c.data.canUndoOptimization, false);
+});
+
+test('优化期间继续修改、退出、切换账号或卸载后，迟到结果不覆盖正文或草稿', async () => {
+  for (const mode of ['edit', 'cancel', 'switch', 'detach', 'hide', 'publish', 'save']) {
+    let finish;
+    const f = composerFixture({ optimize: () => new Promise(resolve => { finish = resolve; }) }); await f.attach(); const c = f.component;
+    c.onInput(input('原始正文')); const task = c.optimizeContent();
+    if (mode === 'edit') { c.onInput(input('最新编辑')); c.onInput(input('原始正文')); }
+    if (mode === 'cancel') c.cancel();
+    if (mode === 'switch') { f.setUser({ ...user, _id: 'bob' }); f.show(); }
+    if (mode === 'detach') f.detach();
+    if (mode === 'hide') f.hide();
+    if (mode === 'publish') await c.publish();
+    if (mode === 'save') await c.saveAndClose();
+    finish('不应覆盖的旧结果'); await task;
+    assert.notEqual(c.data.content, '不应覆盖的旧结果', mode);
+    assert.equal(c.data.limitHintVisible, false);
+    if (mode === 'save') assert.equal(f.storage.get('square.draft.alice').content, '原始正文');
+    if (mode === 'publish') assert.equal(f.calls[0].content, '原始正文');
+  }
+});
+
+test('优化失败保留原文和已保存草稿；恢复后继续编辑使旧的撤销入口失效', async () => {
+  let failed = true;
+  const storage = new Map([['square.draft.alice', { content: '已保存原文', requestId: 'old-draft-id' }]]);
+  const f = composerFixture({ storage, optimize: async () => { if (failed) throw new Error('优化连接失败'); return '优化结果'; } }); await f.attach(); const c = f.component;
+  await c.optimizeContent(); assert.equal(c.data.content, '已保存原文'); assert.equal(c.data.optimizeError, '优化连接失败');
+  assert.equal(c.data.optimizing, false); assert.equal(c._requestId, 'old-draft-id');
+  failed = false; await c.optimizeContent();
+  assert.equal(c.data.content, '优化结果'); assert.equal(storage.get('square.draft.alice').content, '已保存原文');
+  c.onInput(input('优化后又编辑')); assert.equal(c.data.canUndoOptimization, false);
+  c.undoOptimization(); assert.equal(c.data.content, '优化后又编辑');
+});
+
+test('150字包含空格标点，剩余20字进入圆环警示，删除恢复，旧超长草稿保留但不能发布', async () => {
+  const storage = new Map([['square.draft.alice', { content: '字'.repeat(50), requestId: 'ring-draft' }]]);
   const f = composerFixture({ storage }); await f.attach(); const c = f.component;
-  assert.equal(c.data.countProgress, 90);
-  c.onInput(input('😊'.repeat(500))); assert.equal(c.data.count, 500); assert.equal(c.data.countProgress, 180);
-  c.onInput(input('字'.repeat(1000))); assert.equal(c.data.countProgress, 360); assert.equal(c.data.canPublish, true);
-  c.onInput(input('字'.repeat(1001))); assert.equal(c.data.countProgress, 360); assert.equal(c.data.canPublish, false);
-  c.onInput(input('')); assert.equal(c.data.countProgress, 0); assert.equal(c.data.canPublish, false);
+  assert.equal(c.data.countProgress, 120); assert.equal(c.data.remainingCount, 100); assert.equal(c.data.countWarning, false);
+  c.onInput(input('你 好，！')); assert.equal(c.data.count, 5); assert.equal(c.data.remainingCount, 145);
+  c.onInput(input('😊'.repeat(75))); assert.equal(c.data.count, 75); assert.equal(c.data.countProgress, 180);
+  c.onInput(input('字'.repeat(129))); assert.equal(c.data.remainingCount, 21); assert.equal(c.data.countWarning, false);
+  c.onInput(input('字'.repeat(130))); assert.equal(c.data.remainingCount, 20); assert.equal(c.data.countWarning, true);
+  c.onInput(input('字'.repeat(150))); assert.equal(c.data.remainingCount, 0); assert.equal(c.data.countProgress, 360); assert.equal(c.data.canPublish, true);
+  c.onInput(input('字'.repeat(151))); assert.equal(c.data.remainingCount, 0); assert.equal(c.data.countProgress, 360); assert.equal(c.data.count, 150); assert.equal(c.data.canPublish, true);
+  c.onInput(input('')); assert.equal(c.data.countProgress, 0); assert.equal(c.data.canPublish, false); assert.equal(c.data.remainingCount, 150); assert.equal(c.data.countWarning, false);
   assert.equal(f.calls.length, 0);
+  const legacy = composerFixture({ storage: new Map([['square.draft.alice', { content: '旧'.repeat(250) }]]) }); await legacy.attach();
+  assert.equal(legacy.component.data.content.length, 250); assert.equal(legacy.component.data.canPublish, false);
+  assert.equal(legacy.component.data.remainingCount, 0);
+  await legacy.component.publish(); assert.equal(legacy.calls.length, 0);
+});
+
+test('输入或粘贴最多录入150个字符并返回原生输入修正值，圆环气泡自动消失且删除后可继续输入', async () => {
+  const f = composerFixture(); await f.attach(); const c = f.component;
+  const prefix = '你 好，！😊'.repeat(25);
+  assert.equal(Array.from(prefix).length, 150);
+  assert.equal(c.onInput(input(prefix + '超出部分')), prefix);
+  assert.equal(c.data.content, prefix); assert.equal(c.data.count, 150); assert.equal(c.data.remainingCount, 0);
+  assert.equal(c.data.limitHintVisible, true); assert.equal(f.storage.size, 0);
+  assert.deepEqual([...f.delays.values()], [2500]);
+  const id = c._requestId;
+  assert.equal(c.onInput(input(prefix + '再输入')), prefix); assert.equal(c._requestId, id);
+  assert.equal(f.timers.size, 1);
+  f.flushClose(); assert.equal(c.data.limitHintVisible, false); assert.equal(c.data.content, prefix);
+  c.onInput(input('字'.repeat(149))); assert.equal(c.data.limitHintVisible, false);
+  assert.equal(c.data.remainingCount, 1); c.onInput(input('字'.repeat(150)));
+  assert.equal(c.data.limitHintVisible, true);
+  f.hide(); assert.equal(c.data.limitHintVisible, false); assert.equal(f.timers.size, 0);
+  f.show(); c.onInput(input('字'.repeat(151))); f.detach(); assert.equal(f.timers.size, 0);
 });
 
 test('面板首帧复用真实头像昵称与草稿，不请求登录；关闭动画结束后才通知来源页', async () => {
