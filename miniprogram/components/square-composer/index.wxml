@@ -1,9 +1,9 @@
 <import src="../../templates/login-sheet.wxml" />
 <import src="../../templates/xiaocui-icon.wxml" />
-<view class="composer-layer {{closing ? 'is-closing' : ''}}" catchtouchmove="stopMenuEvent">
-  <view class="composer-backdrop" bindtap="cancel"></view>
+<view class="composer-layer {{closing ? 'is-closing' : ''}}">
+  <view class="composer-backdrop" bindtap="cancel" catchtouchmove="stopMenuEvent"></view>
   <view class="compose-sheet" style="top: {{sheetTop}}px; height: {{viewportHeight - sheetTop - keyboardHeight}}px;" aria-role="dialog" aria-modal="true" aria-label="发布动态">
-    <view class="compose-header">
+    <view class="compose-header" catchtouchmove="stopMenuEvent">
       <button class="compose-cancel" bindtap="cancel" disabled="{{publishing || savingDraft || choosingImages}}">取消</button>
       <text class="compose-title">发布动态</text>
       <view class="compose-capsule">
@@ -12,26 +12,36 @@
         <button data-panel="declaration" bindtap="openPanel" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="添加内容声明"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button>
       </view>
     </view>
-    <scroll-view class="compose-body" scroll-y enhanced show-scrollbar="{{false}}"><view class="compose-body-inner">
+    <view class="compose-body"><view class="compose-body-inner">
       <view class="compose-author"><image class="compose-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="compose-destination"><text class="compose-nickname">{{user.nickname || '未登录'}}</text><image src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /><text class="compose-scope">动态广场</text></view></view>
-      <view class="compose-editor" bindtap="focusEditor">
-        <textarea wx:if="{{!panel && !exitConfirmVisible}}" value="{{content}}" auto-height focus="{{editorFocused}}" bindfocus="focusEditor" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing}}" show-confirm-bar="{{false}}" adjust-position="{{false}}" />
+      <view class="compose-editor">
+        <textarea class="compose-textarea" wx:if="{{!panel && !exitConfirmVisible}}" value="{{content}}" fixed hold-keyboard focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
         <text wx:else class="compose-editor-preview {{!content ? 'compose-placeholder' : ''}}">{{content || '有什么新鲜事想和大家分享？'}}</text>
       </view>
       <scroll-view wx:if="{{images.length}}" class="compose-selected-images" scroll-x enhanced show-scrollbar="{{false}}">
         <view class="selected-image-strip"><view wx:for="{{images}}" wx:key="key" class="selected-image"><image src="{{item.fileID || item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewSelectedImage" /><button class="remove-image" data-index="{{index}}" bindtap="removeImage" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="移除第{{index + 1}}张图片"><image src="/images/interface/x.svg" /></button></view></view>
       </scroll-view>
-      <view class="compose-editor-space" bindtap="focusEditor"></view>
-    </view></scroll-view>
-    <view class="compose-footer">
+    </view></view>
+    <view class="compose-footer" catchtouchmove="stopMenuEvent">
       <view wx:if="{{error}}" class="compose-error">{{error}}</view>
       <view wx:if="{{(publishing || savingDraft) && uploadTotal}}" class="compose-upload-status">{{uploadDone < uploadTotal ? '正在上传图片 ' + uploadDone + ' / ' + uploadTotal : (savingDraft ? '正在保存图片草稿…' : '正在发布图文…')}}</view>
       <scroll-view wx:if="{{noticeOrder.length}}" class="compose-notice-scroll" scroll-x enhanced show-scrollbar="{{false}}"><view class="compose-notices">
         <view wx:for="{{noticeOrder}}" wx:key="*this" class="compose-notice-entry">
           <block wx:if="{{item === 'optimize'}}">
-            <view class="compose-optimize-shell {{optimizing ? 'is-optimizing' : ''}}">
-              <block wx:if="{{optimizing}}"><view class="compose-optimize-glow" aria-hidden="true"></view><view class="compose-optimize-rim" aria-hidden="true"></view></block>
-              <button class="compose-optimize {{optimizing ? 'is-optimizing' : ''}}" catchtap="optimizeContent" disabled="{{optimizing || publishing || savingDraft || choosingImages || !user}}" aria-label="{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}"><template is="xiaocui-icon" /><text>{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}</text></button>
+            <view class="compose-optimize-group">
+              <view wx:if="{{optimizeHelpVisible && canOptimize && !panel && !exitConfirmVisible && !loginSheetOpen}}" class="compose-optimize-help-anchor">
+                <view class="compose-optimize-help-bubble" aria-role="tooltip">
+                  <view class="compose-optimize-help-copy"><text class="compose-optimize-help-line">小萃将根据你的文案或图片</text><text class="compose-optimize-help-line">对已有文案进行润色修改，</text><text class="compose-optimize-help-line">文案留空可自动撰写合适的文案</text></view>
+                  <button class="compose-optimize-help-close" catchtap="closeOptimizeHelp" aria-label="关闭小萃功能说明"><image src="/images/interface/x.svg" mode="aspectFit" /></button>
+                </view>
+              </view>
+              <view class="compose-optimize-controls">
+                <view class="compose-optimize-shell {{optimizing ? 'is-optimizing' : ''}}">
+                  <block wx:if="{{optimizing}}"><view class="compose-optimize-glow" aria-hidden="true"></view><view class="compose-optimize-rim" aria-hidden="true"></view></block>
+                  <button class="compose-optimize {{optimizing ? 'is-optimizing' : ''}}" catchtap="optimizeContent" disabled="{{optimizing || publishing || savingDraft || choosingImages || !user}}" aria-label="{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}"><template is="xiaocui-icon" /><text>{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}</text></button>
+                </view>
+                <button wx:if="{{!optimizeHelpUsed || optimizeHelpVisible}}" class="compose-optimize-help" catchtap="showOptimizeHelp" disabled="{{optimizing || publishing || savingDraft || choosingImages || !user}}" aria-label="查看小萃功能说明"><image src="/images/interface/help-circle.svg" mode="aspectFit" /></button>
+              </view>
             </view>
             <view class="compose-undo-slot {{canUndoOptimization ? 'has-undo' : ''}}" aria-hidden="{{!canUndoOptimization}}"><button class="compose-optimize-undo" catchtap="undoOptimization" disabled="{{!canUndoOptimization || optimizing || publishing || savingDraft || choosingImages}}">恢复原文</button></view>
           </block>
@@ -48,7 +58,7 @@
     </view>
   </view>
   <view wx:if="{{panel}}" class="compose-settings-layer">
-    <view class="settings-backdrop" bindtap="closePanel"></view>
+    <view class="settings-backdrop" bindtap="closePanel" catchtouchmove="stopMenuEvent"></view>
     <view class="compose-settings" style="max-height: {{settingsMaxHeight}}px; --settings-row-height: {{settingsRowHeight}}rpx;" aria-role="dialog" aria-modal="true" aria-label="{{panel === 'options' ? '动态设置' : '添加内容声明'}}">
       <view class="settings-heading"><text>{{panel === 'options' ? '动态设置' : '添加内容声明'}}</text><button bindtap="closePanel" aria-label="关闭选项"><image src="/images/interface/x.svg" /></button></view>
       <view class="settings-content">

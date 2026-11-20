@@ -396,3 +396,22 @@ test('空白昵称不上传头像或提交资料', async () => {
   assert.equal(f.saves.length, 0);
   assert.match(f.page.data.error, /昵称/);
 });
+
+
+test('小时整点使额度缓存过期，日周期未到仍重新读取，异常小时计数拒绝缓存', async () => {
+  let clock = Date.parse('2050-01-01T04:59:59Z'), calls = 0;
+  class Clock extends Date { static now() { return clock; } }
+  const f = clientFixture(async ({ data }) => data.action === 'login' ? { result: { success: true, user: { _id: 'alice' } } } :
+    { result: { success: true, aiUsage: { usedPercent: 20, resetsAt: '2050-01-01T16:00:00Z', hourly: { usedPercent: ++calls === 1 ? 60 : 0, resetsAt: calls === 1 ? '2050-01-01T05:00:00Z' : '2050-01-01T06:00:00Z' } } } }, { Date: Clock });
+  await f.service.login(); await f.service.getAIUsage(); assert.equal(f.service.getCachedAIUsage().hourly.usedPercent, 60);
+  clock += 2000; assert.equal(f.service.getCachedAIUsage(), null);
+  assert.equal((await f.service.getAIUsage()).hourly.usedPercent, 0); assert.equal(calls, 2);
+});
+
+
+test('小时额度异常百分比和日期不得进入真实额度缓存', async () => {
+  for (const hourly of [{ usedPercent: 101, resetsAt: '2050-01-01T05:00:00Z' }, { usedPercent: 0, resetsAt: 'invalid' }]) {
+    const f = clientFixture(async ({ data }) => ({ result: data.action === 'login' ? { success: true, user: { _id: 'alice' } } : { success: true, aiUsage: { usedPercent: 0, resetsAt: '2050-01-01T16:00:00Z', hourly } } }));
+    await f.service.login(); await assert.rejects(f.service.getAIUsage(), /额度信息读取失败/); assert.equal(f.service.getCachedAIUsage(), null);
+  }
+});

@@ -5,7 +5,12 @@
     <view class="comment-main">
       <view class="comment-heading"><text>{{row.author.nickname}}</text><text wx:if="{{row.author.isAI}}" class="comment-ai-badge">AI</text><image wx:if="{{row.author.verified}}" class="comment-badge" src="/images/verification/verified.png" /><text wx:if="{{row.addressed}}" class="comment-address">回复 {{row.replyToName}}</text><button wx:if="{{!row.pending}}" class="comment-more" data-id="{{row._id}}" catchtap="manageComment" aria-label="评论更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view>
       <view wx:if="{{row.folded}}" class="comment-folded"><image src="/images/interface/alert-circle-muted.svg" /><text>该评论已折叠</text></view>
-      <text wx:else class="comment-text">{{row.content}}</text>
+      <block wx:else>
+        <text wx:if="{{row.content}}" class="comment-text">{{row.content}}</text>
+        <view wx:if="{{row.images.length}}" class="comment-image-grid">
+          <view wx:for="{{row.images}}" wx:for-item="photo" wx:key="*this" class="comment-image-cell" data-id="{{row._id}}" data-index="{{index}}" catchtap="previewCommentImages"><image class="comment-image-preview" src="{{photo}}" mode="aspectFill" /></view>
+        </view>
+      </block>
       <view class="comment-meta">
         <text class="comment-time">{{row.pending ? '发送中…' : row.timeText}}</text><text wx:if="{{!row.folded && !row.pending}}" class="comment-reply-label">回复</text>
         <view wx:if="{{!row.pending}}" class="comment-actions">
@@ -20,11 +25,11 @@
     </view>
   </view>
 </template>
-<view class="comments-layer {{embedded ? 'is-embedded' : ''}}" style="top: {{embedded ? topOffset : 0}}px;" catchtouchmove="stopEvent">
-  <view wx:if="{{!embedded}}" class="comments-mask" bindtap="close"></view>
-  <view class="comments-panel {{dragging ? 'is-dragging' : ''}} {{embedded ? 'is-embedded' : ''}}" style="{{embedded ? 'top: 0; bottom: ' + keyboardHeight + 'px;' : 'top: ' + (keyboardHeight ? keyboardTop : sheetTop) + 'px; height: ' + (viewportHeight - (keyboardHeight ? keyboardTop : sheetTop) - keyboardHeight) + 'px;'}}" aria-role="{{embedded ? 'region' : 'dialog'}}" aria-label="动态评论">
+<view class="comments-layer {{embedded ? 'is-embedded' : ''}} {{nativeTextareaMetrics ? 'has-native-textarea-metrics' : ''}}" style="top: {{embedded ? topOffset : 0}}px;">
+  <view wx:if="{{!embedded}}" class="comments-mask" bindtap="close" catchtouchmove="stopEvent"></view>
+  <view class="comments-panel {{dragging ? 'is-dragging' : ''}} {{inputFocused || keyboardHeight ? 'is-editing' : ''}} {{embedded ? 'is-embedded' : ''}}" style="{{embedded ? 'top: 0; bottom: ' + keyboardHeight + 'px;' : 'top: ' + (keyboardHeight ? keyboardTop : sheetTop) + 'px; height: ' + (viewportHeight - (keyboardHeight ? keyboardTop : sheetTop) - keyboardHeight) + 'px;'}}" aria-role="{{embedded ? 'region' : 'dialog'}}" aria-label="动态评论">
     <view wx:if="{{!embedded}}" class="comments-grabber" catchtouchstart="dragStart" catchtouchmove="dragMove" catchtouchend="dragEnd" catchtouchcancel="dragCancel" aria-label="上下拖动可切换评论区高度"><view class="comments-grabber-bar"></view></view>
-    <view wx:if="{{!embedded}}" class="comments-header"><text>回复</text><view class="comments-header-actions"><button bindtap="toggleExpanded" aria-label="{{expanded ? '缩小回复面板' : '展开回复面板'}}" aria-expanded="{{expanded}}"><image src="/images/interface/{{expanded ? 'minimize' : 'maximize'}}.svg" mode="aspectFit" /></button><button bindtap="close" disabled="{{sending}}" aria-label="关闭回复面板"><image src="/images/interface/x.svg" mode="aspectFit" /></button></view></view>
+    <view wx:if="{{!embedded}}" class="comments-header"><text>回复</text><view class="comments-header-actions"><button bindtap="toggleExpanded" aria-label="{{expanded ? '缩小回复面板' : '展开回复面板'}}" aria-expanded="{{expanded}}"><image src="/images/interface/{{expanded ? 'minimize' : 'maximize'}}.svg" mode="aspectFit" /></button><button bindtap="close" disabled="{{sending || choosingImages}}" aria-label="关闭回复面板"><image src="/images/interface/x.svg" mode="aspectFit" /></button></view></view>
     <view class="comments-body">
       <scroll-view class="comments-list" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation bindscrolltolower="loadMore" lower-threshold="100">
         <block wx:if="{{embedded}}"><slot name="post"></slot><view class="comments-header embedded-comments-title"><text>回复</text></view></block>
@@ -52,22 +57,31 @@
     <view class="comments-footer">
       <view wx:if="{{sendError}}" class="comments-send-error">{{sendError}}</view>
       <view wx:if="{{replyTarget}}" class="comment-target"><text>回复 {{replyTarget.nickname}}</text><button bindtap="cancelReply" disabled="{{sending}}" aria-label="取消回复，改为评论动态"><image src="/images/interface/x.svg" /></button></view>
-      <view class="comment-composer {{count || sending ? 'has-content' : ''}}" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
+      <view wx:if="{{selectedImages.length}}" class="comment-selected-images">
+        <view class="comment-image-grid">
+          <view wx:for="{{selectedImages}}" wx:key="key" class="comment-image-cell" data-selected="{{true}}" data-index="{{index}}" catchtap="previewCommentImages">
+            <image class="comment-image-preview" src="{{item.path || item.fileID}}" mode="aspectFill" />
+            <view wx:if="{{choosingImages && !item.fileID}}" class="comment-image-uploading">上传中…</view>
+            <button class="comment-image-remove" data-index="{{index}}" catchtap="removeCommentImage" disabled="{{sending || choosingImages}}" aria-label="移除第{{index + 1}}张图片"><image src="/images/interface/x.svg" /></button>
+          </view>
+        </view>
+      </view>
+      <view class="comment-composer {{count || selectedImages.length || sending ? 'has-content' : ''}} {{count || sending ? 'has-text' : ''}}" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
         <block wx:if="{{viewer}}">
           <view class="comment-input-pill">
-            <image wx:if="{{!inputFocused && !count && !sending}}" class="composer-avatar" src="{{viewer.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" aria-hidden="true" />
-            <view wx:if="{{askAI}}" class="composer-ai-chip composer-ai-mention" aria-label="已选择小萃，退格可删除">@小萃</view>
-            <view class="comment-entry"><input value="{{inputValue}}" cursor="{{inputCursor}}" focus="{{inputFocused}}" bindfocus="focusInput" bindblur="blurInput" bindinput="input" bindkeyboardheightchange="keyboard" maxlength="600" disabled="{{sending}}" placeholder="{{askAI ? '' : '添加回复...'}}" placeholder-class="composer-placeholder" aria-label="评论输入框" confirm-type="send" bindconfirm="send" adjust-position="{{false}}" /><text wx:if="{{askAI && !text}}" class="composer-ai-placeholder composer-placeholder">添加回复...</text></view>
+            <image wx:if="{{!inputFocused && !count && !selectedImages.length && !sending}}" class="composer-avatar" src="{{viewer.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" aria-hidden="true" />
+            <view class="comment-entry"><view class="comment-input-content"><textarea class="comment-textarea" fixed hold-keyboard disable-default-padding="{{true}}" auto-height bindlinechange="traceInputLines" show-confirm-bar="{{false}}" value="{{nativeInputValue}}" cursor="{{inputCursor}}" focus="{{inputFocusRequested}}" bindfocus="focusInput" bindblur="blurInput" bindinput="input" bindkeyboardheightchange="keyboard" maxlength="-1" disabled="{{sending}}" placeholder="{{askAI ? '' : '添加回复...'}}" placeholder-class="composer-placeholder" aria-label="评论输入框" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" /><view wx:if="{{askAI}}" class="composer-ai-chip composer-ai-mention" aria-label="已选择小萃，退格可删除">@小萃</view></view></view>
             <view class="composer-tools" aria-hidden="{{count > 0 || sending}}">
               <view class="composer-tool-icons">
               <button class="composer-ai-chip composer-ask-ai" catchtap="askXiaocui" disabled="{{sending}}" aria-label="问问小萃"><template is="xiaocui-icon" /><text>问问小萃</text></button>
-              <view class="composer-tool" aria-label="图片，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></view>
+              <button class="composer-tool composer-image-trigger" aria-label="从相册或拍照添加图片，最多3张" catchtap="chooseCommentImages" disabled="{{count > 0 || sending || choosingImages}}"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button>
               <view class="composer-tool" aria-label="贴纸，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></view>
               <view class="composer-tool" aria-label="GIF，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view>
               </view>
             </view>
+            <view class="comment-counter-slot {{count ? 'is-visible' : ''}}" aria-hidden="{{!count}}"><view class="comment-counter-divider"></view><view class="comment-progress-anchor"><view wx:if="{{limitHintVisible}}" class="comment-limit-hint" aria-role="alert">已达到输入上限</view><view class="comment-progress {{countWarning ? 'is-warning' : ''}}" style="background-image: conic-gradient({{countWarning ? '#e44646' : '#4775fa'}} 0deg, {{countWarning ? '#e44646' : '#4775fa'}} {{countProgress}}deg, #dce0e5 {{countProgress}}deg, #dce0e5 360deg);" aria-role="progressbar" aria-label="{{'剩余可输入' + remainingCount + '字，上限50字'}}"><view><text>{{countWarning ? remainingCount : ''}}</text></view></view></view></view>
           </view>
-          <view class="composer-send-slot" aria-hidden="{{!count && !sending}}"><button class="comment-send" bindtap="send" loading="{{sending}}" disabled="{{sending || !canSend}}" aria-label="{{sending ? '正在发送评论' : '发送评论'}}"><image wx:if="{{!sending}}" src="/images/interface/arrow-up-white.svg" mode="aspectFit" /></button></view>
+          <view class="composer-send-slot" aria-hidden="{{!count && !selectedImages.length && !sending}}"><button class="comment-send" bindtap="send" loading="{{sending}}" disabled="{{sending || choosingImages || !canSend}}" aria-label="{{sending ? '正在发送评论' : '发送评论'}}"><image wx:if="{{!sending}}" src="/images/interface/arrow-up-white.svg" mode="aspectFit" /></button></view>
         </block>
         <button wx:else class="comment-login" bindtap="login">登录后发表评论</button>
       </view>

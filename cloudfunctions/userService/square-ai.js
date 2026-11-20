@@ -18,7 +18,7 @@ function createSquareAI(db, options) {
       requesterId: row.authorId, status: 'queued', attempts: 0, createdAt: db.serverDate() } });
     return { aiStatus: 'queued', aiAttempts: 0 };
   }
-  async function process(postId, targetId, user) {
+  async function process(postId, targetId, user, identity) {
     if (!/^p_[a-f0-9]{40}$/.test(postId || '') || !/^[rc]_[a-f0-9]{40}$/.test(targetId || '')) throw error('INVALID_POST', 'AI 回复参数不正确');
     const lease = crypto.randomBytes(12).toString('hex');
     let job, claimed = false;
@@ -61,16 +61,48 @@ function createSquareAI(db, options) {
       if (!options.generateAI) throw error('AI_NOT_CONFIGURED', 'AI 尚未配置');
       const post = (await db.collection('square_posts').doc(postId).get()).data;
       const target = (await db.collection(table(targetId)).doc(targetId).get()).data;
+      if (!post || post.status !== 'published' || post.scope !== 'square' || !target || target.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
+      const imageFiles = Array.isArray(post.images) ? [...post.images] : [];
+      const commentFiles = Array.isArray(target.images) ? [...target.images] : [];
       const rootId = target.rootId || target._id;
       const root = rootId === targetId ? target : (await db.collection('square_replies').doc(rootId).get()).data;
       const parent = target.replyToId ? (await db.collection(table(target.replyToId)).doc(target.replyToId).get()).data : null;
       if (!post || post.status !== 'published' || post.scope !== 'square' || !target || target.status !== 'published' || !root || root.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
-      const context = { post: Array.from(post.content || '').slice(0, 2000).join(''), hasImages: Boolean(post.images && post.images.length),
+      const context = { post: Array.from(post.content || '').slice(0, 2000).join(''), hasImages: Boolean(imageFiles.length || commentFiles.length),
         root: root && root.content || '', previous: parent && parent.content || '', comment: target.content };
       stage = 'usage';
       reservation = await usage.reserve(user._id);
+      stage = 'images';
+      let images = [];
+      if (context.hasImages) {
+        let postImages, commentImages;
+        if (imageFiles.length && !options.resolveAIImages || commentFiles.length && !options.resolveAICommentImages) throw aiError('AI_IMAGES_UNAVAILABLE');
+        try {
+          [postImages, commentImages] = await Promise.all([
+            imageFiles.length ? options.resolveAIImages({ ...post, images: imageFiles }, identity) : [],
+            commentFiles.length ? options.resolveAICommentImages({ ...target, images: commentFiles }, identity) : [],
+          ]);
+        }
+        catch (failure) { throw aiError('AI_IMAGES_UNAVAILABLE'); }
+        if (!Array.isArray(postImages) || postImages.length !== imageFiles.length || !Array.isArray(commentImages) || commentImages.length !== commentFiles.length) throw aiError('AI_IMAGES_UNAVAILABLE');
+        images = [...postImages, ...commentImages];
+        if (imageFiles.length > 9 || commentFiles.length > 3 || images.some(url => typeof url !== 'string' || !url.startsWith('https://'))) throw aiError('AI_IMAGES_UNAVAILABLE');
+        context.imageCount = images.length;
+        context.postImageCount = postImages.length; context.commentImageCount = commentImages.length;
+        // 图片URL解析可能耗时，发给模型前再次确认动态、问题和真实账号仍可用。
+        const [latestPost, latestTarget, latestRoot, account] = await Promise.all([
+          db.collection('square_posts').doc(postId).get(), db.collection(table(targetId)).doc(targetId).get(),
+          db.collection('square_replies').doc(rootId).get(),
+          db.collection('users').doc(user._id).get(),
+        ]);
+        if (!account.data || account.data.status !== 'active') throw error('ACCOUNT_DISABLED', '账号暂不可使用');
+        if (!latestPost.data || latestPost.data.scope !== 'square' || latestPost.data.status !== 'published' ||
+          !latestTarget.data || latestTarget.data.status !== 'published' || !latestRoot.data || latestRoot.data.status !== 'published' ||
+          JSON.stringify(latestPost.data.images || []) !== JSON.stringify(imageFiles) ||
+          JSON.stringify(latestTarget.data.images || []) !== JSON.stringify(commentFiles)) throw error('POST_NOT_FOUND', '动态或评论已不可见');
+      }
       stage = 'generate';
-      const generated = await options.generateAI(context);
+      const generated = await options.generateAI(context, { images });
       const content = typeof generated === 'string' ? Array.from(generated.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim()).slice(0, reservation.chars).join('') : '';
       if (!content) throw error('AI_EMPTY', 'AI 暂未生成回复');
       stage = 'content_check';
@@ -92,6 +124,8 @@ function createSquareAI(db, options) {
         if (!latest || latest.lease !== lease || latest.status !== 'processing') return;
         if (!account || account.status !== 'active' || !latestPost || latestPost.scope !== 'square' || latestPost.status !== 'published' ||
           !latestTarget || latestTarget.status !== 'published' || !latestRoot || latestRoot.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
+        if (images.length && (JSON.stringify(latestPost.images || []) !== JSON.stringify(imageFiles) ||
+          JSON.stringify(latestTarget.images || []) !== JSON.stringify(commentFiles))) throw error('POST_NOT_FOUND', '动态或评论配图已变更');
         if (!exists) {
           await usage.commit(tx, reservation, Array.from(content).length);
           await tx.collection('square_reply_children').doc(replyId).set({ data: { scope: 'square', status: 'published', postId,

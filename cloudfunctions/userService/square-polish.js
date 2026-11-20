@@ -1,7 +1,7 @@
 const { messageFor } = require('./ai-errors');
 const { checkUnavailableMessage } = require('./wechat-content-check');
 const { createAIUsage } = require('./ai-usage');
-const POLISH_CODES = ['AI_POLISH_FAILED'];
+const POLISH_CODES = ['AI_POLISH_FAILED', 'AI_IMAGES_UNAVAILABLE'];
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 function active(user) {
   if (!user) fail('NOT_REGISTERED', '请先登录');
@@ -10,10 +10,10 @@ function active(user) {
 }
 function createSquarePolisher(db, options = {}) {
   const usage = createAIUsage(db, options);
-  return async (content, user, identity) => {
+  return async (content, user, identity, files = []) => {
     active(user);
-    if (typeof content !== 'string' || !content.trim() || Array.from(content).length > 150 || /[\u0000-\u0008\u000b-\u001f\u007f]/.test(content)) {
-      fail('INVALID_POST', '请输入150字以内的动态正文');
+    if (typeof content !== 'string' || !content.trim() && !files.length || Array.from(content).length > 150 || /[\u0000-\u0008\u000b-\u001f\u007f]/.test(content)) {
+      fail('INVALID_POST', '请输入150字以内的动态正文或选择图片');
     }
     if (!options.optimizeAI) fail('AI_POLISH_FAILED', '小萃优化尚未配置，请更新云函数');
     const check = async (value, stage) => {
@@ -34,19 +34,28 @@ function createSquarePolisher(db, options = {}) {
           : `${where}检查暂不可用${detail}，已保留原文`;
         fail('CONTENT_CHECK_UNAVAILABLE', message);
       }
-      if (!options.checkText) {
-        console.error('userService polish content check:', stage, 'code: CHECKER_MISSING');
-        fail('CONTENT_CHECK_UNAVAILABLE', '内容检查未配置，请重新部署userService，原文已保留');
-      }
       if (!permitted) fail('CONTENT_REJECTED', '内容未通过检查，已保留原文');
     };
-    await check(content, 'original');
-    // 原文检查期间账号可能停用，调用模型前仍须重新校验真实账号。
+    if (!options.checkText) {
+      console.error('userService polish content check: original code: CHECKER_MISSING');
+      fail('CONTENT_CHECK_UNAVAILABLE', '内容检查未配置，请重新部署userService，原文已保留');
+    }
+    if (content.trim()) await check(content, 'original');
+    // 审核及读图期间账号可能停用，调用模型和结算前都重新校验真实账号。
     active((await db.collection('users').doc(user._id).get()).data);
     let reservation = await usage.reserve(user._id);
     try {
+      let images = [];
+      if (files.length) {
+        try {
+          if (!options.resolveComposeImages) throw new Error();
+          images = await options.resolveComposeImages(files, user, identity);
+          if (!Array.isArray(images) || images.length !== files.length) throw new Error();
+        } catch (error) { fail('AI_IMAGES_UNAVAILABLE', '小萃暂时无法读取所选图片，请重试，原文和图片已保留'); }
+        active((await db.collection('users').doc(user._id).get()).data);
+      }
       let raw;
-      try { raw = await options.optimizeAI({ content }); }
+      try { raw = await options.optimizeAI({ content, ...(images.length ? { hasImages: true, imageCount: images.length } : {}) }, { images }); }
       catch (error) {
         const message = error.code === 'AI_TIMEOUT' ? '小萃优化超时，请重试' : messageFor(error.code);
         fail('AI_POLISH_FAILED', message);

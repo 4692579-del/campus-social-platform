@@ -5,6 +5,73 @@ const input = value => ({ detail: { value } });
 const option = key => ({ currentTarget: { dataset: { key } } });
 const panel = name => ({ currentTarget: { dataset: { panel: name } } });
 
+test('仅选图片即显示小萃入口，上传后请求图文生成，可恢复空文案且不自动存草稿或发布', async () => {
+  const selected = [{ key: 'only-photo', path: '/photo.jpg', type: 'jpg' }];
+  const f = composerFixture({ chooseImages: () => selected, optimize: (content, images) => {
+    assert.equal(content, ''); assert.equal(images.length, 1);
+    assert.equal(images[0], 'cloud://test.bucket/square-uploads/alice/only-photo.jpg');
+    return '镜头里的一份好心情。';
+  } });
+  await f.attach(); const c = f.component;
+  assert.equal(c.data.canOptimize, false); await c.choosePostImages();
+  assert.equal(c.data.canOptimize, true); assert.deepEqual(Array.from(c.data.noticeOrder), ['optimize']);
+  await c.optimizeContent();
+  assert.equal(c.data.content, '镜头里的一份好心情。'); assert.equal(c.data.canUndoOptimization, true);
+  assert.equal(c.data.images[0].key, 'only-photo'); assert.equal(f.calls.length, 0); assert.equal(f.storage.size, 0);
+  c.undoOptimization(); assert.equal(c.data.content, ''); assert.equal(c.data.images.length, 1); assert.equal(c.data.canOptimize, true);
+  c.removeImage({ currentTarget: { dataset: { index: 0 } } }); assert.equal(c.data.canOptimize, false);
+  assert.deepEqual(Array.from(c.data.noticeOrder), []);
+});
+
+test('图文润色按原图顺序传入，修改图片后旧结果不回填，上传回调不写到换位图片', async () => {
+  const selected = [{ key: 'first', path: '/one.jpg', type: 'jpg' }, { key: 'second', path: '/two.jpg', type: 'jpg' }];
+  let finish, uploaded, complete;
+  const f = composerFixture({ chooseImages: () => selected, uploadImages: (images, onUploaded) => {
+    uploaded = onUploaded; return new Promise(resolve => { complete = () => resolve(images.map(image => `cloud://test.bucket/square-uploads/alice/${image.key}.jpg`)); });
+  }, optimize: () => new Promise(resolve => { finish = resolve; }) });
+  await f.attach(); const c = f.component; await c.choosePostImages(); c.onInput(input('原有文案'));
+  const pending = c.optimizeContent();
+  c.removeImage({ currentTarget: { dataset: { index: 0 } } });
+  uploaded(0, 'cloud://test.bucket/square-uploads/alice/first.jpg');
+  uploaded(1, 'cloud://test.bucket/square-uploads/alice/second.jpg');
+  assert.equal(c.data.images.length, 1); assert.equal(c.data.images[0].fileID, 'cloud://test.bucket/square-uploads/alice/second.jpg');
+  complete(); await pending; assert.equal(f.requests.filter(row => row && row.optimize).length, 0);
+  const next = c.optimizeContent(); complete(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(Array.from(f.requests.at(-1).images), ['cloud://test.bucket/square-uploads/alice/second.jpg']);
+  c.removeImage({ currentTarget: { dataset: { index: 0 } } });
+  finish('不该回填的图文结果'); await next;
+  assert.equal(c.data.content, '原有文案'); assert.equal(c.data.optimizing, false); assert.equal(c.data.canUndoOptimization, false);
+});
+
+test('图片上传失败保留当前原文及所选图片，不请求模型、不写草稿、不发布', async () => {
+  const f = composerFixture({ chooseImages: () => [{ key: 'failed', path: '/p.jpg', type: 'jpg' }],
+    uploadImages: async () => { throw new Error('图片上传失败'); } });
+  await f.attach(); const c = f.component; await c.choosePostImages(); c.onInput(input('我的原文'));
+  await c.optimizeContent();
+  assert.equal(c.data.content, '我的原文'); assert.equal(c.data.images.length, 1);
+  assert.equal(c.data.optimizeError, '图片上传失败'); assert.equal(c.data.optimizing, false);
+  assert.equal(f.requests.filter(row => row && row.optimize).length, 0); assert.equal(f.storage.size, 0); assert.equal(f.calls.length, 0);
+});
+
+test('小萃问号只展示本次打开的一次说明，不请求模型或保存草稿，重新打开恢复', async () => {
+  const storage = new Map(), f = composerFixture({ storage }); await f.attach(); const c = f.component;
+  c.onInput(input('待发布正文')); c.editorDidFocus();
+  const content = c.data.content, requestId = c._requestId;
+  c.showOptimizeHelp(); assert.equal(c.data.optimizeHelpVisible, true); assert.equal(c.data.optimizeHelpUsed, true);
+  assert.equal(c.data.content, content); assert.equal(c._requestId, requestId); assert.equal(c.data.editorFocused, true);
+  assert.equal(f.requests.length, 0); assert.equal(f.calls.length, 0); assert.equal(storage.size, 0);
+  c.closeOptimizeHelp(); assert.equal(c.data.optimizeHelpVisible, false);
+  c.showOptimizeHelp(); assert.equal(c.data.optimizeHelpVisible, false);
+  c.onInput(input('')); c.onInput(input('重新输入正文')); f.hide(); f.show();
+  assert.equal(c.data.optimizeHelpUsed, true); assert.equal(c.data.optimizeHelpVisible, false); f.detach();
+  const reopened = composerFixture({ storage }); await reopened.attach(); reopened.component.onInput(input('正文'));
+  assert.equal(reopened.component.data.optimizeHelpUsed, false);
+  await reopened.component.optimizeContent();
+  assert.equal(reopened.component.data.optimizeHelpUsed, true); assert.equal(reopened.component.data.optimizeHelpVisible, false);
+  assert.deepEqual(reopened.requests.filter(value => value && value.optimize), [{ optimize: '正文' }]);
+  reopened.detach();
+});
+
 test('优化与声明按实际出现先后排序；隐藏再出现排到末尾，改字和切换声明种类不乱序', async () => {
   const f = composerFixture(); await f.attach(); const c = f.component;
   assert.deepEqual(Array.from(c.data.noticeOrder), []);
@@ -434,4 +501,60 @@ test('选图成功、取消及大图预览返回都请求恢复来源页导航�
   const gone = composerFixture({ chooseImages: () => new Promise(resolve => { finish = resolve; }) });
   await gone.attach(); const pending = gone.component.choosePostImages(); gone.detach(); finish([chosenImage('late')]); await pending;
   assert.equal(gone.events.length, 0);
+});
+
+
+test('快速润色满5秒后才替换正文，等待期间编辑或卸载会取消展示且释放计时器', async () => {
+  const f = composerFixture({ manualOptimizationDelay: true }); await f.attach(); const c = f.component;
+  c.onInput(input('原文')); const task = c.optimizeContent(); await new Promise(r => setImmediate(r));
+  assert.equal(c.data.optimizing, true); assert.equal(c.data.content, '原文');
+  const delay = [...f.delays.values()][0]; assert.ok(delay > 4900 && delay <= 5000);
+  f.flushClose(); await task; assert.equal(c.data.content, '优化后的内容'); assert.equal(c.data.optimizing, false);
+  for (const cancel of ['edit', 'hide', 'detach']) {
+    const other = composerFixture({ manualOptimizationDelay: true }); await other.attach(); other.component.onInput(input('原文'));
+    const request = other.component.optimizeContent(); await new Promise(r => setImmediate(r));
+    if (cancel === 'edit') other.component.onInput(input('新文')); else if (cancel === 'hide') other.hide(); else other.detach();
+    await request; assert.equal(other.timers.size, 0); assert.notEqual(other.component.data.content, '优化后的内容');
+  }
+});
+
+test('第五行、连续回车及长正文不再改写原生输入框尺寸或主动抢焦点', async () => {
+  const f = composerFixture(); await f.attach(); const c = f.component;
+  c.editorDidFocus(); c.keyboard({ detail: { height: 320 } });
+  assert.equal(c.data.editorFocused, true); assert.equal(c.data.editorFocusRequested, false);
+  const writes = []; const update = c.setData;
+  c.setData = function(value) { writes.push(value); update.call(this, value); };
+  for (const value of ['一\n二\n三\n四', '一\n二\n三\n四\n五', '\n'.repeat(5), '\n'.repeat(20), '正文'.repeat(70)]) {
+    c.onInput(input(value)); c.editorDidFocus(); c.keyboard({ detail: { height: 320 } });
+    assert.equal(c.data.content, value); assert.equal(c.data.keyboardHeight, 320);
+  }
+  for (const value of writes) assert.ok(!Object.keys(value).some(key => ['editorHeight', 'editorFocusRequested', 'editorFocused', 'sheetTop', 'viewportHeight', 'keyboardHeight'].includes(key)));
+  c.blurEditor(); assert.equal(c.data.editorFocusRequested, false);
+  c.focusEditor(); assert.equal(c.data.editorFocusRequested, true);
+  c.openPanel(panel('options')); assert.equal(c.data.editorFocusRequested, false);
+});
+
+test('发布textarea没有纵向滚动祖先、手势拦截祖先和行高回写，动画结束不保留transform', () => {
+  const fs = require('fs'), markup = fs.readFileSync('miniprogram/components/square-composer/index.wxml', 'utf8');
+  const stack = []; let ancestors;
+  for (const match of markup.matchAll(/<([\w-]+)\b([^>]*?)>|<\/([\w-]+)\s*>/g)) {
+    if (match[3]) { stack.pop(); continue; }
+    if (match[1] === 'textarea') { ancestors = [...stack]; break; }
+    if (!match[2].trimEnd().endsWith('/')) stack.push({ tag: match[1], attributes: match[2] });
+  }
+  assert.ok(ancestors && ancestors.length);
+  assert.ok(ancestors.every(node => node.tag !== 'scroll-view' && !node.attributes.includes('catchtouchmove')));
+  const textarea = markup.match(/<textarea\b[^>]*>/)[0];
+  assert.ok(!textarea.includes('auto-height')); assert.ok(!textarea.includes('bindlinechange'));
+  assert.ok(!textarea.includes('editorHeight')); assert.match(textarea, /focus="{{editorFocusRequested}}"/);
+  const css = fs.readFileSync('miniprogram/components/square-composer/index.wxss', 'utf8');
+  assert.match(css, /\.compose-textarea[^}]*height: 100%/);
+  assert.match(css, /\.compose-sheet[^}]*animation: compose-rise[^;]*backwards/);
+});
+
+
+test('发布正文回车键只换行并原生保持键盘，不绑定回车发布或重新唤起逻辑', () => {
+  const field = require('fs').readFileSync('miniprogram/components/square-composer/index.wxml', 'utf8').match(/<textarea\b[^>]*>/)[0];
+  assert.match(field, /confirm-type="return"/); assert.match(field, /confirm-hold="{{true}}"/);
+  assert.ok(!field.includes('bindconfirm="publish"'));
 });

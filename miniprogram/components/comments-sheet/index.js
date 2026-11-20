@@ -1,10 +1,26 @@
 const users = require('../../services/user');
 const square = require('../../services/square');
+const media = require('../../services/post-images');
 const { token } = require('../../utils/post-view');
 const { commentGroups } = require('../../utils/comment-threads');
 const { reactComment: optimisticReaction } = require('../../utils/comment-state');
-// 零宽占位只用于原生输入框捕获胶囊前的退格，不进入正文、计数或云端。
+// 原生首行保留98rpx给84rpx胶囊和14rpx间隔，后续行自然回到左边界。
+// 占位仅用于布局和捕获退格，解码后才计数/发送；不能作为真实空格提交。
+const COMMENT_MAX = 50;
+const COMMENT_WARNING = 10;
+const AI_MENTION_CHARS = 4; // @小萃及正文前的空格
 const AI_MARKER = '\u200B';
+const AI_PREFIX = AI_MARKER + '\u3000\u3000\u3000\u2002';
+function decodeInput(value, selected, previousText) {
+  if (selected && value.startsWith(AI_PREFIX)) return { askAI: true, raw: value.slice(AI_PREFIX.length).replace(/\u200B/g, '') };
+  // 原正文未变而首行占位被局部删除时，原子删除胶囊，保留正文真实的前导空格。
+  if (selected && value.endsWith(previousText)) {
+    const fragment = value.slice(0, value.length - previousText.length);
+    if (fragment.length <= AI_PREFIX.length && /^[\u200B\u3000\u2002]*$/.test(fragment)) return { askAI: false, raw: previousText };
+  }
+  if (selected && value.startsWith(AI_MARKER)) value = value.slice(1).replace(/^[\u3000\u2002]{0,4}/, '');
+  return { askAI: false, raw: value.replace(/\u200B/g, '') };
+}
 const replyText = (text, askAI) => askAI ? '@小萃' + (text ? ' ' + text : '') : text;
 const reportReasons = [{ key: 'spam', label: '垃圾广告' }, { key: 'illegal', label: '违法违规' },
   { key: 'sexual', label: '色情低俗' }, { key: 'abuse', label: '辱骂骚扰' }, { key: 'other', label: '其他问题' }];
@@ -15,16 +31,23 @@ Component({
   properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number },
   observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); } },
   data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0,
-    text: '', inputValue: '', inputCursor: -1, askAI: false, count: 0, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
+    selectedImages: [], choosingImages: false,
+    text: '', inputValue: '', nativeInputValue: '', inputCursor: -1, askAI: false, count: 0, remainingCount: COMMENT_MAX, countWarning: false, countProgress: 0, limitHintVisible: false, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
     viewportHeight: 812, sheetTop: 260, expanded: false, dragging: false,
-    replyTarget: null, inputFocused: false, scrollIntoView: '' },
+    replyTarget: null, inputFocused: false, inputFocusRequested: false, nativeTextareaMetrics: false, scrollIntoView: '' },
   lifetimes: {
     attached() {
+      try {
+        const device = typeof wx.getDeviceInfo === 'function' ? wx.getDeviceInfo() : wx.getSystemInfoSync();
+        this.setData({ nativeTextareaMetrics: ['ios', 'android', 'ohos', 'harmony'].includes(String(device.platform).toLowerCase()) });
+      } catch (error) { /* 不支持设备API时保留WebView标准行盒。 */ }
+      try { this._inputDebug = wx.getAccountInfoSync().miniProgram.envVersion === 'develop'; } catch (error) { this._inputDebug = false; }
       this._epoch = 0;
       this._roots = []; this._threads = new Map(); this._commentClicks = new Map();
       this._removedComments = new Set();
       this._aiPending = new Set(); this._aiTimers = new Map();
       const version = users.getSessionVersion();
+      this._mediaVersion = version; this._knownUploads = new Set();
       if (typeof square.subscribeComment === 'function') this._stopComments = square.subscribeComment(row => {
         if (this.valid(0, version)) this.applyCommentRow(row);
       });
@@ -41,11 +64,90 @@ Component({
       if (cached) this.showReplies(cached);
       return this.load();
     },
-    detached() { this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
+    detached() { this.discardCommentUploads(); clearTimeout(this._limitHintTimer); this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
   },
-  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this._pageHidden = true; this.clearAITimers(); }, show() { this._pageHidden = false; this.resumeAIReplies(this._roots); for (const thread of this._threads.values()) this.resumeAIReplies(thread.items); } },
+  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this.hideLimitHint(); this._pageHidden = true; this.clearAITimers(); }, show() {
+    this._pageHidden = false;
+    if (this._mediaVersion !== users.getSessionVersion()) {
+      this.discardCommentUploads(); this._epoch++; this._pendingReply = null;
+      this.setData({ selectedImages: [], choosingImages: false, replyTarget: null }); this.setReplyInput('', false); this.triggerEvent('close'); return;
+    }
+    this.resumeAIReplies(this._roots); for (const thread of this._threads.values()) this.resumeAIReplies(thread.items);
+  } },
   methods: {
     stopEvent() {},
+    isNativeMediaActive() { return Boolean(this._nativeMediaActive); },
+    discardCommentUploads(files = [...(this._knownUploads || [])]) {
+      if (typeof media.discardUploads === 'function') Promise.resolve().then(() => media.discardUploads(files)).catch(() => {});
+    },
+    syncImageComposer() {
+      this.setData({ canSend: !this.data.choosingImages && Boolean(replyText(this.data.text, this.data.askAI).trim() || this.data.selectedImages.length) && this.data.count <= COMMENT_MAX,
+        keyboardTop: this.keyboardTop(this.data.sheetTop, this.data.keyboardHeight) });
+    },
+    async uploadCommentImages(images, epoch, version) {
+      return media.uploadImages(images, (index, fileID) => {
+        images[index].fileID = fileID;
+        if (!this.valid(epoch, version)) { this.discardCommentUploads([fileID]); return; }
+        this._knownUploads.add(fileID);
+        const at = this.data.selectedImages.findIndex(image => image.key === images[index].key);
+        if (at >= 0) this.setData({ [`selectedImages[${at}].fileID`]: fileID });
+      });
+    },
+    async chooseCommentImages() {
+      if (this._dead || this.data.sending || this.data.choosingImages) return;
+      if (!users.getCachedUser()) { this.login(); return; }
+      if (this.data.selectedImages.length >= 3) { wx.showToast({ title: '一次最多发送3张图片', icon: 'none' }); return; }
+      const epoch = this._epoch, version = users.getSessionVersion();
+      this._nativeMediaActive = true;
+      this.setData({ choosingImages: true, sendError: '', inputFocused: false, inputFocusRequested: false, keyboardHeight: 0 });
+      if (typeof wx.hideKeyboard === 'function') { try { wx.hideKeyboard({ fail() {} }); } catch (error) { /* 收键盘失败仍允许选择图片。 */ } }
+      try {
+        const selected = await media.chooseImages(3 - this.data.selectedImages.length);
+        if (!this.valid(epoch, version) || !selected.length) return;
+        this.setData({ selectedImages: [...this.data.selectedImages, ...selected].slice(0, 3) });
+        this._requestId = token(); this.syncImageComposer();
+        await this.uploadCommentImages(this.data.selectedImages.map(image => ({ ...image })), epoch, version);
+      } catch (error) {
+        if (this.valid(epoch, version) && !/cancel/.test(error.errMsg || '')) this.setData({ sendError: error.message || '图片上传失败，请重试' });
+      } finally {
+        this._nativeMediaActive = false;
+        if (this.valid(epoch, version)) { this.setData({ choosingImages: false }); this.syncImageComposer(); }
+      }
+    },
+    removeCommentImage(event) {
+      if (this._dead || this.data.sending || this.data.choosingImages) return;
+      const index = Number(event.currentTarget.dataset.index), image = this.data.selectedImages[index];
+      if (!image) return;
+      this.setData({ selectedImages: this.data.selectedImages.filter((_, at) => at !== index), sendError: '' });
+      this._requestId = token(); this.syncImageComposer();
+      if (image.fileID) { this._knownUploads.delete(image.fileID); this.discardCommentUploads([image.fileID]); }
+    },
+    async previewCommentImages(event) {
+      if (this._dead || this.data.choosingImages) return;
+      const data = event.currentTarget.dataset;
+      const row = this._pendingReply && this._pendingReply._id === data.id ? this._pendingReply : this.findComment(data.id);
+      const files = data.selected ? this.data.selectedImages.map(image => image.path || image.fileID) : row && row.images;
+      const current = files && files[Number(event.currentTarget.dataset.index)];
+      if (!current) return;
+      this._nativeMediaActive = true;
+      try { await media.previewImages(files, current); }
+      catch (error) { if (!this._dead && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '图片暂时无法查看', icon: 'none' }); }
+      finally { this._nativeMediaActive = false; }
+    },
+    traceInput(kind, extra = {}) {
+      if (!this._inputDebug) return;
+      // 仅开发版本地诊断：无正文、拼音、用户标识、令牌或云端发送。
+      const event = { kind, time: Date.now(), focused: this.data.inputFocused, requested: this.data.inputFocusRequested,
+        keyboard: this.data.keyboardHeight, viewport: this.data.viewportHeight, ...extra };
+      this._inputTrace = [...(this._inputTrace || []), event].slice(-16);
+      if (kind === 'blur' && this.data.keyboardHeight > 0 && !this.data.sending) console.warn('[comments-input blur]', JSON.stringify(this._inputTrace));
+    },
+    traceInputLines(event) {
+      if (this._dead || this._pageHidden) return;
+      const lines = Math.max(1, Number(event.detail.lineCount) || 1);
+      this.traceInput('linechange', { lines, height: Math.max(0, Number(event.detail.height) || 0) });
+      // 输入和退格缩行均只观测，不setData、不动画、不回写原生尺寸/滚动/焦点。
+    },
     clearAITimers() { if (this._aiTimers) { for (const timer of this._aiTimers.values()) clearTimeout(timer); this._aiTimers.clear(); } },
     resumeAIReplies(rows) { for (const row of (rows || []).filter(row => row.aiCanManage && ['queued', 'processing'].includes(row.aiStatus)).slice(0, 2)) this.startAIReply(row); },
     async startAIReply(row, poll = 0) {
@@ -67,14 +169,18 @@ Component({
       if (row && row.aiCanRetry) return this.startAIReply(row);
     },
     measureSheet() {
+      let width = 375;
       let height = 812, capsuleBottom = 84;
       try {
         const info = wx.getWindowInfo();
         height = info.windowHeight || height;
+        width = info.windowWidth || width;
         capsuleBottom = (info.statusBarHeight || 0) + 48;
         const capsule = wx.getMenuButtonBoundingClientRect();
         if (capsule && capsule.height > 0 && capsule.top >= (info.statusBarHeight || 0)) capsuleBottom = capsule.top + capsule.height;
       } catch (error) { /* 不支持布局 API 的客户端使用默认安全位置。 */ }
+      if (this._layoutWidth === width && (this.data.inputFocused || this.data.keyboardHeight)) height = Math.max(height, this.data.viewportHeight);
+      this._layoutWidth = width;
       this._windowHeight = height;
       const compact = this.data.embedded ? this.data.topOffset : Math.round(height * .32);
       this._sheetStops = { compact, expanded: this.data.embedded ? compact : Math.min(compact, capsuleBottom + 12) };
@@ -84,7 +190,7 @@ Component({
     },
     keyboardTop(top, height) {
       if (this.data.embedded) return this.data.topOffset;
-      return Math.min(top, Math.max(this._sheetStops.expanded, this._windowHeight - height - 220));
+      return Math.min(top, Math.max(this._sheetStops.expanded, this._windowHeight - height - (this.data.selectedImages.length ? 320 : 220)));
     },
     touchY(event) {
       const touch = event.touches && event.touches[0] || event.changedTouches && event.changedTouches[0];
@@ -127,7 +233,7 @@ Component({
       this.setData({ expanded, sheetTop, dragging: false, keyboardTop: this.keyboardTop(sheetTop, this.data.keyboardHeight) });
     },
     close() {
-      if (this.data.sending) return;
+      if (this.data.sending || this.data.choosingImages) return;
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this.triggerEvent('close');
     },
@@ -135,7 +241,7 @@ Component({
     focusComposer() {
       if (!users.getCachedUser()) { this.login(); return; }
       this.cancelReply();
-      this.setData({ inputFocused: true });
+      this.setData({ inputFocused: true, inputFocusRequested: true });
     },
     valid(epoch, version) { return !this._dead && this._epoch === epoch && users.getSessionVersion() === version; },
     renderComments() {
@@ -250,15 +356,24 @@ Component({
       const thread = row.rootId && this._threads.get(row.rootId);
       if (thread && thread.items.some(item => item.folded && (row.ancestorIds || []).includes(item._id))) return;
       this._requestId = token();
-      this.setData({ replyTarget: { id: row._id, rootId: row.rootId || row._id, nickname: row.author.nickname }, inputFocused: true, sendError: '' });
+      this.setData({ replyTarget: { id: row._id, rootId: row.rootId || row._id, nickname: row.author.nickname }, inputFocused: true, inputFocusRequested: true, sendError: '' });
     },
     cancelReply() {
       if (this.data.sending) return;
       this._requestId = token();
       this.setData({ replyTarget: null });
     },
-    focusInput() { this.setData({ inputFocused: true }); },
-    blurInput() { this.setData({ inputFocused: false }); },
+    // 原生focus只更新观测值，不把这个事件反写成另一次focus请求。
+    focusInput() { this.traceInput('focus'); if (!this.data.inputFocused) this.setData({ inputFocused: true }); },
+    blurInput() {
+      this.traceInput('blur');
+      // 键盘还在时，原生缩行的临时blur不能被放大成一条focus=false指令。
+      // 不反向请求focus；真正收键盘后由keyboard事件解除聚焦请求。
+      const values = {};
+      if (this.data.inputFocused) values.inputFocused = false;
+      if (!this.data.keyboardHeight && this.data.inputFocusRequested) values.inputFocusRequested = false;
+      if (Object.keys(values).length) this.setData(values);
+    },
     toggleThread(event) {
       const id = event.currentTarget.dataset.id, root = this.findComment(id);
       if (!root || root.folded) return;
@@ -354,46 +469,86 @@ Component({
     input(event) {
       if (this.data.sending) return;
       const value = event.detail.value;
-      const askAI = this.data.askAI && value.startsWith(AI_MARKER);
-      const text = value.replace(/\u200B/g, '');
+      const { askAI, raw } = decodeInput(value, this.data.askAI, this.data.text);
+      const maximum = askAI ? COMMENT_MAX - AI_MENTION_CHARS : COMMENT_MAX;
+      const text = Array.from(raw).slice(0, maximum).join('');
+      if (Array.from(replyText(raw, askAI)).length >= COMMENT_MAX) this.showLimitHint();
+      else this.hideLimitHint();
       this._requestId = token();
-      this.setReplyInput(text, askAI);
+      this._nativeInputSnapshot = value;
+      this.setReplyInput(text, askAI, value);
       return this.data.inputValue;
     },
-    setReplyInput(text, askAI) {
+    setReplyInput(text, askAI, nativeValue) {
+      text = Array.from(text).slice(0, askAI ? COMMENT_MAX - AI_MENTION_CHARS : COMMENT_MAX).join('');
       const content = replyText(text, askAI), count = Array.from(content).length;
-      this.setData({ text, askAI, inputValue: (askAI ? AI_MARKER : '') + text, inputCursor: -1,
-        count, canSend: Boolean(content.trim()) && count <= 300, sendError: '' });
+      const inputValue = (askAI ? AI_PREFIX : '') + text;
+      const values = { text, askAI, inputValue, count, remainingCount: Math.max(0, COMMENT_MAX - count),
+        countWarning: count >= COMMENT_MAX - COMMENT_WARNING, countProgress: Math.min(360, count * 360 / COMMENT_MAX),
+        canSend: !this.data.choosingImages && Boolean(content.trim() || this.data.selectedImages.length) && count <= COMMENT_MAX, sendError: '' };
+      // 正常键入（包括回车、拼音）交给原生控件，模型值与绑定值分离，禁止每字重设value/cursor。
+      if (nativeValue !== inputValue) {
+        const actual = this._nativeInputSnapshot === undefined ? this.data.inputValue : this._nativeInputSnapshot;
+        // 原生值已在本地变化，但上次绑定值可能仍是空串；先回显实际值使清空/重复截断也能生效。
+        if (this.data.nativeInputValue === inputValue && actual !== inputValue) this.setData({ nativeInputValue: actual });
+        values.nativeInputValue = inputValue;
+        values.inputCursor = -1;
+        this._nativeInputSnapshot = inputValue;
+      }
+      this.setData(values);
     },
     askXiaocui() {
       if (this.data.sending || this._dead) return;
       if (!users.getCachedUser()) { this.login(); return; }
       if (!this.data.askAI) this._requestId = token();
       this.setReplyInput(this.data.text, true);
-      this.setData({ inputFocused: true, inputCursor: this.data.inputValue.length });
+      // hold-keyboard 保留原生焦点；已聚焦时只插入胶囊，不重放 focus。
+      this.setData({ ...(!this.data.inputFocused ? { inputFocused: true, inputFocusRequested: true } : {}), inputCursor: this.data.inputValue.length });
     },
+    showLimitHint() {
+      clearTimeout(this._limitHintTimer);
+      this.setData({ limitHintVisible: true });
+      this._limitHintTimer = setTimeout(() => { if (!this._dead) this.setData({ limitHintVisible: false }); }, 2500);
+    },
+    hideLimitHint() { clearTimeout(this._limitHintTimer); if (this.data.limitHintVisible) this.setData({ limitHintVisible: false }); },
     keyboard(event) {
       const height = Math.max(0, event.detail.height || 0);
-      this.setData({ keyboardHeight: height, keyboardTop: this.keyboardTop(this.data.sheetTop, height) });
+      this.traceInput('keyboard', { height });
+      if (height === this.data.keyboardHeight) return;
+      this.setData({ keyboardHeight: height, keyboardTop: this.keyboardTop(this.data.sheetTop, height),
+        ...(!height && this.data.inputFocusRequested ? { inputFocusRequested: false } : {}) });
+    },
+    dismissKeyboardOnSend() {
+      this.setData({ inputFocused: false, inputFocusRequested: false, keyboardHeight: 0,
+        keyboardTop: this.keyboardTop(this.data.sheetTop, 0) });
+      // 仅点击发送时执行，云端回调不再操作键盘；API失败不能中断评论提交。
+      if (!this._dead && !this._pageHidden && typeof wx.hideKeyboard === 'function') {
+        try { wx.hideKeyboard({ fail() {} }); } catch (error) { /* 继续提交评论。 */ }
+      }
     },
     async send() {
       const content = replyText(this.data.text, this.data.askAI);
-      if (this.data.sending || !content.trim() || Array.from(content).length > 300) return;
+      if (this._dead || this._pageHidden || this.data.sending || this.data.choosingImages || !content.trim() && !this.data.selectedImages.length || Array.from(content).length > COMMENT_MAX) return;
       if (!users.getCachedUser()) { this.login(); return; }
+      this.dismissKeyboardOnSend();
       const epoch = this._epoch, version = users.getSessionVersion();
       this._requestId = this._requestId || token();
-      const original = { text: this.data.text, askAI: this.data.askAI, count: this.data.count, target: this.data.replyTarget };
+      const original = { text: this.data.text, askAI: this.data.askAI, count: this.data.count, target: this.data.replyTarget, images: this.data.selectedImages.map(image => ({ ...image })) };
       const viewer = users.getCachedUser(), targetRow = original.target && this.findComment(original.target.id);
-      this._pendingReply = { _id: `pending_${this._requestId}`, content, pending: true, createdAt: new Date().toISOString(),
+      this._pendingReply = { _id: `pending_${this._requestId}`, content, images: original.images.map(image => image.path || image.fileID), pending: true, createdAt: new Date().toISOString(),
         author: { nickname: viewer.nickname || '', avatarFileID: viewer.avatarFileID || '', accountId: viewer.accountId || '',
           verified: viewer.role === 'student' && viewer.certificationStatus === 'approved' && Boolean(viewer.schoolId) },
         ...(original.target ? { rootId: original.target.rootId, replyToId: original.target.id, replyToName: original.target.nickname,
           ancestorIds: targetRow ? [...(targetRow.ancestorIds || []), targetRow._id] : [] } : {}) };
+      this.hideLimitHint();
+      this.setData({ selectedImages: [] }); this.setReplyInput('', false);
       this.setData({ sending: true, sendError: '', text: '', inputValue: '', inputCursor: -1, askAI: false, count: 0, canSend: false, scrollIntoView: `comment-${this._pendingReply._id}` });
       this.renderComments();
       try {
         const target = original.target;
-        const result = await square.reply(this.data.postId, content, this._requestId, target && target.id, original.askAI);
+        const images = original.images.length ? await this.uploadCommentImages(original.images, epoch, version) : [];
+        if (!this.valid(epoch, version)) return;
+        const result = await square.reply(this.data.postId, content, this._requestId, target && target.id, original.askAI, images);
         if (!this.valid(epoch, version)) return;
         this._pendingReply = null;
         if (target) {
@@ -405,13 +560,14 @@ Component({
         this.renderComments();
         this.setData({ text: '', inputValue: '', inputCursor: -1, askAI: false, count: 0, canSend: false, replyTarget: null, scrollIntoView: `comment-${result.reply._id}` });
         this._requestId = null;
+        this.discardCommentUploads(); this._knownUploads.clear();
         this.triggerEvent('changed', { id: this.data.postId });
         this.startAIReply(result.reply);
       } catch (error) {
         if (this.valid(epoch, version)) {
           this._pendingReply = null;
           this.renderComments();
-          this.setReplyInput(original.text, original.askAI);
+          this.setData({ selectedImages: original.images }); this.setReplyInput(original.text, original.askAI);
           this.setData({ replyTarget: original.target, sendError: error.message || '评论发布失败，请重试' });
         } else if (!this._dead && this._epoch === epoch) {
           if (!users.getCachedUser()) this.login();

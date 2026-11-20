@@ -99,7 +99,7 @@
   </view>
   </scroll-view>
   <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: error, loading: loading}}" />
-  <comments-sheet wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
+  <comments-sheet id="active-comments" wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>
 
 <square-composer wx:if="{{composerOpen}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />

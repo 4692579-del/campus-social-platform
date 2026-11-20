@@ -45,6 +45,33 @@ function client(handler) {
 }
 
 const commentRow = (extra = {}) => ({ _id: 'r_' + 'a'.repeat(40), content: '评论', author: post().author, likeCount: 0, liked: false, folded: false, ...extra });
+test('图文优化按图片顺序和正文合并，图片变化不复用旧请求，空文案带图可以生成', async () => {
+  const pending = [], f = client(() => new Promise(resolve => pending.push(resolve)));
+  const images = ['cloud://test.bucket/square-uploads/alice/one.jpg', 'cloud://test.bucket/square-uploads/alice/two.jpg'];
+  const first = f.service.optimizeContent('', images);
+  assert.equal(f.service.optimizeContent('', [...images]), first);
+  const swapped = f.service.optimizeContent('', [...images].reverse());
+  assert.notEqual(swapped, first); assert.equal(f.calls.length, 2);
+  assert.deepEqual(Array.from(f.calls[0].images), images); assert.equal(f.calls[0].content, '');
+  images.pop(); assert.equal(f.calls[0].images.length, 2);
+  for (const resolve of pending) resolve({ result: { success: true, square: { content: '按图片撰写的文案' } } });
+  assert.equal(await first, '按图片撰写的文案'); await swapped; assert.equal(f.service.cachedFeed(), null);
+  for (const bad of [[], ['https://example.com/x.jpg'], ['cloud://same', 'cloud://same']])
+    assert.throws(() => f.service.optimizeContent('', bad));
+});
+test('评论图片按原顺序提交并缓存展示，不写相册缓存，四图及外链被客户端拒绝', async () => {
+  const images = [0,1,2].map(i => `cloud://test.bucket/square-uploads/alice/${i}.jpg`);
+  const published = [0,1,2].map(i => `cloud://test.bucket/square-media/alice/comment/${i}.jpg`);
+  const f = client(() => ({ result: { success: true, square: { post: post({ replyCount: 1 }), reply: commentRow({ content: '', images: published }) } } }));
+  const result = await f.service.reply(post()._id, '', 'client-images-reply01', undefined, false, images);
+  assert.deepEqual(Array.from(f.calls[0].post.images), images); assert.equal(f.calls[0].post.content, '');
+  assert.deepEqual(Array.from(result.reply.images), published);
+  assert.deepEqual(Array.from(f.service.cachedReplies(post()._id).items[0].images), published);
+  assert.equal(f.service.cachedAlbum(), null);
+  for (const files of [[...images, 'cloud://fourth'], ['https://example.com/x.jpg'], [images[0], images[0]]])
+    await assert.rejects(f.service.reply(post()._id, '', 'client-images-bad01', undefined, false, files), error => error.code === 'INVALID_IMAGES');
+});
+
 test('正文优化只发送正文并合并重复请求，不污染动态缓存，换账号后的迟到结果被拒绝', async () => {
   let finish;
   const f = client(() => new Promise(resolve => { finish = resolve; }));
@@ -540,4 +567,12 @@ test('首次评论读取迟于发送返回时保留刚发布的评论', async ()
   finish({ result: { success: true, square: { items: [], hasMore: false, nextOffset: 0 } } });
   assert.equal((await reading).items[0].content, '新评论');
   assert.match(postView(post()).exactTime, /2026年11月17日 14:00/);
+});
+
+
+test('评论服务在调用云端前拒绝51个码点和空内容，保留emoji按码点规则', async () => {
+  let calls = 0;
+  const f = client(() => { calls++; throw new Error('不得请求云端'); });
+  for (const content of ['😊'.repeat(51), '字'.repeat(50) + ' ', '', '   ']) await assert.rejects(f.service.reply(post()._id, content, 'comment-limit-request1'), error => error.code === 'INVALID_POST');
+  assert.equal(calls, 0);
 });

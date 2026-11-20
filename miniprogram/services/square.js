@@ -297,8 +297,11 @@ async function saveLike(id, write) {
     throw error;
   }
 }
-async function reply(id, content, requestId, replyToId, askAI = false) {
-  const result = await call('publishSquareReply', { post: { postId: id, content, requestId, scope: 'square', ...(replyToId ? { replyToId } : {}), ...(askAI === true ? { askAI: true } : {}) } }, true);
+async function reply(id, content, requestId, replyToId, askAI = false, images = []) {
+  if (!Array.isArray(images) || images.length > 3 || new Set(images).size !== images.length || images.some(file => typeof file !== 'string' || !file.startsWith('cloud://')))
+    throw Object.assign(new Error('一次最多发送3张已上传图片'), { code: 'INVALID_IMAGES' });
+  if (typeof content !== 'string' || !content.trim() && !images.length || Array.from(content).length > 50) throw Object.assign(new Error('评论最多输入50字（含空格和标点）'), { code: 'INVALID_POST' });
+  const result = await call('publishSquareReply', { post: { postId: id, content, requestId, scope: 'square', ...(replyToId ? { replyToId } : {}), ...(askAI === true ? { askAI: true } : {}), ...(images.length ? { images: [...images] } : {}) } }, true);
   unavailable(id);
   revisions.set(id, ++mutation);
   updatePost(result.post);
@@ -443,12 +446,16 @@ async function deleteReply(id, replyId) {
   return result;
 }
 function reportReply(id, replyId, reason) { return call('reportSquareReply', { postId: id, replyId, reason }, true); }
-function optimizeContent(content) {
+function optimizeContent(content, images = []) {
   session();
+  if (typeof content !== 'string' || Array.from(content).length > 150 || !Array.isArray(images) || images.length > 9 ||
+    new Set(images).size !== images.length || images.some(file => typeof file !== 'string' || !file.startsWith('cloud://')) || !content.trim() && !images.length)
+    throw new Error('请写入150字以内的文案或选择图片');
+  images = [...images];
   const version = generation;
-  return merged(`polish:${content}`, async () => {
+  return merged(`polish:${JSON.stringify([content, images])}`, async () => {
     try {
-    const result = await call('optimizeSquareContent', { content }, true);
+    const result = await call('optimizeSquareContent', { content, ...(images.length ? { images } : {}) }, true);
     if (!result || typeof result.content !== 'string' || !result.content.trim()) throw new Error('暂未生成优化内容，请重试');
     return Array.from(result.content).slice(0, 150).join('');
     } finally { session(); if (generation === version && users.invalidateAIUsage) users.invalidateAIUsage(); }

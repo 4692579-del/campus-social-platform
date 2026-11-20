@@ -1,8 +1,8 @@
 <view wx:if="{{!authBlocked && !commentsOpen && !composerOpen}}" class="tab-bar-viewport {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
   <view class="tab-bar">
     <view class="tab-items">
-      <button wx:for="{{items}}" wx:key="path" class="tab-item" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" hover-class="tab-item-pressed">
-        <image class="tab-icon" src="{{item.iconSource || '/images/tab-bar/' + item.icon}}{{selected === index ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
+      <button wx:for="{{items}}" wx:key="path" class="tab-item" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="tab-item-pressed">
+        <image class="tab-icon" src="/images/tab-bar/{{item.icon}}{{selected === index ? '-active' : ''}}.svg" mode="aspectFit" />
       </button>
     </view>
     <view class="tab-menu-shade" bindtap="closeProfileMenu" catchtouchmove="stopMenuTouch" aria-hidden="{{!menuOpen}}" aria-role="button" aria-label="收起侧面菜单"></view>

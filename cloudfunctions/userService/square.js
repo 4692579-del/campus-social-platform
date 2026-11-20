@@ -42,9 +42,9 @@ function visible(post) {
   if (!post || post.scope !== 'square' || post.status !== 'published') fail('POST_NOT_FOUND', '动态不存在或已不可见');
   return post;
 }
-function imageFiles(value, user, identity) {
+function imageFiles(value, user, identity, maximum = 9) {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 9 || new Set(value).size !== value.length) fail('INVALID_IMAGES', '一次最多发布 9 张不同的图片');
+  if (!Array.isArray(value) || value.length > maximum || new Set(value).size !== value.length) fail('INVALID_IMAGES', `一次最多发送 ${maximum} 张不同的图片`);
   const prefix = `cloud://${identity.env}.`;
   const path = new RegExp(`^square-uploads/${user._id}/[A-Za-z0-9_-]+\\.(jpg|jpeg|png|webp)$`);
   if (value.some(file => typeof file !== 'string' || file.length > 512 || !identity.env || !file.startsWith(prefix) || !path.test(file.slice(file.indexOf('/', 8) + 1)))) {
@@ -83,7 +83,7 @@ function createSquareService(db, options = {}) {
       _id: db.command.in(rows.map(row => hash(`comment:${viewer._id}:${row._id}`))) }).limit(20).get().then(result => result.data) : Promise.resolve([])]);
     return rows.map(row => {
       const state = states.find(value => value.replyId === row._id);
-      return { _id: row._id, content: row.content, author: profiles.get(row.authorId), createdAt: row.createdAt, sortKey: row.sortKey || '',
+      return { _id: row._id, content: row.content, images: row.images || [], author: profiles.get(row.authorId), createdAt: row.createdAt, sortKey: row.sortKey || '',
         rootId: row.rootId || '', replyToId: row.replyToId || '', replyToName: row.replyToAuthorId ? profiles.get(row.replyToAuthorId).nickname : '',
         ancestorIds: row.ancestorIds || [], replyCount: row.replyCount || 0, likeCount: row.likeCount || 0,
         isOwn: Boolean(viewer && viewer._id === row.authorId), liked: Boolean(state && state.liked), folded: Boolean(state && state.folded),
@@ -155,10 +155,10 @@ function createSquareService(db, options = {}) {
       return { items, hasMore: rows.length > 20, nextOffset: offset + items.length };
     }
     active(user);
-    if (action === 'optimizeSquareContent') return createSquarePolisher(db, options)(event.content, user, identity);
+    if (action === 'optimizeSquareContent') return createSquarePolisher(db, options)(event.content, user, identity, imageFiles(event.images, user, identity));
     if (action === 'processSquareAIReply') {
       const id = postId(event.postId), targetId = commentId(event.replyId);
-      const result = await ai.process(id, targetId, user);
+      const result = await ai.process(id, targetId, user, identity);
       const target = await getComment(targetId, id);
       const rootId = target.rootId || target._id;
       const root = rootId === targetId ? target : await getComment(rootId, id);
@@ -234,7 +234,7 @@ function createSquareService(db, options = {}) {
         const ref = transaction.collection('square_reports').doc(reportId);
         if ((await ref.get()).data) { alreadyReported = true; return; }
         await ref.set({ data: { targetType: 'comment', postId: id, replyId: target, rootId: row.rootId || '',
-          reporterId: user._id, authorId: row.authorId, reason, status: 'pending', createdAt: db.serverDate(), commentContent: row.content } });
+          reporterId: user._id, authorId: row.authorId, reason, status: 'pending', createdAt: db.serverDate(), commentContent: row.content, commentImages: row.images || [] } });
       });
       return { reportId, alreadyReported };
     }
@@ -270,16 +270,17 @@ function createSquareService(db, options = {}) {
       // 顶层 event 还会带有云平台的调用元数据，只校验独立的业务对象。
       const input = event.post;
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_POST', '发布页面需要更新，请重新编译后重试');
-      if (Object.keys(input).some(key => !['content', 'requestId', 'scope', ...(isReply ? ['postId', 'replyToId', 'askAI'] : ['images', 'declaration'])].includes(key))) fail('INVALID_POST', '发布参数不正确，请重新打开发布页');
+      if (Object.keys(input).some(key => !['content', 'requestId', 'scope', 'images', ...(isReply ? ['postId', 'replyToId', 'askAI'] : ['declaration'])].includes(key))) fail('INVALID_POST', '发布参数不正确，请重新打开发布页');
       if (isReply && input.askAI !== undefined && typeof input.askAI !== 'boolean') fail('INVALID_POST', 'AI 唤起参数不正确');
       const askAI = isReply && input.askAI === true;
       if (input.scope !== 'square') fail('INVALID_POST', '该发布入口仅支持动态广场');
       const declaration = !isReply && input.declaration !== undefined ? input.declaration : 'none';
       if (!DECLARATIONS.includes(declaration)) fail('INVALID_POST', '请选择有效的内容声明');
-      const sources = isReply ? [] : imageFiles(input.images, user, identity);
-      // 动态按原始输入计数，空格、换行和标点都占一个字符；回复仍沿用原有 300 字规则。
-      if (!isReply && typeof input.content === 'string' && Array.from(input.content).length > 150) fail('INVALID_POST', '动态最多输入150字（含空格和标点）');
-      const content = !isReply && sources.length && typeof input.content === 'string' && !input.content.trim() ? '' : text(input.content, isReply ? 300 : 150);
+      const sources = imageFiles(input.images, user, identity, isReply ? 3 : 9);
+      // 动态与回复都按原始 Unicode 码点计数，空格、换行和标点也占额度。
+      const maximum = isReply ? 50 : 150;
+      if (typeof input.content === 'string' && Array.from(input.content).length > maximum) fail('INVALID_POST', `最多输入${maximum}字（含空格和标点）`);
+      const content = sources.length && typeof input.content === 'string' && !input.content.trim() ? '' : text(input.content, maximum);
       const token = requestId(input.requestId);
       const parentId = isReply ? postId(input.postId) : '';
       if (isReply && input.replyToId !== undefined) commentId(input.replyToId);
@@ -293,7 +294,7 @@ function createSquareService(db, options = {}) {
       const existing = previous.data;
       const conflicts = saved => saved.content !== content || (saved.replyToId || '') !== (target ? target._id : '') ||
         isReply && Boolean(saved.askAI) !== askAI ||
-        !isReply && (JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || (saved.declaration || 'none') !== declaration);
+        JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && (saved.declaration || 'none') !== declaration;
       if (existing && conflicts(existing)) fail('REQUEST_CONFLICT', '相同提交标识的内容或回复对象已变更，请重新提交');
       if (!existing && content) await checked(content, identity);
       let images = existing && existing.images || [];
@@ -322,7 +323,7 @@ function createSquareService(db, options = {}) {
           ancestorIds: target ? [...(latestTarget.ancestorIds || []), latestTarget._id] : [] }) : {};
         await ref.set({ data: { scope: 'square', status: 'published', authorId: user._id, content, ...aiFields,
           createdAt: db.serverDate(), sortKey: `${String(Date.now()).padStart(16, '0')}_${id}`,
-          ...(isReply ? { postId: parent._id, likeCount: 0, replyCount: 0, askAI,
+          ...(isReply ? { postId: parent._id, likeCount: 0, replyCount: 0, askAI, images, imageSources: sources,
             ...(target ? { rootId, replyToId: target._id, replyToAuthorId: latestTarget.authorId, ancestorIds: [...(latestTarget.ancestorIds || []), latestTarget._id] } : {}) }
             : { likeCount: 0, replyCount: 0, repostCount: 0, images, imageSources: sources, hasImages: images.length > 0, declaration }) } });
         if (parentRef) await parentRef.update({ data: { replyCount: (latestParent.replyCount || 0) + 1 } });

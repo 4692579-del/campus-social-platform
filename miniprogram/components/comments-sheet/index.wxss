@@ -3,7 +3,7 @@
 .comments-layer { position: fixed; z-index: 2400; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
 .comments-mask { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: rgba(15, 23, 37, .35); animation: comments-fade .18s ease-out; }
 .comments-panel { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; box-sizing: border-box; background: #fff; border-radius: 28rpx 28rpx 0 0; overflow: hidden; animation: comments-rise .22s ease-out; transition: top .24s cubic-bezier(.22, .68, .2, 1), height .24s cubic-bezier(.22, .68, .2, 1); }
-.comments-panel.is-dragging { transition: none; }
+.comments-panel.is-dragging, .comments-panel.is-editing { transition: none; }
 .comments-grabber { display: flex; align-items: center; justify-content: center; flex-shrink: 0; height: 30rpx; padding-top: 6rpx; touch-action: none; }
 .comments-grabber-bar { width: 64rpx; height: 7rpx; border-radius: 8rpx; background: #cbd0d7; }
 .comments-header { position: relative; display: flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 44rpx; padding: 0 156rpx 14rpx; border-bottom: 1rpx solid #edf0f3; font-size: 31rpx; font-weight: 700; }
@@ -13,6 +13,7 @@
 .comments-header-actions button[disabled] { opacity: .4; }
 button::after { border: 0; }
 .comments-body { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
+.comments-footer { flex: 0 0 auto; }
 .comments-list { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .comments-footer { position: relative; z-index: 1; flex: 0 0 auto; width: 100%; background: #fff; }
 .comments-status { padding: 52rpx 28rpx; color: #98a1ad; font-size: 26rpx; text-align: center; }
@@ -55,25 +56,23 @@ button::after { border: 0; }
 .comments-list .comments-more { margin: 0; padding: 24rpx; background: transparent; color: #4775fa; font-size: 26rpx; line-height: 1.5; }
 .comments-error, .comments-send-error { padding: 16rpx 28rpx; color: #a44130; background: #fff4f1; font-size: 25rpx; line-height: 1.6; }
 .comments-error button { display: inline-block; margin: 0 0 0 16rpx; padding: 0; background: transparent; color: #4775fa; font-size: 25rpx; line-height: 1.6; }
-.comment-composer { display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 20rpx 28rpx; border-top: 1rpx solid #edf0f3; background: #fff; }
-.comment-input-pill { display: flex; align-items: center; flex: 1 1 0; min-width: 0; min-height: 76rpx; padding: 0 20rpx; box-sizing: border-box; border-radius: 48rpx; background: #ededee; }
+.comment-composer { display: flex; align-items: flex-end; width: 100%; box-sizing: border-box; padding: 20rpx 28rpx; border-top: 1rpx solid #edf0f3; background: #fff; }
+.comment-input-pill { display: flex; align-items: flex-start; flex: 1 1 0; min-width: 0; min-height: 76rpx; padding: 15rpx 20rpx; box-sizing: border-box; border-radius: 48rpx; background: #ededee; }
 .composer-avatar { flex-shrink: 0; width: 46rpx; height: 46rpx; margin-right: 16rpx; border-radius: 50%; background: #e0e2e5; }
-.comment-input-pill input { flex: 1 1 0; width: 0; min-width: 0; height: 76rpx; padding: 0; color: #171b20; font-size: 28rpx; caret-color: #4775fa; }
-.composer-placeholder { color: #93979c; }
-.comment-entry { position: relative; flex: 1 1 0; min-width: 0; height: 76rpx; }
-.comment-entry input { width: 100%; }
-.composer-ai-placeholder { position: absolute; top: 0; left: 0; right: 0; overflow: hidden; white-space: nowrap; font-size: 28rpx; line-height: 76rpx; pointer-events: none; }
+.comment-textarea { display: block; width: 100%; min-width: 0; min-height: 40rpx; max-height: 200rpx; box-sizing: border-box; margin: 0; padding: 0; color: #171b20; font-size: 28rpx; line-height: 40rpx; caret-color: #4775fa; background: transparent; }
+.composer-placeholder { color: #93979c; font-size: 28rpx; font-weight: 400; }
+.comment-entry { display: block; position: relative; flex: 1 1 0; min-width: 0; min-height: 46rpx; }
 .composer-ai-chip { display: flex; align-items: center; justify-content: center; flex-shrink: 0; height: 40rpx; padding: 0 10rpx; box-sizing: border-box; border-radius: 24rpx; background: #e2edff; color: #4775fa; font-size: 22rpx; line-height: 1; white-space: nowrap; }
-.composer-ai-mention { margin-right: 12rpx; }
+.composer-ai-mention { position: absolute; z-index: 2; top: 3rpx; left: 0; width: 84rpx; padding: 0; pointer-events: none; }
 .composer-tool-icons .composer-ask-ai { width: 144rpx; min-width: 0; margin: 0; gap: 6rpx; }
 .composer-ask-ai .xiaocui-icon { width: 28rpx; height: 28rpx; }
 .composer-ask-ai::after { border: 0; }
-.composer-tools { position: relative; flex-shrink: 0; width: 324rpx; height: 72rpx; margin-left: 12rpx; transition: width .26s cubic-bezier(.22, .68, .2, 1), margin-left .26s cubic-bezier(.22, .68, .2, 1); }
-.composer-tool-icons { position: absolute; right: 0; top: 0; display: flex; align-items: center; gap: 8rpx; width: 324rpx; opacity: 1; transform: scale(1); transform-origin: right center; transition: transform .2s ease, opacity .18s ease; }
-.composer-tool { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 52rpx; height: 72rpx; }
+.composer-tools { position: relative; flex-shrink: 0; width: 324rpx; height: 46rpx; margin-left: 12rpx; transition: width .26s cubic-bezier(.22, .68, .2, 1), margin-left .26s cubic-bezier(.22, .68, .2, 1); }
+.composer-tool-icons { position: absolute; right: 0; top: 0; display: flex; align-items: center; gap: 8rpx; width: 324rpx; height: 46rpx; opacity: 1; transform: scale(1); transform-origin: right center; transition: transform .2s ease, opacity .18s ease; }
+.composer-tool { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 52rpx; height: 40rpx; }
 .composer-tool image { display: block; width: 40rpx; height: 40rpx; }
-.has-content .composer-tools { width: 0; margin-left: 0; pointer-events: none; }
-.has-content .composer-tool-icons { opacity: 0; transform: scale(.35); }
+.has-text .composer-tools { width: 0; margin-left: 0; pointer-events: none; }
+.has-text .composer-tool-icons { opacity: 0; transform: scale(.35); }
 .composer-send-slot { position: relative; flex: 0 0 auto; width: 0; height: 76rpx; overflow: hidden; pointer-events: none; transition: width .26s cubic-bezier(.22, .68, .2, 1); }
 .has-content .composer-send-slot { width: 90rpx; pointer-events: auto; }
 .comment-composer .comment-send, .comment-composer .comment-login { display: flex; align-items: center; justify-content: center; flex: 0 0 76rpx; width: 76rpx; min-width: 0; height: 76rpx; box-sizing: border-box; padding: 0; margin: 0; border-radius: 50%; background: #4775fa; color: #fff; font-size: 27rpx; line-height: 1; }
@@ -95,3 +94,34 @@ button::after { border: 0; }
 .comment-ai-status:empty { display: none; }
 .comment-ai-status button { width: auto; min-width: 0; margin: 0; padding: 4rpx 8rpx; background: transparent; color: #4775fa; font-size: 22rpx; line-height: 1.5; }
 .comment-ai-status button::after { border: 0; }
+
+/* 保留计数节点，文字清空时收拢并淡出，不销毁原生输入框。 */
+.comment-counter-slot { align-self: flex-end; margin-bottom: 6rpx; display: flex; align-items: center; flex: 0 0 auto; width: 0; opacity: 0; transform: translateX(8rpx); pointer-events: none; transition: width .26s ease, opacity .22s ease, transform .26s ease; }
+.comment-counter-slot.is-visible { width: 78rpx; opacity: 1; transform: translateX(0); }
+.comment-counter-divider { flex-shrink: 0; width: 1rpx; height: 34rpx; margin: 0 20rpx 0 16rpx; background: #d1d5db; }
+.comment-progress-anchor { position: relative; flex: 0 0 34rpx; width: 34rpx; height: 34rpx; }
+.comment-progress { position: absolute; left: 50%; top: 50%; display: flex; align-items: center; justify-content: center; width: 34rpx; height: 34rpx; border-radius: 50%; transform: translate(-50%, -50%); transition: width .24s ease, height .24s ease; }
+.comment-progress.is-warning { width: 51rpx; height: 51rpx; }
+.comment-progress > view { display: flex; align-items: center; justify-content: center; width: calc(100% - 8rpx); height: calc(100% - 8rpx); border-radius: 50%; background: #ededee; }
+.comment-progress text { color: #e44646; font-size: 22rpx; line-height: 1; }
+.comment-limit-hint { position: absolute; z-index: 35; right: -16rpx; bottom: calc(100% + 24rpx); padding: 14rpx 20rpx; border-radius: 14rpx; background: #64676c; color: #fff; font-size: 23rpx; line-height: 1.4; white-space: nowrap; pointer-events: none; }
+
+/* 原生textarea自行增减高度及滚动，不再套WebView滚动视口或按行数计算背景。 */
+.comment-input-content { position: relative; min-height: 46rpx; padding: 3rpx 0; box-sizing: border-box; }
+
+/* 真机textarea首行字形顶对齐，不包含WebView行盒的上半行距。
+   (40rpx行高 - 28rpx字号) / 2 = 6rpx；常量偏移不参与输入事件或动态改高。
+   外层上下3rpx让首行胶囊、正文和末行圆环共享同一个46rpx基准。 */
+.has-native-textarea-metrics .comment-textarea { position: relative; top: 6rpx; }
+
+/* 待发送及正式评论共用固定尺寸，靠左单行排列，保留小间距和灰色细边框。 */
+.comment-image-grid { display: grid; grid-template-columns: repeat(3, 160rpx); justify-content: start; gap: 12rpx; width: 100%; margin: 12rpx 0 14rpx; }
+.comment-image-cell { position: relative; width: 160rpx; height: 160rpx; min-width: 0; border-radius: 18rpx; overflow: hidden; background: #eef0f3; }
+.comment-image-cell::after { content: ''; position: absolute; z-index: 1; inset: 0; box-sizing: border-box; border: 1rpx solid #d8dce2; border-radius: inherit; pointer-events: none; }
+.comment-image-preview { display: block; width: 100%; height: 100%; }
+.comment-selected-images { padding: 4rpx 28rpx 0; }
+.comment-image-uploading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.24); color: #fff; font-size: 22rpx; }
+.comment-image-cell .comment-image-remove { position: absolute; top: 6rpx; right: 6rpx; display: flex; align-items: center; justify-content: center; width: 40rpx; min-width: 0; height: 40rpx; margin: 0; padding: 0; border-radius: 50%; background: rgba(255,255,255,.92); }
+.comment-image-remove image { width: 24rpx; height: 24rpx; }
+.composer-tool-icons .composer-image-trigger { flex: 0 0 52rpx; width: 52rpx; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; line-height: 1; }
+.composer-image-trigger[disabled] { opacity: .5; }

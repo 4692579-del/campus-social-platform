@@ -16,15 +16,15 @@ page { background: #f7f8fa; }
 .ai-about-tagline { margin-top: 16rpx; color: #707987; font-size: 27rpx; line-height: 1.6; }
 .ai-usage-card { padding: 30rpx 32rpx 28rpx; border: 1rpx solid #edf0f4; border-radius: 30rpx; background: #fff; box-shadow: 0 8rpx 32rpx rgba(34, 57, 90, .025); }
 .ai-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 24rpx; min-height: 64rpx; font-size: 31rpx; font-weight: 600; }
-.ai-about-page .ai-usage-refresh { display: flex; flex: 0 0 64rpx; align-items: center; justify-content: center; width: 64rpx; min-width: 0; max-width: 64rpx; height: 64rpx; margin: 0; padding: 0; border: 0; border-radius: 50%; box-sizing: border-box; line-height: 1; background: #f3f5f8; }
+.ai-about-page .ai-usage-refresh { display: flex; flex: 0 0 64rpx; align-items: center; justify-content: center; width: 64rpx; min-width: 0; max-width: 64rpx; height: 64rpx; margin: 0; padding: 0; border: 0; border-radius: 0; box-sizing: border-box; line-height: 1; background: transparent; }
 .ai-usage-refresh-icon { display: block; flex-shrink: 0; width: 32rpx; height: 32rpx; }
-.ai-about-page .ai-usage-refresh-pressed { background: #e9edf3; }
-.ai-about-page .ai-usage-refresh[disabled] { background: #f3f5f8; opacity: .65; }
+.ai-about-page .ai-usage-refresh-pressed { opacity: .55; }
+.ai-about-page .ai-usage-refresh[disabled] { background: transparent; opacity: .65; }
 .ai-usage-summary { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-top: 36rpx; }
 .ai-usage-label { font-size: 27rpx; color: #596574; }
-.ai-usage-number { display: flex; align-items: baseline; gap: 10rpx; font-variant-numeric: tabular-nums; }
-.ai-usage-number > text:first-child { font-size: 36rpx; line-height: 1.4; font-weight: 650; }
-.ai-usage-number > text:last-child { font-size: 23rpx; color: #8b949f; }
+.ai-usage-number { display: flex; align-items: baseline; gap: 10rpx; font-size: 23rpx; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.ai-usage-number > text:first-child { font-weight: 700; }
+.ai-usage-number > text:last-child { color: #8b949f; }
 .ai-usage-track { height: 14rpx; margin-top: 20rpx; overflow: hidden; border-radius: 20rpx; background: #edf1f7; }
 .ai-usage-fill { height: 100%; border-radius: inherit; background: #4775fa; transition: width .35s ease, background .25s ease; }
 .ai-usage-fill.is-low { background: #e46b66; }
@@ -38,3 +38,5 @@ page { background: #f7f8fa; }
 .ai-about-note { display: flex; flex-direction: column; align-items: center; gap: 8rpx; margin-top: 36rpx; color: #929ba6; font-size: 23rpx; line-height: 1.7; text-align: center; }
 .is-refreshing { animation: ai-usage-refresh 1s linear infinite; }
 @keyframes ai-usage-refresh { to { transform: rotate(360deg); } }
+
+.ai-usage-separator { height: 1rpx; margin-top: 28rpx; background: #edf0f4; }

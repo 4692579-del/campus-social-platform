@@ -72,7 +72,7 @@ test('模型故障、空结果、内容拒绝、评论保存失败均释放预�
     const f = await setup({ generateAI: async () => { if (mode === 'model') throw new Error('private'); return mode === 'empty' ? '' : 'AI结果'; },
       checkText: async value => mode !== 'moderation' || value !== 'AI结果', failCollection: mode === 'save' ? 'square_reply_children' : undefined });
     const row = await f.send(); await f.process(row);
-    assert.equal(f.record().usedChars, 0); assert.deepEqual(f.record().reservations, {}); assert.equal(f.squareReplyChildren.size, 0);
+    assert.equal(f.record().usedChars, 0); assert.deepEqual(f.record().reservations, {}); assert.equal(f.squareReplyChildren.size, 0); assert.ok([...f.aiJobs.values()].filter(row => row.type === 'hourly_usage').every(row => row.usedChars === 0 && Object.keys(row.reservations).length === 0));
   }
   const f = await setup({ optimizeAI: async () => '拒绝的润色', checkText: async value => value !== '拒绝的润色' });
   assert.equal((await polish(f)).code, 'CONTENT_REJECTED'); assert.equal(f.record().usedChars, 0); assert.deepEqual(f.record().reservations, {});
@@ -113,6 +113,39 @@ test('生成期间封禁账号或删除评论，回复和扣额一同取消', as
     if (operation === 'ban') f.users.get(f.user._id).status = 'banned';
     else f.squareReplies.get(row._id).status = 'deleted';
     resolve('迟到结果'); await request;
-    assert.equal(f.record().usedChars, 0); assert.deepEqual(f.record().reservations, {}); assert.equal(f.squareReplyChildren.size, 0);
+    assert.equal(f.record().usedChars, 0); assert.deepEqual(f.record().reservations, {}); assert.equal(f.squareReplyChildren.size, 0); assert.ok([...f.aiJobs.values()].filter(row => row.type === 'hourly_usage').every(row => row.usedChars === 0 && Object.keys(row.reservations).length === 0));
   }
+});
+
+
+test('小时与每日按实际输出同时计费，小时耗尽阻断模型并在下一整点恢复，每日计数保留', async () => {
+  const { usageHour } = require('../cloudfunctions/userService/ai-usage');
+  let calls = 0; const f = await setup({ optimizeAI: async () => { calls++; return '润'.repeat(150); } });
+  const hour = usageHour(f.clock.now), id = usageId(f.user._id, hour);
+  f.aiJobs.set(id, { type: 'hourly_usage', userId: f.user._id, day: hour, usedChars: 4950, reservations: {} });
+  const result = await polish(f); assert.equal(result.success, true); assert.equal(Array.from(result.square.content).length, 50);
+  assert.equal(f.record().usedChars, 50); assert.equal(f.aiJobs.get(id).usedChars, 5000);
+  const value = (await get(f)).aiUsage; assert.equal(value.hourly.usedPercent, 100); assert.equal(value.hourly.resetsAt, '2026-11-20T05:00:00.000Z');
+  assert.equal((await polish(f)).code, 'AI_HOURLY_QUOTA_EXHAUSTED'); assert.equal(calls, 1);
+  f.clock.now += 3600000; assert.equal((await get(f)).aiUsage.hourly.usedPercent, 0);
+  await polish(f); assert.equal(f.record().usedChars, 200); assert.equal((await get(f)).aiUsage.hourly.usedPercent, 3);
+});
+
+test('小时最后余额并发预留不超发，失败及过期同时释放两个周期，跨整点只结算发起周期', async () => {
+  const { usageHour } = require('../cloudfunctions/userService/ai-usage');
+  const f = await setup(), usage = createAIUsage(f.db, { aiNow: () => f.clock.now });
+  f.clock.now = Date.parse('2026-11-20T04:59:59Z');
+  const hour = usageHour(f.clock.now), id = usageId(f.user._id, hour);
+  f.aiJobs.set(id, { type: 'hourly_usage', userId: f.user._id, day: hour, usedChars: 4990, reservations: {} });
+  const reservations = await Promise.allSettled([usage.reserve(f.user._id), usage.reserve(f.user._id)]);
+  assert.equal(reservations.filter(r => r.status === 'fulfilled').length, 1);
+  const held = reservations.find(r => r.status === 'fulfilled').value; assert.equal(held.chars, 10);
+  f.clock.now += 2000; await f.db.runTransaction(tx => usage.commit(tx, held, 8));
+  assert.equal(f.aiJobs.get(id).usedChars, 4998); assert.equal((await get(f)).aiUsage.hourly.usedPercent, 0); assert.equal(f.record().usedChars, 8);
+  const abandoned = await usage.reserve(f.user._id); await usage.release(abandoned);
+  assert.deepEqual(f.record().reservations, {});
+  assert.deepEqual(f.aiJobs.get(abandoned.hourlyId).reservations, {});
+  const expired = await usage.reserve(f.user._id); f.clock.now += 120001;
+  await assert.rejects(f.db.runTransaction(tx => usage.commit(tx, expired, 5)), e => e.code === 'AI_USAGE_EXPIRED');
+  await usage.release(expired); assert.equal(f.record().usedChars, 8); assert.deepEqual(f.aiJobs.get(expired.hourlyId).reservations, {});
 });

@@ -32,7 +32,7 @@ test('未认证用户可发布九图及纯图片；图片顺序、归属、列�
   assert.equal((await f.handle({ action: 'listSquareAlbum' }, f.alice)).square.items.length, 0);
 });
 
-test('拒绝十图、重复、外链、其他账号、其他环境和非图片目录；回复入口不接受图片', async () => {
+test('拒绝十图、重复、外链、其他账号、其他环境和非图片目录；回复图片限制为三张', async () => {
   let processed = 0;
   const f = fixture({ processSquareImages: async (...args) => { processed++; return processor(...args); } });
   const user = await f.login(), bob = await f.login(f.bob);
@@ -44,7 +44,7 @@ test('拒绝十图、重复、外链、其他账号、其他环境和非图片�
   assert.equal(processed, 0); assert.equal(f.squarePosts.size, 0);
   const post = await publish(f, []);
   assert.equal((await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: post.square.post._id, content: '回复',
-    images: [source(user)], requestId: 'reply-image-request1' } }, f.alice)).code, 'INVALID_POST');
+    images: Array.from({ length: 4 }, (_, i) => source(user, i)), requestId: 'reply-image-request1' } }, f.alice)).code, 'INVALID_IMAGES');
   assert.equal((await f.handle({ action: 'listSquareAlbum' }, { openid: 'guest', env: 'test' })).code, 'NOT_REGISTERED');
 });
 

@@ -4,16 +4,20 @@ const { menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const square = require('../../services/square');
 const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
+const homeRefresh = require('../../utils/home-refresh');
 const DEFAULT_AVATAR = '/images/avatar.png';
 
 Page({
   ...postActions,
+  ...homeRefresh,
   data: {
     user: null, identity: describeUser(null), avatarFailed: false,
     homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true,
     loading: false, error: '', accountHint: '未登录', menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: false, loginSheetOpen: false, menuInstant: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72,
+    brandRefreshPhase: 'idle', nativeRefreshing: false, refreshThreshold: 72,
+    brandBouncing: false, squareTopTarget: '', campusTopTarget: '',
     followerCount: 0, followingCount: 0, menuItems, utilityMenuItems,
     activeTab: 'square', tabMenuKey: '', tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
     tabIndicatorLeft: 43.75, tabIndicatorWidth: 85,
@@ -58,12 +62,13 @@ Page({
     return account;
   },
   onHide() {
+    this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
     this.stopPostUpdates();
     this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
     this.closeTabMenu();
-    this.closeComments();
+    if (!this.commentsUsingNativeMedia()) this.closeComments();
     this.stopHomeRefresh();
     this._visible = false;
     this._refreshing = false;
@@ -77,6 +82,7 @@ Page({
     this.setAuthBlocked(false);
   },
   onUnload() {
+    this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
     this.stopPostUpdates();
@@ -91,6 +97,33 @@ Page({
     this.setAuthBlocked(false);
   },
   onReady() { this.syncNavigation(); this.measureHomeTabs(); },
+  openComments(event) { this.stopHomeRefresh(); postActions.openComments.call(this, event); },
+  backToFeedTop() {
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.data.brandRefreshPhase !== 'idle') return;
+    const tab = this.data.activeTab, key = tab === 'campus' ? 'campusTopTarget' : 'squareTopTarget';
+    const sequence = this._brandScrollSequence = (this._brandScrollSequence || 0) + 1;
+    if (!this.data.brandBouncing) {
+      this.setData({ brandBouncing: true });
+      this._brandBounceTimer = setTimeout(() => this.finishBrandBounce(), 400);
+    }
+    // 清除再设置原生滚动锚点，手动下滑后再次点击也可回顶，不重建动态或图片。
+    this.setData({ [key]: '' }, () => {
+      const scroll = () => {
+        if (this._unloaded || this._visible === false || sequence !== this._brandScrollSequence || this.data.activeTab !== tab ||
+          this.interactionBlocked() || this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId) return;
+        this.setData({ [key]: `home-${tab}-top` });
+      };
+      if (typeof wx.nextTick === 'function') wx.nextTick(scroll); else scroll();
+    });
+  },
+  finishBrandBounce() {
+    if (this._brandBounceTimer) { clearTimeout(this._brandBounceTimer); this._brandBounceTimer = null; }
+    if (!this._unloaded && this.data.brandBouncing) this.setData({ brandBouncing: false });
+  },
+  stopBrandBounce() {
+    this._brandScrollSequence = (this._brandScrollSequence || 0) + 1;
+    this.finishBrandBounce();
+  },
   onResize(event) {
     this._homeWidth = event.size.windowWidth || this._homeWidth || 375;
     this._tabAnchors = null;
@@ -169,6 +202,7 @@ Page({
     const avatarChanged = previousId !== (user && user._id) ||
       (this.data.user && this.data.user.avatarFileID || '') !== (user && user.avatarFileID || '');
     const avatarSource = user && user.avatarFileID || DEFAULT_AVATAR;
+    if (previousId !== (user && user._id)) this.stopHomeRefresh();
     if (accountChanged) this.closeComments();
     this.setData({ user, identity: describeUser(user), error,
       ...(avatarChanged ? { homeAvatarSource: avatarSource, homeAvatarReady: avatarSource === DEFAULT_AVATAR, avatarFailed: false } : {}),
@@ -209,6 +243,7 @@ Page({
       return;
     }
     this.setAuthBlocked(false);
+    this.stopHomeRefresh();
     this.setData({ menuOpen: true, menuInstant: false });
     this.setMenuTabBarOpen(true);
   },
@@ -369,30 +404,6 @@ Page({
     return request;
   },
   retryFeed() { return this.loadFeed(true); },
-  refreshFeed() {
-    if (this.data.pullRefreshing) return this._pullRefreshPromise;
-    if (this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.interactionBlocked() || !this.isSquareFeed()) return;
-    const refresh = {};
-    this._pullRefresh = refresh;
-    this.setData({ pullRefreshing: true });
-    const wasAppending = this._feedBusy && this._feedAppend;
-    const request = (async () => {
-      try {
-        // 首屏正在联网时复用该请求；分页时先等待完成，再刷新最新动态。
-        if (wasAppending) await this._feedPromise;
-        if (this._pullRefresh === refresh) await this.loadFeed(true);
-      } finally {
-        if (this._pullRefresh === refresh) this.stopHomeRefresh();
-      }
-    })();
-    this._pullRefreshPromise = request;
-    return request;
-  },
-  stopHomeRefresh() {
-    this._pullRefresh = null;
-    this._pullRefreshPromise = null;
-    if (this.data.pullRefreshing) this.setData({ pullRefreshing: false });
-  },
   loadMoreFeed() { if (!this.data.menuOpen && !this.data.tabMenuKey && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.isSquareFeed() && this.data.feedHasMore) return this.loadFeed(false, true); },
   openComposer() {
     if (this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId) return;

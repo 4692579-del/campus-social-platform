@@ -2,11 +2,16 @@ const cloud = require('wx-server-sdk');
 const { createUserService } = require('./service');
 const { createSquareImageProcessor } = require('./square-images');
 const { createDeepseek } = require('./deepseek');
+const { createAIImageResolver, createAICommentImageResolver } = require('./ai-images');
+const { createComposeImageResolver } = require('./ai-compose-images');
 const { createTextChecker } = require('./content-check');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const service = createUserService(cloud.database({ throwOnNotFound: false }), {
   generateAI: createDeepseek(),
+  resolveAIImages: createAIImageResolver(cloud),
+  resolveAICommentImages: createAICommentImageResolver(cloud),
+  resolveComposeImages: createComposeImageResolver(cloud),
   optimizeAI: createDeepseek({ purpose: 'polish' }),
   processSquareImages: createSquareImageProcessor(cloud),
   checkText: createTextChecker({ getEnv: () => process.env,

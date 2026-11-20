@@ -7,8 +7,8 @@ const { declarations, declarationKey } = require('../../utils/content-declaratio
 
 Component({
   data: { user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
-    optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [],
-    viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, closing: false,
+    optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], optimizeHelpUsed: false, optimizeHelpVisible: false,
+    viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, closing: false,
     panel: '', exitConfirmVisible: false, replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none',
     audiences: [{ key: 'anyone', label: '任何人' }, { key: 'friends', label: '我的萃友' },
       { key: 'followers', label: '我的粉丝' }, { key: 'following', label: '我的关注' }],
@@ -17,6 +17,7 @@ Component({
   lifetimes: {
     attached() { this.measure(); return this.initialize(); },
     detached() {
+      this.cancelOptimization();
       this._unloaded = true;
       this._authVersion = (this._authVersion || 0) + 1;
       clearTimeout(this._closeTimer);
@@ -28,7 +29,8 @@ Component({
     hide() {
       this.cancelOptimization();
       this.hideLimitHint();
-      this.setData({ keyboardHeight: 0, editorFocused: false });
+      this.closeOptimizeHelp();
+      this.setData({ keyboardHeight: 0, editorFocused: false, editorFocusRequested: false });
     },
     show() {
       if (this._unloaded) return;
@@ -81,7 +83,7 @@ Component({
         this._savedContent = '';
         this._savedDeclaration = 'none';
         this._savedImages = []; this._knownUploads = new Set();
-        this.setData({ images: [], declaration: 'none', noticeOrder: [] });
+        this.setData({ images: [], declaration: 'none', noticeOrder: [], optimizeHelpVisible: false });
         this.setContent(''); this._requestId = null;
         this.setData({ replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none', panel: '', exitConfirmVisible: false, error: '', optimizeError: '', canUndoOptimization: false });
       }
@@ -113,8 +115,9 @@ Component({
       if (changed) { this._editRevision = (this._editRevision || 0) + 1; this._optimizedOriginal = null; }
       const count = Array.from(content).length;
       const remainingCount = Math.max(0, 150 - count);
-      const canOptimize = Boolean(content.trim()) && count <= 150;
+      const canOptimize = Boolean(content.trim() || this.data.images.length) && count <= 150;
       this.setData({ content, count, remainingCount, countWarning: remainingCount <= 20,
+        ...(!canOptimize ? { optimizeHelpVisible: false } : {}),
         canOptimize, ...this.noticeState(canOptimize), ...(changed ? { canUndoOptimization: false, optimizeError: '' } : {}),
         countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length) && count <= 150 });
     },
@@ -122,7 +125,10 @@ Component({
       if (this._unloaded || this._closing || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
       const characters = Array.from(event.detail.value);
       const content = characters.slice(0, 150).join('');
+      if (content !== this.data.content) this.cancelOptimization();
       if (content !== this.data.content) this._requestId = token();
+      // textarea 不采用 input 回调返回值，必须下发两次不同的 value 修正重复超限输入。
+      if (characters.length > 150) this.setData({ content: event.detail.value });
       this.setContent(content);
       if (characters.length >= 150) this.showLimitHint();
       else this.hideLimitHint();
@@ -132,20 +138,44 @@ Component({
     },
     cancelOptimization() {
       this._optimizationSequence = (this._optimizationSequence || 0) + 1;
+      clearTimeout(this._optimizationTimer);
+      if (this._finishOptimizationWait) { this._finishOptimizationWait(); this._finishOptimizationWait = null; }
       if (this.data.optimizing) this.setData({ optimizing: false });
+    },
+    showOptimizeHelp() {
+      if (this.busy() || this.data.optimizing || !this.data.canOptimize || this.data.optimizeHelpUsed || this.data.panel || this.data.exitConfirmVisible || this.data.loginSheetOpen) return;
+      // 仅本次打开期间记忆，提示不请求模型、不保存草稿或改变原生焦点。
+      this.setData({ optimizeHelpUsed: true, optimizeHelpVisible: true });
+    },
+    closeOptimizeHelp() {
+      if (this.data.optimizeHelpVisible) this.setData({ optimizeHelpVisible: false });
     },
     async optimizeContent() {
       if (this.busy() || this.data.optimizing || !this.data.canOptimize || this.data.panel || this.data.exitConfirmVisible || this.data.loginSheetOpen) return;
       const user = users.getCachedUser(), version = users.getSessionVersion();
       if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
+      this.setData({ optimizeHelpUsed: true, optimizeHelpVisible: false });
       const original = this.data.content, revision = this._editRevision;
       const sequence = this._optimizationSequence = (this._optimizationSequence || 0) + 1;
       const current = () => !this._unloaded && !this._closing && this._optimizationSequence === sequence && users.getSessionVersion() === version && this._editorOwnerId === user._id;
       this.hideLimitHint();
       this.setData({ optimizing: true, optimizeError: '' });
+      const startedAt = Date.now();
       try {
-        const result = await square.optimizeContent(original);
+        let result, failure;
+        try {
+          const images = this.data.images.length ? await this.uploadSelectedImages() : [];
+          if (!current() || revision !== this._editRevision) return;
+          result = await square.optimizeContent(original, images);
+        } catch (error) { failure = error; }
+        if (!current() || revision !== this._editRevision) return;
+        const remaining = 5000 - (Date.now() - startedAt);
+        if (remaining > 0) await new Promise(resolve => {
+          this._finishOptimizationWait = resolve;
+          this._optimizationTimer = setTimeout(() => { this._finishOptimizationWait = null; resolve(); }, remaining);
+        });
         if (!current() || revision !== this._editRevision || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
+        if (failure) throw failure;
         if (typeof result !== 'string' || !result.trim()) throw new Error('暂未生成优化内容，请重试');
         // 不经过用户输入事件：即使结果恰好150字，也不弹超限气泡。
         const content = Array.from(result).slice(0, 150).join('');
@@ -209,13 +239,15 @@ Component({
       if (this.busy()) return;
       if (!users.getCachedUser()) { this.requestLogin(); return; }
       if (this.data.images.length >= 9) { wx.showToast({ title: '一次最多发布 9 张图片', icon: 'none' }); return; }
+      this.cancelOptimization();
       const version = users.getSessionVersion();
-      this.setData({ choosingImages: true, editorFocused: false, error: '' });
+      this.setData({ choosingImages: true, editorFocused: false, editorFocusRequested: false, error: '' });
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       try {
         const selected = await media.chooseImages(9 - this.data.images.length);
         if (this._unloaded || version !== users.getSessionVersion() || !selected.length) return;
         this.setData({ images: [...this.data.images, ...selected].slice(0, 9) });
+        this.imagesDidChange();
         this._requestId = token(); this.setContent(this.data.content);
       } catch (error) { if (!this._unloaded && version === users.getSessionVersion() && !/cancel/.test(error.errMsg || '')) this.setData({ error: error.message || '选图失败，请检查相册或相机权限' }); }
       finally {
@@ -230,6 +262,7 @@ Component({
       const index = Number(event.currentTarget.dataset.index);
       if (!Number.isInteger(index) || index < 0 || index >= this.data.images.length) return;
       this.setData({ images: this.data.images.filter((image, at) => at !== index) });
+      this.imagesDidChange();
       this._requestId = token(); this.setContent(this.data.content);
     },
     async previewSelectedImage(event) {
@@ -239,32 +272,46 @@ Component({
       catch (error) { if (!this._unloaded && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '图片预览失败', icon: 'none' }); }
       finally { if (!this._unloaded) this.triggerEvent('resumenavigation'); }
     },
+    imagesDidChange() {
+      this.cancelOptimization();
+      this._editRevision = (this._editRevision || 0) + 1;
+      this._optimizedOriginal = null;
+      this.setData({ canUndoOptimization: false, optimizeError: '' });
+    },
     async uploadSelectedImages() {
       const version = users.getSessionVersion();
-      this.setData({ uploadDone: 0, uploadTotal: this.data.images.length });
-      return media.uploadImages(this.data.images, (index, fileID) => {
+      const images = this.data.images.map(image => ({ ...image }));
+      this.setData({ uploadDone: 0, uploadTotal: images.length });
+      return media.uploadImages(images, (index, fileID) => {
         if (this._unloaded || version !== users.getSessionVersion()) return;
         this._knownUploads = this._knownUploads || new Set(); this._knownUploads.add(fileID);
-        this.setData({ [`images[${index}].fileID`]: fileID });
+        // 上传期间允许继续编辑或删除图片，迟到结果不能写到已换位的下一张图。
+        const at = this.data.images.findIndex(image => image.key === images[index].key);
+        if (at >= 0 && this.data.images[at].fileID !== fileID) this.setData({ [`images[${at}].fileID`]: fileID });
       }, (done, total) => {
         if (!this._unloaded && version === users.getSessionVersion()) this.setData({ uploadDone: done, uploadTotal: total });
       });
     },
     focusEditor() {
       if (!this.data.user || this.busy() || this.data.panel || this.data.exitConfirmVisible) return;
-      this.setData({ editorFocused: true });
+      if (!this.data.editorFocused) this.setData({ editorFocused: true, editorFocusRequested: true });
     },
-    blurEditor() { this.setData({ editorFocused: false }); },
+    // 原生focus只更新观测状态，绝不反写focus属性再次请求键盘。
+    editorDidFocus() { if (!this.data.editorFocused) this.setData({ editorFocused: true }); },
+    blurEditor() { this.setData({ editorFocused: false, editorFocusRequested: false }); },
     keyboard(event) {
       if (this._unloaded || this._closing || this.data.panel || this.data.exitConfirmVisible) return;
-      this.setData({ keyboardHeight: Math.max(0, Number(event.detail.height) || 0) });
+      const keyboardHeight = Math.max(0, Number(event.detail.height) || 0);
+      if (keyboardHeight === this.data.keyboardHeight) return;
+      this.setData({ keyboardHeight });
     },
     openPanel(event) {
       if (this.busy() || this.data.loginSheetOpen || this.data.exitConfirmVisible) return;
       const panel = event.currentTarget.dataset.panel;
       if (!['options', 'declaration'].includes(panel)) return;
+      this.closeOptimizeHelp();
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
-      this.setData({ panel, keyboardHeight: 0, editorFocused: false });
+      this.setData({ panel, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false });
     },
     closePanel() { this.setData({ panel: '' }); },
     selectAudience(event) {
@@ -287,7 +334,7 @@ Component({
       this.hideLimitHint();
       this._closing = true;
       this._authVersion = (this._authVersion || 0) + 1;
-      this.setData({ closing: true, editorFocused: false, panel: '', exitConfirmVisible: false, loginSheetOpen: false });
+      this.setData({ closing: true, editorFocused: false, editorFocusRequested: false, panel: '', exitConfirmVisible: false, loginSheetOpen: false });
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this._closeTimer = setTimeout(() => { if (!this._unloaded) this.triggerEvent('close', { published }); }, 260);
     },
@@ -317,7 +364,7 @@ Component({
     },
     continueEditing() {
       if (this.busy() || !this.data.exitConfirmVisible) return;
-      this.setData({ exitConfirmVisible: false, editorFocused: true });
+      this.setData({ exitConfirmVisible: false, editorFocused: true, editorFocusRequested: true });
     },
     clearDraft() {
       const user = users.getCachedUser();
@@ -347,7 +394,7 @@ Component({
       this.cancelOptimization();
       const imageKeys = this.data.images.map(image => image.fileID || image.key);
       if ((this.data.content.length || this.data.images.length) && (this.data.content !== (this._savedContent || '') || this.data.declaration !== (this._savedDeclaration || 'none') || JSON.stringify(imageKeys) !== JSON.stringify(this._savedImages || []))) {
-        this.setData({ exitConfirmVisible: true, panel: '', keyboardHeight: 0, editorFocused: false, error: '' });
+        this.setData({ exitConfirmVisible: true, panel: '', keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, error: '' });
         if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
         return;
       }

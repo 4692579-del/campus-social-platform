@@ -3,6 +3,57 @@ const assert = require('node:assert/strict');
 const { fixture } = require('./helpers/certification-fixture');
 const optimize = (f, content, identity = f.alice) => f.handle({ action: 'optimizeSquareContent', content, userId: 'forged' }, identity);
 
+test('发布仅图片写文案及图文润色使用本人上传，审核实际输出、共用双周期额度，不保存未发布正文', async () => {
+  const checks = [], generated = [], resolved = [];
+  const urls = ['https://test.bucket.tcb.qcloud.la/one.jpg?sign=synthetic'];
+  const f = fixture({ resolveComposeImages: async (files, user, identity) => { resolved.push({ files, user, identity }); return urls; },
+    optimizeAI: async (context, attachments) => { generated.push({ context, attachments }); return '绿树下的一点好心情。'; },
+    checkText: async text => { checks.push(text); return true; } });
+  const user = await f.login(), images = [`cloud://test.bucket/square-uploads/${user._id}/photo.jpg`];
+  for (const content of ['', '今天拍了照片']) {
+    const result = await f.handle({ action: 'optimizeSquareContent', content, images, userId: 'forged' }, f.alice);
+    assert.equal(result.success, true, result.message); assert.equal(result.square.content, '绿树下的一点好心情。');
+    assert.deepEqual(generated.at(-1), { context: { content, hasImages: true, imageCount: 1 }, attachments: { images: urls } });
+  }
+  assert.equal(resolved[0].user._id, user._id); assert.deepEqual(resolved[0].files, images);
+  assert.deepEqual(checks, ['绿树下的一点好心情。', '今天拍了照片', '绿树下的一点好心情。']);
+  for (const type of ['daily_usage', 'hourly_usage']) {
+    const usage = [...f.aiJobs.values()].find(row => row.type === type);
+    assert.equal(usage.usedChars, 2 * Array.from('绿树下的一点好心情。').length);
+  }
+  assert.equal(f.squarePosts.size, 0);
+  assert.ok(!/绿树|https|photo.jpg|sign=/.test(JSON.stringify([...f.aiJobs.values()])));
+});
+
+test('图文失败不降级纯文字，失败释放双周期额度，图片错误仅返回安全提示', async () => {
+  for (const mode of ['missing', 'reject', 'output', 'banned']) {
+    let model = 0; let f;
+    f = fixture({ resolveComposeImages: mode === 'missing' ? undefined : async () => {
+      if (mode === 'reject') throw new Error('private-signature');
+      if (mode === 'banned') [...f.users.values()][0].status = 'banned';
+      return ['https://test.bucket.tcb.qcloud.la/photo.jpg'];
+    }, optimizeAI: async () => { model++; return '待审核的结果'; }, checkText: async value => mode !== 'output' || value !== '待审核的结果' });
+    const user = await f.login();
+    const result = await f.handle({ action: 'optimizeSquareContent', content: '', images: [`cloud://test.bucket/square-uploads/${user._id}/photo.jpg`] }, f.alice);
+    assert.equal(result.success, false); assert.ok(!result.message.includes('private'));
+    assert.equal(result.code, mode === 'output' ? 'CONTENT_REJECTED' : mode === 'banned' ? 'ACCOUNT_DISABLED' : 'AI_IMAGES_UNAVAILABLE');
+    assert.equal(model, mode === 'output' ? 1 : 0);
+    for (const row of f.aiJobs.values()) if (['daily_usage', 'hourly_usage'].includes(row.type)) assert.equal(row.usedChars, 0);
+    assert.equal(f.squarePosts.size, 0);
+  }
+});
+
+test('图文接口不接受外链、认证材料、跨账号或跨环境上传，模型和解析器均不调用', async () => {
+  const f = fixture({ optimizeAI: () => assert.fail('不能调用模型'), resolveComposeImages: () => assert.fail('不能解析未授权图片') });
+  const user = await f.login();
+  const owned = `cloud://test.bucket/square-uploads/${user._id}/photo.jpg`;
+  for (const images of [[owned.replace(user._id, 'another')], [owned.replace('test.bucket', 'foreign.bucket')],
+    [owned.replace('square-uploads', 'certification-proofs')], ['https://example.com/photo.jpg'], [owned, owned]]) {
+    const result = await f.handle({ action: 'optimizeSquareContent', content: '', images }, f.alice);
+    assert.equal(result.code, 'INVALID_IMAGES');
+  }
+});
+
 test('微信45009返回额度提示，原文检查已受限时不继续调用DeepSeek', async () => {
   let calls = 0, checks = 0;
   const f = fixture({ optimizeAI: async () => { calls++; return '优化结果'; }, checkText: async () => {

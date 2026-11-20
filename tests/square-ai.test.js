@@ -4,7 +4,8 @@ const { fixture } = require('./helpers/certification-fixture');
 const { BOT_ID } = require('../cloudfunctions/userService/square-ai');
 async function setup(options = {}) {
   const f = fixture(options); const user = await f.login(); await f.login(f.bob);
-  const published = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '校园食堂今天的饭很好吃', requestId: 'ai-post-request00001' } }, f.alice);
+  const published = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '校园食堂今天的饭很好吃', requestId: 'ai-post-request00001',
+    ...(options.postImages ? { images: options.postImages(user) } : {}) } }, f.alice);
   const id = published.square.post._id;
   const send = (content = '@小萃 你觉得呢？', requestId = 'ai-comment-request001', replyToId, askAI = content.startsWith('@小萃')) => f.handle({ action: 'publishSquareReply', post: {
     scope: 'square', postId: id, content, requestId, askAI, ...(replyToId ? { replyToId } : {}) } }, f.alice);
@@ -24,6 +25,112 @@ test('仅结构化按钮标记触发AI，评论落库后才独立调用模型', 
   await f.process(first.square.reply._id); assert.equal(called, 1); assert.equal(f.squareReplyChildren.size, 1);
   const children = await f.handle({ action: 'listSquareReplyChildren', postId: f.id, rootId: first.square.reply._id, personalize: true }, f.alice);
   assert.equal(children.square.items[0].author.isAI, true);
+});
+
+async function visionSetup(options = {}) {
+  return setup({
+    postImages: user => Array.from({ length: 3 }, (_, i) => `cloud://test.bucket/square-uploads/${user._id}/photo_${i}.jpg`),
+    processSquareImages: async (files, { userId, postId }) => files.map((_, i) => `cloud://test.bucket/square-media/${userId}/${postId}/${i}-${'e'.repeat(24)}.jpg`),
+    ...options,
+  });
+}
+
+test('评论识图读取数据库中的整组动态配图，按顺序真实送给模型，审核和双周期扣额仍原子执行', async () => {
+  let resolutions = 0, generations = 0;
+  const images = Array.from({ length: 3 }, (_, i) => `https://test.tcb.qcloud.la/${i}.jpg?sign=synthetic`);
+  const output = '图二是食堂菜单，能看到菜名和价格。';
+  const f = await visionSetup({ resolveAIImages: async (post, identity) => {
+    resolutions++; assert.equal(post.images.length, 3); assert.equal(identity.env, 'test');
+    assert.ok(post.images.every(file => file.includes(`/square-media/${post.authorId}/${post._id}/`)));
+    return images;
+  }, generateAI: async (context, attachments) => {
+    generations++; assert.equal(context.imageCount, 3); assert.equal(context.hasImages, true);
+    assert.equal(context.comment, '@小萃 图二写了什么？'); assert.deepEqual(attachments.images, images);
+    assert.ok(!JSON.stringify(context).includes('sign=')); assert.equal(context.imageSources, undefined);
+    return output;
+  } });
+  const question = (await f.send('@小萃 图二写了什么？')).square.reply;
+  assert.equal(generations, 0); assert.equal(resolutions, 0); // 先保存用户评论。
+  const result = await f.process(question._id);
+  assert.equal(result.success, true, result.message); assert.equal(result.square.status, 'done');
+  assert.equal(result.square.reply.content, output); assert.equal(result.square.reply.author.isAI, true);
+  await f.process(question._id); assert.equal(generations, 1); assert.equal(resolutions, 1);
+  for (const period of ['daily_usage', 'hourly_usage']) {
+    const usage = [...f.aiJobs.values()].find(row => row.type === period);
+    assert.equal(usage.usedChars, Array.from(output).length); assert.deepEqual(usage.reservations, {});
+  }
+  assert.ok(!JSON.stringify([...f.aiJobs.values()]).includes('sign='));
+});
+
+test('无配图的动态继续纯文字回答，不解析图片，客户端伪造图片参数不能送入模型', async () => {
+  let generated;
+  const f = await setup({ resolveAIImages: async () => assert.fail('纯文字动态不读取图片'),
+    generateAI: async (context, attachments) => { generated = { context, attachments }; return '文字回答'; } });
+  const row = (await f.send()).square.reply;
+  const result = await f.handle({ action: 'processSquareAIReply', postId: f.id, replyId: row._id,
+    images: ['https://attacker.test/photo.jpg'], fileID: 'cloud://test.bucket/certification-proofs/private' }, f.alice);
+  assert.equal(result.square.status, 'done'); assert.equal(generated.context.hasImages, false); assert.deepEqual(generated.attachments.images, []);
+});
+
+test('配图解析缺失、部分丢图或失败时明确提示，不退回猜图、不发布AI回复且释放额度预留', async () => {
+  for (const resolver of [undefined, async () => { throw new Error('private signed URL'); }, async () => ['https://test.tcb.qcloud.la/only-one.jpg']]) {
+    const f = await visionSetup({ resolveAIImages: resolver, generateAI: async () => assert.fail('配图不完整不得调用模型') });
+    const row = (await f.send()).square.reply;
+    const result = await f.process(row._id);
+    assert.equal(result.square.status, 'failed'); assert.match(result.square.target.aiMessage, /无法读取.*配图/);
+    assert.ok(!result.square.target.aiMessage.includes('private')); assert.equal(f.squareReplyChildren.size, 0);
+    assert.equal(f.squarePosts.get(f.id).replyCount, 1);
+    const job = [...f.aiJobs.values()].find(value => value.type === 'job');
+    assert.equal(job.errorCode, 'AI_IMAGES_UNAVAILABLE'); assert.equal(job.stage, 'images');
+    for (const usage of [...f.aiJobs.values()].filter(value => ['daily_usage', 'hourly_usage'].includes(value.type))) {
+      assert.equal(usage.usedChars, 0); assert.deepEqual(usage.reservations, {});
+    }
+    await f.process(row._id); assert.equal(f.squareReplies.get(row._id).aiStatus, 'unavailable');
+  }
+});
+
+test('识图同样受共享额度和真实任务权限约束，额度耗尽或其他账号处理时不读取图片', async () => {
+  const { usageDay, usageId } = require('../cloudfunctions/userService/ai-usage');
+  const now = Date.parse('2026-11-20T01:00:00Z');
+  const f = await visionSetup({ aiNow: () => now, resolveAIImages: async () => assert.fail('不能读取图片'), generateAI: async () => assert.fail('不能调用模型') });
+  const row = (await f.send()).square.reply;
+  assert.equal((await f.process(row._id, f.bob)).code, 'FORBIDDEN');
+  f.aiJobs.set(usageId(f.user._id, usageDay(now)), { type: 'daily_usage', usedChars: 15000, reservations: {} });
+  const result = await f.process(row._id); assert.equal(result.square.status, 'failed');
+  assert.equal([...f.aiJobs.values()].find(value => value.type === 'job').errorCode, 'AI_QUOTA_EXHAUSTED');
+});
+
+test('读取图片期间删除动态或封禁账号，发送给模型前重新校验并阻止识图', async () => {
+  for (const action of ['delete', 'ban']) {
+    let finish;
+    const f = await visionSetup({ resolveAIImages: () => new Promise(resolve => { finish = resolve; }),
+      generateAI: async () => assert.fail('已不可用的图片不能发给模型') });
+    const row = (await f.send()).square.reply, running = f.process(row._id);
+    for (let i = 0; i < 50 && !finish; i++) await new Promise(resolve => setImmediate(resolve)); assert.ok(finish);
+    if (action === 'delete') await f.handle({ action: 'deleteSquarePost', postId: f.id }, f.alice);
+    else f.users.get(f.user._id).status = 'banned';
+    finish(Array(3).fill('https://test.tcb.qcloud.la/synthetic.jpg')); await running;
+    assert.equal(f.squareReplyChildren.size, 0);
+    for (const usage of [...f.aiJobs.values()].filter(value => ['daily_usage', 'hourly_usage'].includes(value.type))) assert.equal(usage.usedChars, 0);
+  }
+});
+
+test('识图结果仍需文字审核，审核拒绝或模型返回前配图变更均不保存、不扣额度', async () => {
+  for (const action of ['moderation', 'images-changed']) {
+    let finish;
+    const f = await visionSetup({ resolveAIImages: async () => Array(3).fill('https://test.tcb.qcloud.la/synthetic.jpg'),
+      generateAI: () => new Promise(resolve => { finish = resolve; }),
+      checkText: async content => action !== 'moderation' || content !== '生成的图文回复' });
+    const row = (await f.send()).square.reply, running = f.process(row._id);
+    for (let i = 0; i < 50 && !finish; i++) await new Promise(resolve => setImmediate(resolve)); assert.ok(finish);
+    if (action === 'images-changed') f.squarePosts.get(f.id).images[0] = 'cloud://test.bucket/square-media/replaced.jpg';
+    finish('生成的图文回复'); const result = await running;
+    assert.equal(result.square.status, 'unavailable'); assert.equal(f.squareReplyChildren.size, 0);
+    assert.equal(f.squarePosts.get(f.id).replyCount, 1);
+    for (const usage of [...f.aiJobs.values()].filter(value => ['daily_usage', 'hourly_usage'].includes(value.type))) {
+      assert.equal(usage.usedChars, 0); assert.deepEqual(usage.reservations, {});
+    }
+  }
 });
 
 test('手动输入两个别名不触发AI，非布尔参数被拒绝，重试不可更换唤起标记', async () => {

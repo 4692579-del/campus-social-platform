@@ -20,6 +20,17 @@ test('关于小萃AI排在设置前，进入额度页保留菜单直到新页面
 
 function fixture(options = {}) {
   let definition;
+  const timers = new Map(), delays = new Map(), brandStates = []; let timerId = 0;
+  const setTimer = (fn, delay) => {
+    const id = ++timerId; timers.set(id, fn); delays.set(id, delay);
+    if (!options.manualRefreshTimers && delay !== 400) queueMicrotask(() => { if (timers.has(id)) { timers.delete(id); delays.delete(id); fn(); } });
+    return id;
+  };
+  const clearTimer = id => { timers.delete(id); delays.delete(id); };
+  const refreshContext = { module: { exports: {} }, require: () => require('../miniprogram/utils/cui-refresh-drawing'),
+    setTimeout: setTimer, clearTimeout: clearTimer, Date: options.Date || Date, wx: {} };
+  if (options.nextTick) refreshContext.wx.nextTick = options.nextTick;
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/utils/home-refresh.js'), 'utf8'), refreshContext);
   const routes = [], navigation = [], toasts = [], modals = [], requests = [], feedRequests = [], bar = {};
   const service = {
     getCachedUser: () => options.cachedUser || null,
@@ -32,15 +43,47 @@ function fixture(options = {}) {
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
-    require: name => name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    setTimeout: setTimer, clearTimeout: clearTimer,
+    require: name => name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
+      ...(options.nextTick ? { nextTick: options.nextTick } : {}),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),
       showToast: value => toasts.push(value.title), showModal: value => modals.push(value) },
   });
   const page = { ...definition, data: structuredClone(definition.data),
-    setData(value) { Object.assign(this.data, value); }, getTabBar: () => ({ setData: value => Object.assign(bar, value) }) };
-  return { page, routes, navigation, toasts, modals, requests, feedRequests, bar };
+    selectComponent: () => ({ setState: state => brandStates.push(state) }),
+    setData(value, callback) { Object.assign(this.data, value); if (callback) callback(); }, getTabBar: () => ({ setData: value => Object.assign(bar, value) }) };
+  return { page, routes, navigation, toasts, modals, requests, feedRequests, bar, timers, delays, brandStates,
+    runTimer(delay) { const entry = [...delays].find(([, ms]) => ms === delay); assert.ok(entry, '缺少指定时长计时器：' + delay); const fn = timers.get(entry[0]); clearTimer(entry[0]); fn(); },
+  };
 }
+
+test('顶部Cui点击回到当前列表顶部，重复下滑后可再次使用，保留动态和图片且不查询云端', () => {
+  const post = { _id: 'normal', content: '图文动态', images: ['cloud://test/photo.jpg'], author: { nickname: '同学' } };
+  const f = fixture({ cachedUser: user, cachedFeed: { items: [post], hasMore: false, nextOffset: 1 } });
+  f.page.onLoad(); const posts = f.page.data.posts, writes = [], update = f.page.setData.bind(f.page);
+  f.page.setData = (value, callback) => { writes.push(value); update(value, callback); };
+  f.page.backToFeedTop(); assert.equal(f.page.data.squareTopTarget, 'home-square-top'); assert.equal(f.page.data.brandBouncing, true);
+  assert.equal(f.timers.size, 1);
+  f.page.backToFeedTop(); assert.equal(f.timers.size, 1); // 连点不反复重置正在进行的弹性动画。
+  assert.deepEqual(writes.filter(value => Object.hasOwn(value, 'squareTopTarget')).map(value => value.squareTopTarget), ['', 'home-square-top', '', 'home-square-top']);
+  f.page.finishBrandBounce(); assert.equal(f.page.data.brandBouncing, false); assert.equal(f.timers.size, 0);
+  f.page.setData({ activeTab: 'campus' }); f.page.backToFeedTop(); assert.equal(f.page.data.campusTopTarget, 'home-campus-top');
+  assert.equal(f.page.data.posts, posts); assert.equal(f.page.data.posts[0].images[0], post.images[0]);
+  assert.equal(f.feedRequests.length, 0); assert.equal(f.requests.length, 0); f.page.stopBrandBounce();
+});
+
+test('顶部Cui不穿透菜单/登录/评论/发布遮罩，切页后不执行迟到回顶或保留动画计时', () => {
+  for (const state of [{ menuOpen: true }, { tabMenuKey: 'square' }, { commentPostId: 'post' }, { composerOpen: true }, { loginSheetOpen: true }, { authChecking: true }]) {
+    const f = fixture(); Object.assign(f.page.data, state); f.page.backToFeedTop();
+    assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.squareTopTarget, ''); assert.equal(f.timers.size, 0);
+  }
+  const ticks = [], f = fixture({ nextTick: fn => ticks.push(fn) }); f.page.onLoad();
+  f.page.backToFeedTop(); assert.equal(f.timers.size, 1); f.page.onHide();
+  for (const tick of ticks) tick();
+  assert.equal(f.timers.size, 0); assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.squareTopTarget, '');
+  f.page.backToFeedTop(); assert.equal(f.timers.size, 0);
+});
 
 test('图文动态从菜单进入个人主页再返回保留完整卡片，相同缓存不重复写入列表，更新仍正常同步', async () => {
   const post = { _id: 'p_' + 'a'.repeat(40), content: '图片也有正文', author: { nickname: '真实昵称', accountId: user.accountId },
@@ -482,7 +525,7 @@ test('首页读取失败不会展示旧账号，重新进入后可恢复真实�
   assert.equal(f.page.data.error, '');
 });
 
-test('首页下拉转圈等待真实刷新，不清空已有动态，重复下拉合并请求，成功后收起', async () => {
+test('首页Cui起伏等待真实刷新，不清空已有动态，重复下拉合并请求，成功后收起', async () => {
   let finish;
   const old = { _id: 'old', content: '已有动态', author: { nickname: '同学' } };
   const f = fixture({ cachedFeed: { items: [old], hasMore: false, nextOffset: 1 }, list: () => new Promise(resolve => { finish = resolve; }) });
@@ -497,7 +540,7 @@ test('首页下拉转圈等待真实刷新，不清空已有动态，重复下�
   assert.equal(f.page._pullRefresh, null);
 });
 
-test('已有首屏请求时刷新转圈等待同一请求；失败保留内容并收起，离开后不干扰新刷新', async () => {
+test('已有首屏请求时Cui起伏等待同一请求；失败保留内容并收起，离开后不干扰新刷新', async () => {
   let fail;
   const f = fixture({ list: () => new Promise((resolve, reject) => { fail = reject; }) });
   f.page.data.posts = [{ _id: 'old', content: '已有内容', author: {} }];
@@ -538,6 +581,16 @@ test('内容区触底继续分页，刷新或弹层期间不并发触发分页',
     const g = fixture(); Object.assign(g.page.data, { feedHasMore: true, feedOffset: 20 }, state);
     await g.page.loadMoreFeed(); assert.equal(g.feedRequests.length, 0);
   }
+});
+
+test('原生相册、拍照及预览往返保留评论组件；普通离开仍关闭面板', async () => {
+  const f = fixture({ cachedUser: user }); f.page.onLoad(); await f.page.onShow();
+  let mediaActive = true;
+  f.page.selectComponent = selector => selector === '#active-comments' ? { isNativeMediaActive: () => mediaActive } : null;
+  f.page.openComments({ detail: { id: 'post' } }); f.page.onHide();
+  assert.equal(f.page.data.commentPostId, 'post');
+  mediaActive = false; await f.page.onShow(); assert.equal(f.page.data.commentPostId, 'post'); assert.equal(f.bar.commentsOpen, true);
+  f.page.onHide(); assert.equal(f.page.data.commentPostId, '');
 });
 
 test('评论面板打开时隐藏底栏，关闭、离开及重新进入首页后恢复底栏', () => {

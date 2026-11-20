@@ -4,7 +4,7 @@
 button::after { border: 0; }
 .composer-layer { position: fixed; z-index: 2700; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
 .composer-backdrop, .settings-backdrop { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: rgba(15, 23, 37, .32); animation: compose-fade .26s ease both; }
-.compose-sheet { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; min-height: 0; border-radius: 38rpx 38rpx 0 0; background: #fff; overflow: hidden; box-shadow: 0 -8rpx 40rpx rgba(15, 23, 37, .06); animation: compose-rise .26s cubic-bezier(.22, .68, .2, 1) both; }
+.compose-sheet { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; min-height: 0; border-radius: 38rpx 38rpx 0 0; background: #fff; overflow: hidden; box-shadow: 0 -8rpx 40rpx rgba(15, 23, 37, .06); animation: compose-rise .26s cubic-bezier(.22, .68, .2, 1) backwards; }
 .is-closing .compose-sheet { animation: compose-fall .26s cubic-bezier(.4, 0, .78, .32) both; }
 .is-closing .composer-backdrop { animation: compose-fade-out .26s ease both; }
 .compose-header { position: relative; display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; height: 112rpx; padding: 8rpx 28rpx 0; border-bottom: 1rpx solid #edf0f3; box-sizing: border-box; }
@@ -15,24 +15,34 @@ button::after { border: 0; }
 .compose-capsule image { width: 34rpx; height: 34rpx; }
 .compose-capsule button[disabled] { opacity: .4; }
 .capsule-divider { width: 1rpx; height: 30rpx; background: #e1e4e8; }
-.compose-body { flex: 1 1 0; min-height: 0; height: 0; }
-.compose-body-inner { display: flex; flex-direction: column; min-height: 100%; padding: 30rpx 28rpx 0; box-sizing: border-box; }
+.compose-body { display: flex; flex: 1 1 0; min-height: 0; overflow: hidden; }
+.compose-body-inner { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; padding: 30rpx 28rpx 0; box-sizing: border-box; }
 .compose-author { position: relative; display: flex; flex: 0 0 auto; align-items: flex-start; min-height: 80rpx; }
 .compose-avatar { display: block; flex-shrink: 0; width: 72rpx; height: 72rpx; border-radius: 50%; background: #f0f2f4; }
 .compose-destination { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10rpx; min-height: 42rpx; margin-left: 20rpx; }
 .compose-nickname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 29rpx; font-weight: 700; }
 .compose-destination image { flex-shrink: 0; width: 22rpx; height: 22rpx; }
 .compose-scope { flex-shrink: 0; color: #8d949d; font-size: 27rpx; }
-.compose-editor { position: relative; flex: 0 0 auto; min-height: 64rpx; margin: -28rpx 0 0 92rpx; padding-top: 6rpx; }
-.compose-editor textarea { display: block; width: 100%; min-height: 64rpx; padding: 0; box-sizing: border-box; color: #171b20; font-size: 31rpx; line-height: 1.7; }
-.compose-editor-preview { display: block; min-height: 64rpx; font-size: 31rpx; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
-.compose-editor-space { flex: 1 0 80rpx; min-height: 80rpx; }
-.compose-notice-scroll { width: 100%; height: 76rpx; }
-.compose-notices { display: flex; align-items: center; gap: 14rpx; width: max-content; min-width: 100%; height: 76rpx; padding: 12rpx 28rpx; box-sizing: border-box; }
-.compose-notice-entry { display: flex; align-items: center; flex-shrink: 0; height: 52rpx; }
+.compose-editor { position: relative; flex: 1 1 0; min-height: 0; margin: -22rpx 0 0 92rpx; }
+.compose-textarea { position: absolute; top: 0; left: 0; display: block; width: 100%; height: 100%; min-height: 0; padding: 0; box-sizing: border-box; color: #171b20; font-size: 31rpx; line-height: 1.7; }
+.compose-editor-preview { position: absolute; inset: 0; overflow-y: auto; font-size: 31rpx; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.compose-notice-scroll { width: 100%; height: auto; min-height: 76rpx; }
+.compose-notices { display: flex; align-items: flex-end; gap: 14rpx; width: max-content; min-width: 100%; min-height: 76rpx; padding: 12rpx 28rpx; box-sizing: border-box; }
+.compose-notice-entry { display: flex; align-items: flex-end; flex-shrink: 0; min-height: 52rpx; }
+.compose-optimize-group { display: flex; flex-direction: column; align-items: flex-start; flex: 0 0 auto; width: max-content; }
+.compose-optimize-controls { display: flex; align-items: center; flex-shrink: 0; width: max-content; height: 52rpx; }
 .compose-optimize-shell { position: relative; display: inline-flex; flex-shrink: 0; height: 52rpx; border-radius: 28rpx; }
 .compose-notices .compose-optimize { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8rpx; width: auto; min-width: 0; height: 52rpx; margin: 0; padding: 0 18rpx; border-radius: 28rpx; background: #e2edff; color: #4775fa; font-size: 23rpx; line-height: 1; white-space: nowrap; }
 .compose-optimize[disabled] { opacity: .6; }
+.compose-notices .compose-optimize-help { display: flex; align-items: center; justify-content: center; flex: 0 0 44rpx; width: 44rpx; min-width: 0; height: 52rpx; margin: 0 0 0 4rpx; padding: 0; border: 0; background: transparent; line-height: 1; }
+.compose-optimize-help image { display: block; width: 28rpx; height: 28rpx; opacity: .5; }
+/* 锚点保持胶囊+问号的宽度，气泡从胶囊左侧向右撑开；尖角仍对准问号中心。 */
+.compose-optimize-help-anchor { position: relative; width: 0; min-width: 100%; margin: 0 0 14rpx; }
+.compose-optimize-help-bubble { position: relative; width: max-content; box-sizing: border-box; padding: 22rpx 52rpx 22rpx 20rpx; border-radius: 18rpx; background: #64676c; color: #fff; font-size: 24rpx; line-height: 1.65; animation: compose-fade .18s ease-out; }
+.compose-optimize-help-line { display: block; white-space: nowrap; }
+.compose-optimize-help-anchor::after { position: absolute; right: 14rpx; bottom: -7rpx; width: 16rpx; height: 16rpx; background: #64676c; content: ''; transform: rotate(45deg); }
+.compose-optimize-help-bubble .compose-optimize-help-close { position: absolute; top: 6rpx; right: 6rpx; display: flex; align-items: center; justify-content: center; width: 44rpx; min-width: 0; height: 44rpx; margin: 0; padding: 0; background: transparent; line-height: 1; }
+.compose-optimize-help-close image { display: block; width: 26rpx; height: 26rpx; filter: brightness(0) invert(1); }
 .compose-notices .compose-optimize.is-optimizing[disabled] { opacity: 1; background: #e2edff; color: #4775fa; }
 .compose-optimize-rim, .compose-optimize-glow { position: absolute; top: -3rpx; right: -3rpx; bottom: -3rpx; left: -3rpx; border-radius: 31rpx; pointer-events: none; background: linear-gradient(115deg, #4e8eff 0%, #57d9f3 14%, #ad78f1 30%, #f58abd 46%, #ffb37c 61%, #ed9ae5 77%, #678aff 90%, #4e8eff 100%); background-size: 350% 180%; animation: compose-ai-colors 4s ease-in-out infinite alternate; }
 .compose-optimize-glow { top: -6rpx; right: -6rpx; bottom: -6rpx; left: -6rpx; opacity: .6; filter: blur(6rpx); }

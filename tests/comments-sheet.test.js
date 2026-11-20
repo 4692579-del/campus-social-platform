@@ -10,7 +10,7 @@ const reply = { _id: 'reply', content: '真实评论', author: { nickname: '同�
 function fixture(options = {}) {
   let definition, current = options.guest ? null : user, version = 0;
   const events = [], requests = [], toasts = [];
-  let aiListener;
+  let aiListener, keyboardHides = 0;
   const users = { getCachedUser: () => current, getSessionVersion: () => version };
   const square = { cachedReplies: () => options.cached || null,
     ...(options.ai ? { processAIReply: options.ai, subscribeAI: listener => { aiListener = listener; return () => { aiListener = null; }; } } : {}),
@@ -18,24 +18,98 @@ function fixture(options = {}) {
     listChildren: async (postId, rootId, args) => { requests.push({ type: 'children', postId, rootId, ...args }); return options.children ? options.children(args) : { items: [], hasMore: false, nextOffset: 0 }; },
     commentState: async (postId, replyId, kind, active) => { requests.push({ type: 'state', postId, replyId, kind, active }); return options.state(replyId, kind, active); },
     listReplies: async (postId, args) => { requests.push({ type: 'list', postId, ...args }); return options.list ? options.list(args) : { items: [], hasMore: false, nextOffset: 0 }; },
-    reply: async (postId, content, requestId, replyToId, askAI = false) => { requests.push({ type: 'send', postId, content, requestId, replyToId, askAI }); return options.send ? options.send() : { post: { _id: id, replyCount: 1 }, reply: { ...reply, content } }; },
+    reply: async (postId, content, requestId, replyToId, askAI = false, images = []) => { requests.push({ type: 'send', postId, content, requestId, replyToId, askAI, ...(images.length ? { images } : {}) }); return options.send ? options.send() : { post: { _id: id, replyCount: 1 }, reply: { ...reply, content, images } }; },
     deleteReply: async (postId, replyId) => { requests.push({ type: 'delete', postId, replyId }); return options.remove(replyId); },
     reportReply: async (postId, replyId, reason) => { requests.push({ type: 'report', postId, replyId, reason }); return options.report ? options.report() : {}; },
   };
+  const media = {
+    chooseImages: async count => { requests.push({ type: 'choose-images', count }); return options.chooseImages ? options.chooseImages(count) : []; },
+    uploadImages: async (images, uploaded) => {
+      if (options.uploadImages) return options.uploadImages(images, uploaded);
+      return images.map((image, index) => { const file = image.fileID || `cloud://test.bucket/square-uploads/alice/${image.key}.jpg`; uploaded(index, file); return file; });
+    },
+    discardUploads: async files => { requests.push({ type: 'discard-images', files }); },
+    previewImages: async (files, current) => { requests.push({ type: 'preview-images', files, current }); },
+  };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/comments-sheet/index.js'), 'utf8'), {
-    Component: value => { definition = value; }, wx: { hideKeyboard() {}, showToast: value => toasts.push(value.title),
+    setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; }, clearTimeout,
+    Component: value => { definition = value; }, wx: { hideKeyboard(args) { keyboardHides++; if (options.hideKeyboard) options.hideKeyboard(args); }, showToast: value => toasts.push(value.title),
       showActionSheet: args => { requests.push({ type: 'sheet', itemList: args.itemList }); args.success((options.choices || []).shift() || { tapIndex: 0 }); },
       showModal: args => { requests.push({ type: 'modal', title: args.title }); args.success({ confirm: options.confirm !== false }); },
+      getDeviceInfo: () => ({ platform: options.platform || 'devtools' }),
       getWindowInfo: () => options.window || { windowHeight: 812, statusBarHeight: 44 },
       getMenuButtonBoundingClientRect: () => options.capsule || { top: 52, height: 32 } },
-    require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
+    require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('services/post-images') ? media : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
   });
   const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current },
     setData(value) { applyPageData(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
-  return { component, events, requests, toasts, emitAI: result => aiListener && aiListener(result), attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
+  return { component, events, requests, toasts, keyboardHides: () => keyboardHides, emitAI: result => aiListener && aiListener(result), attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
+    hide: () => definition.pageLifetimes.hide.call(component), show: () => definition.pageLifetimes.show.call(component),
     logout() { current = null; version++; },
   };
 }
+
+test('评论图片先上传并在输入框上方显示，分次最多三张，可移除预览，纯图片发送后不存相册', async () => {
+  let n = 0;
+  const f = fixture({ chooseImages: count => Array.from({ length: Math.min(2, count) }, () => ({ key: 'photo' + (++n), path: '/photo' + n + '.jpg', type: 'jpg' })) });
+  await f.attach(); const c = f.component;
+  await c.chooseCommentImages(); assert.equal(c.data.selectedImages.length, 2); assert.equal(c.data.canSend, true);
+  assert.ok(c.data.selectedImages.every(image => image.fileID.startsWith('cloud://')));
+  await c.chooseCommentImages(); assert.equal(c.data.selectedImages.length, 3);
+  assert.deepEqual(f.requests.filter(row => row.type === 'choose-images').map(row => row.count), [3, 1]);
+  await c.chooseCommentImages(); assert.equal(f.toasts.at(-1), '一次最多发送3张图片');
+  await c.previewCommentImages({ currentTarget: { dataset: { selected: true, index: 1 } } });
+  assert.equal(f.requests.at(-1).current, '/photo2.jpg');
+  c.removeCommentImage({ currentTarget: { dataset: { index: 1 } } }); assert.equal(c.data.selectedImages.length, 2);
+  const hides = f.keyboardHides(); await c.send();
+  const sent = f.requests.find(row => row.type === 'send');
+  assert.equal(sent.content, ''); assert.equal(sent.images.length, 2); assert.equal(sent.askAI, false);
+  assert.equal(c.data.items[0].images.length, 2); assert.equal(c.data.selectedImages.length, 0);
+  await c.previewCommentImages({ currentTarget: { dataset: { id: c.data.items[0]._id, index: 1 } } });
+  assert.equal(f.requests.at(-1).files.length, 2); assert.equal(f.requests.at(-1).current, sent.images[1]);
+  assert.equal(c.data.canSend, false); assert.equal(f.keyboardHides(), hides + 1);
+  f.detach();
+});
+
+test('带图问小萃携带独立标记；发送失败恢复文字、图序、回复对象和标记，重试保持提交ID', async () => {
+  let failed = true;
+  const target = { ...reply, _id: 'r_' + 'f'.repeat(40), author: { nickname: '同学' } };
+  const f = fixture({ cached: { items: [target], hasMore: false, nextOffset: 1 },
+    list: async () => ({ items: [target], hasMore: false, nextOffset: 1 }),
+    chooseImages: () => [{ key: 'ai-picture', path: '/ai.jpg', type: 'jpg' }],
+    send: () => { if (failed) throw new Error('网络失败'); return { reply: { ...reply, rootId: target._id, images: ['cloud://test.bucket/square-media/published.png'] } }; } });
+  await f.attach(); const c = f.component; await c.chooseCommentImages();
+  c.selectReply({ currentTarget: { dataset: { id: target._id } } }); c.askXiaocui();
+  c.input({ detail: { value: c.data.inputValue + '和动态有什么区别？' } });
+  await c.send(); const sent = f.requests.find(row => row.type === 'send');
+  assert.equal(sent.askAI, true); assert.equal(sent.images.length, 1); assert.equal(sent.replyToId, target._id);
+  assert.equal(c.data.askAI, true); assert.equal(c.data.selectedImages[0].key, 'ai-picture');
+  assert.equal(c.data.text, '和动态有什么区别？'); assert.equal(c.data.replyTarget.id, target._id);
+  assert.equal(c.data.inputFocusRequested, false); assert.equal(c.data.keyboardHeight, 0);
+  failed = false; await c.send(); assert.equal(f.requests.filter(row => row.type === 'send')[1].requestId, sent.requestId);
+  assert.equal(c.data.items[0].freshChildren[0].images.length, 1); assert.equal(c.data.selectedImages.length, 0);
+  f.detach();
+});
+
+test('选图上传失败保留本地预览供重试；上传未结束不发送，账号变更或卸载不恢复旧图片', async () => {
+  let finish, failed = true;
+  const f = fixture({ chooseImages: () => [{ key: 'retry-image', path: '/retry.jpg', type: 'jpg' }],
+    uploadImages: async (images, uploaded) => { if (failed) throw new Error('图片上传失败'); return images.map((image, index) => { const file = 'cloud://test.bucket/square-uploads/alice/retry-image.jpg'; uploaded(index, file); return file; }); } });
+  await f.attach(); const c = f.component; await c.chooseCommentImages();
+  assert.equal(c.data.sendError, '图片上传失败'); assert.equal(c.data.selectedImages.length, 1);
+  failed = false; await c.send(); assert.equal(c.data.items[0].images.length, 1); f.detach();
+  for (const mode of ['logout', 'detach']) {
+    const g = fixture({ chooseImages: () => [{ key: 'late', path: '/late.jpg', type: 'jpg' }],
+      uploadImages: (images, uploaded) => new Promise(resolve => { finish = () => { uploaded(0, 'cloud://test.bucket/square-uploads/alice/late.jpg'); resolve(['cloud://test.bucket/square-uploads/alice/late.jpg']); }; }) });
+    await g.attach(); const pending = g.component.chooseCommentImages(); await new Promise(resolve => setImmediate(resolve));
+    await g.component.send(); assert.equal(g.requests.filter(row => row.type === 'send').length, 0);
+    if (mode === 'logout') { g.logout(); g.hide(); g.show(); } else g.detach();
+    finish(); await pending;
+    assert.equal(g.requests.filter(row => row.type === 'send').length, 0);
+    if (mode === 'logout') assert.equal(g.component.data.selectedImages.length, 0);
+    else assert.equal(g.component.data.selectedImages[0].fileID, undefined);
+  }
+});
 
 test('AI生成独立于发送，正式评论立即展示并清空输入；AI随后作为新楼中回复显示且无成功弹窗', async () => {
   let finishAI;
@@ -44,6 +118,7 @@ test('AI生成独立于发送，正式评论立即展示并清空输入；AI随�
   await f.attach(); const c = f.component;
   c.input({ detail: { value: '@小萃 你怎么看' } }); await c.send();
   assert.equal(c.data.sending, false); assert.equal(c.data.text, ''); assert.equal(c.data.items[0]._id, root._id); assert.ok(finishAI);
+  assert.equal(f.keyboardHides(), 1); // 点击发送即收键盘，不等待云端确认或独立AI任务。
   const child = { ...reply, _id: 'c_' + 'd'.repeat(40), rootId: root._id, replyToId: root._id, author: { nickname: '小萃小萃', isAI: true } };
   c.applyCommentRow({ ...root, aiStatus: 'done', replyCount: 1 });
   f.emitAI({ postId: id, reply: child, created: true });
@@ -71,7 +146,7 @@ test('评论面板首帧复用缓存，读取不会覆盖输入，分页在同�
 test('点击问问小萃插入可退格删除的胶囊，手动输入昵称不唤起，零宽标记不进入正文', async () => {
   const f = fixture(); await f.attach(); const c = f.component;
   c.askXiaocui(); assert.equal(c.data.askAI, true); assert.equal(c.data.canSend, true); assert.equal(c.data.count, 3);
-  const marker = c.data.inputValue; assert.equal(marker.length, 1);
+  const marker = c.data.inputValue; assert.equal(marker, '\u200B\u3000\u3000\u3000\u2002');
   c.askXiaocui(); assert.equal(c.data.inputValue, marker);
   c.input({ detail: { value: marker + '怎么看' } }); assert.equal(c.data.text, '怎么看'); assert.equal(c.data.count, 7);
   await c.send(); const sent = f.requests.find(row => row.type === 'send');
@@ -85,13 +160,13 @@ test('点击问问小萃插入可退格删除的胶囊，手动输入昵称不�
   c.input({ detail: { value: '保留正文' } }); assert.equal(c.data.askAI, false); assert.equal(c.data.text, '保留正文');
 });
 
-test('胶囊发送失败保留选择与正文和提交标识，胶囊本身也可发送且总长度受300字限制', async () => {
+test('胶囊发送失败保留选择与正文和提交标识，胶囊本身也可发送且总长度受50字限制', async () => {
   let fail = true;
   const f = fixture({ send: () => { if (fail) throw new Error('网络失败'); return { reply }; } }); await f.attach(); const c = f.component;
   c.askXiaocui(); const marker = c.data.inputValue;
-  c.input({ detail: { value: marker + '字'.repeat(297) } }); assert.equal(c.data.canSend, false);
-  c.input({ detail: { value: marker + '字'.repeat(296) } }); assert.equal(c.data.canSend, true);
-  await c.send(); assert.equal(c.data.askAI, true); assert.equal(c.data.text.length, 296); assert.equal(c.data.count, 300);
+  c.input({ detail: { value: marker + '字'.repeat(47) } }); assert.equal(c.data.count, 50); assert.equal(c.data.limitHintVisible, true);
+  c.input({ detail: { value: marker + '字'.repeat(46) } }); assert.equal(c.data.canSend, true);
+  await c.send(); assert.equal(c.data.askAI, true); assert.equal(c.data.text.length, 46); assert.equal(c.data.count, 50);
   const requestId = f.requests.filter(row => row.type === 'send')[0].requestId;
   fail = false; await c.send(); assert.equal(f.requests.filter(row => row.type === 'send')[1].requestId, requestId);
   c.askXiaocui(); await c.send();
@@ -194,8 +269,10 @@ test('游客可读评论，发送需登录；超长内容不能提交，登录�
   guest.component.input({ detail: { value: '想评论' } }); await guest.component.send();
   assert.equal(guest.events[0].name, 'login'); assert.equal(guest.requests.filter(request => request.type === 'send').length, 0);
   const f = fixture(); await f.attach();
-  f.component.input({ detail: { value: '😊'.repeat(301) } }); await f.component.send();
-  assert.equal(f.component.data.canSend, false); assert.equal(f.requests.filter(request => request.type === 'send').length, 0);
+  f.component.input({ detail: { value: '😊'.repeat(301) } });
+  assert.equal(Array.from(f.component.data.text).length, 50); assert.equal(f.component.data.canSend, true);
+  f.component.setData({ text: '字'.repeat(51) }); await f.component.send();
+  assert.equal(f.requests.filter(request => request.type === 'send').length, 0);
   let fail;
   const expired = fixture({ send: () => new Promise((resolve, reject) => { fail = reject; }) }); await expired.attach();
   expired.component.input({ detail: { value: '登录过期' } });
@@ -412,4 +489,292 @@ test('已点赞又心碎的评论再次点击爱心发送点赞目标状态，�
   await c.toggleThread(commentEvent('root')); assert.equal(c.data.items[0].children.length, 1);
   await c.reactComment(commentEvent('root', 'like'));
   assert.equal(f.requests.filter(row => row.type === 'state').at(-1).active, false);
+});
+
+
+test('评论码点50字截断、圆环阈值、删除重置及小萃焦点保留', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.focusInput(); c.keyboard({ detail: { height: 320 } });
+  const updates = []; const update = c.setData; c.setData = function(v) { updates.push(v); update.call(this, v); };
+  c.askXiaocui(); assert.ok(!updates.some(v => Object.hasOwn(v, 'inputFocused'))); assert.equal(c.data.keyboardHeight, 320);
+  const marker = c.data.inputValue; c.input({ detail: { value: marker + '😊'.repeat(160) } });
+  assert.equal(c.data.count, 50); assert.equal(c.data.remainingCount, 0); assert.equal(c.data.countProgress, 360); assert.equal(c.data.limitHintVisible, true);
+  assert.equal(Array.from(c.data.text).length, 46);
+  c.input({ detail: { value: '字'.repeat(39) } }); assert.equal(c.data.countWarning, false);
+  c.input({ detail: { value: '字'.repeat(40) } }); assert.equal(c.data.countWarning, true); assert.equal(c.data.remainingCount, 10);
+  c.input({ detail: { value: '' } }); assert.equal(c.data.count, 0); assert.equal(c.data.countProgress, 0); assert.equal(c.data.limitHintVisible, false);
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  assert.match(markup, /textarea[^>]* fixed hold-keyboard/); assert.ok(!markup.includes('<input '));
+  f.detach();
+});
+
+
+test('评论原生输入框独立类样式去除iOS内边距，不用覆盖提示叠加拼音预编辑区', async () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
+  const field = markup.match(/<textarea\b[^>]*>/)[0];
+  assert.match(field, /class="comment-textarea"/);
+  assert.match(field, /disable-default-padding="{{true}}"/);
+  assert.match(field, /placeholder="{{askAI \? '' : '添加回复...'}}"/);
+  assert.ok(!markup.includes('composer-ai-placeholder')); assert.ok(!css.includes('composer-ai-placeholder'));
+  assert.ok(!css.includes('.comment-input-pill textarea'));
+  assert.match(css, /\.comment-textarea[^}]*padding: 0/);
+  assert.match(css, /\.comment-textarea[^}]*line-height: 40rpx/);
+  assert.match(css, /\.comment-entry[^}]*display: block/);
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.focusInput(); c.askXiaocui(); const marker = c.data.inputValue;
+  // 拼音候选还未产生input事件时，正文仍为空，但模板中已没有可以覆盖光标的提示节点。
+  assert.equal(c.data.askAI, true); assert.equal(c.data.text, '');
+  c.input({ detail: { value: marker + 'nihao' } }); assert.equal(c.data.text, 'nihao');
+  c.input({ detail: { value: marker + '你好' } }); assert.equal(c.data.text, '你好');
+  c.input({ detail: { value: marker } }); assert.equal(c.data.text, ''); assert.equal(c.data.askAI, true);
+  c.input({ detail: { value: '' } }); assert.equal(c.data.askAI, false);
+  f.detach();
+});
+
+
+test('小萃首行占位不计数不提交，部分退格原子删除胶囊且保留正文前导全角空格', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.askXiaocui(); const prefix = c.data.inputValue;
+  c.input({ detail: { value: prefix + '第一行\n第二行' } });
+  assert.equal(c.data.text, '第一行\n第二行'); assert.equal(c.data.count, Array.from('@小萃 第一行\n第二行').length);
+  await c.send(); assert.equal(f.requests.filter(r => r.type === 'send').at(-1).content, '@小萃 第一行\n第二行');
+  for (let index = 0; index < prefix.length; index++) {
+    c.setReplyInput('　保留正文', true);
+    c.input({ detail: { value: prefix.slice(0, index) + prefix.slice(index + 1) + '　保留正文' } });
+    assert.equal(c.data.askAI, false); assert.equal(c.data.text, '　保留正文');
+  }
+  c.setReplyInput('', true); c.input({ detail: { value: prefix.slice(0, -1) } });
+  assert.equal(c.data.askAI, false); assert.equal(c.data.count, 0); assert.equal(c.data.inputValue, '');
+  f.detach();
+});
+
+test('胶囊属于首行内容，原生输入自然增减高度；计数器始终在输入区域外右下对齐', async () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
+  assert.match(markup, /class="comment-input-content"><textarea[^>]*auto-height[^>]*\/>\s*<view[^>]*class="composer-ai-chip composer-ai-mention"/);
+  assert.match(markup, /<\/view>\s*<\/view>\s*<view class="comment-counter-slot/);
+  assert.match(css, /\.composer-ai-mention[^}]*position: absolute[^}]*top: 3rpx[^}]*left: 0[^}]*width: 84rpx/);
+  assert.match(css, /\.comment-counter-slot[^}]*align-self: flex-end[^}]*margin-bottom: 6rpx/);
+  assert.match(css, /\.comment-textarea[^}]*max-height: 200rpx/);
+  assert.ok(!css.includes('.comment-input-scroll'));
+  assert.ok(!markup.includes('<scroll-view class="comment-input-scroll"')); // 不再让原生textarea成为滚动组件子节点。
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.setReplyInput('', false); assert.equal(c.data.inputValue, '');
+  f.detach();
+});
+
+
+test('评论回车保留原生键盘，普通及小萃多行输入都不收键盘、不重聚焦、不直接发送', async () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const field = markup.match(/<textarea\b[^>]*>/)[0];
+  assert.match(field, /confirm-type="return"/); assert.match(field, /confirm-hold="{{true}}"/);
+  assert.ok(!field.includes('bindconfirm="send"'));
+  const f = fixture(); await f.attach(); const c = f.component;
+  for (const ai of [false, true]) {
+    c.setReplyInput('', false); c.focusInput(); c.keyboard({ detail: { height: 320 } });
+    if (ai) c.askXiaocui(); const prefix = ai ? c.data.inputValue : '';
+    const writes = []; const update = c.setData;
+    c.setData = function(v) { writes.push(v); update.call(this, v); };
+    for (const value of ['第一行\n', '第一行\n第二行\n', '软换行'.repeat(10), '\n'.repeat(6)]) {
+      c.input({ detail: { value: prefix + value, cursor: (prefix + value).length } });
+      assert.equal(c.data.inputFocused, true); assert.equal(c.data.keyboardHeight, 320); assert.equal(c.data.text, value);
+    }
+    assert.ok(!writes.some(v => Object.hasOwn(v, 'inputFocused'))); c.setData = update;
+  }
+  assert.equal(f.keyboardHides(), 0); assert.equal(f.requests.filter(r => r.type === 'send').length, 0);
+  f.detach();
+});
+
+
+test('正常键入、回车与软换行不回写原生value/cursor/focus，显式清空及重复超限仍能同步原生框', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.focusInput(); assert.equal(c.data.inputFocusRequested, false);
+  const writes = [], update = c.setData;
+  c.setData = function(v) { writes.push(v); update.call(this, v); };
+  for (const value of ['拼音', '第一行\n', '第一行\n第二行', '\n'.repeat(8), '软换行'.repeat(12)]) {
+    c.input({ detail: { value, cursor: value.length } });
+    assert.equal(c.data.inputValue, value);
+  }
+  assert.ok(writes.every(v => !['nativeInputValue', 'inputCursor', 'inputFocusRequested', 'inputHeight', 'inputScrollTop'].some(key => Object.hasOwn(v, key))));
+  writes.length = 0; c.setReplyInput('', false);
+  assert.equal(c.data.nativeInputValue, ''); assert.ok(writes.some(v => v.nativeInputValue === '软换行'.repeat(12))); assert.equal(writes.at(-1).nativeInputValue, '');
+  const over = '字'.repeat(51); c.input({ detail: { value: over } }); assert.equal(c.data.nativeInputValue, '字'.repeat(50));
+  writes.length = 0; c.input({ detail: { value: over } });
+  assert.equal(writes.filter(v => Object.hasOwn(v, 'nativeInputValue'))[0].nativeInputValue, over); assert.equal(writes.at(-1).nativeInputValue, '字'.repeat(50));
+  c.askXiaocui(); writes.length = 0;
+  c.setReplyInput('短正文', true); writes.length = 0;
+  c.input({ detail: { value: c.data.inputValue + '\n' } });
+  assert.ok(writes.every(v => !Object.hasOwn(v, 'nativeInputValue')));
+  c.blurInput(); assert.equal(c.data.inputFocusRequested, false); c.focusComposer(); assert.equal(c.data.inputFocusRequested, true);
+  f.detach();
+});
+
+test('评论textarea无scroll-view或拦截祖先，不绑定行高回写；安卓窗口缩小时不重复减键盘高度', async () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const stack = []; let ancestors;
+  for (const match of markup.matchAll(/<([\w-]+)\b([^>]*?)>|<\/([\w-]+)\s*>/g)) {
+    if (match[3]) { stack.pop(); continue; }
+    if (match[1] === 'textarea') { ancestors = [...stack]; break; }
+    if (!match[2].trimEnd().endsWith('/')) stack.push({ tag: match[1], attr: match[2] });
+  }
+  assert.ok(ancestors && ancestors.every(n => n.tag !== 'scroll-view' && !n.attr.includes('catchtouchmove') && !n.attr.includes('inputSurfaceHeight')));
+  const field = markup.match(/<textarea\b[^>]*>/)[0]; assert.match(field, /value="{{nativeInputValue}}"/); assert.match(field, /focus="{{inputFocusRequested}}"/);
+  assert.ok(!field.includes('bindlinechange="inputLines"')); assert.ok(!markup.includes('scroll-top="{{inputScrollTop}}"'));
+  const window = { windowHeight: 812, windowWidth: 375, statusBarHeight: 44 };
+  const f = fixture({ window }); await f.attach(); const c = f.component;
+  c.focusInput(); c.keyboard({ detail: { height: 320 } }); const originalTop = c.data.sheetTop, available = c.data.viewportHeight - c.data.keyboardTop - c.data.keyboardHeight;
+  window.windowHeight = 492; c.measureSheet(); assert.equal(c.data.viewportHeight, 812); assert.equal(c.data.sheetTop, originalTop);
+  assert.equal(c.data.viewportHeight - c.data.keyboardTop - c.data.keyboardHeight, available);
+  f.detach();
+});
+
+
+test('换行诊断零界面更新，增行和退格缩行均不更新高度或原生绑定', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c._inputDebug = true;
+  const writes = [], update = c.setData;
+  c.setData = function(value) { writes.push(value); update.call(this, value); };
+  for (const lines of [...Array.from({ length: 30 }, (_, i) => i + 1), ...Array.from({ length: 30 }, (_, i) => 30 - i)]) {
+    c.traceInputLines({ detail: { lineCount: lines, height: lines * 19.5, value: '绝不进入日志的正文' } });
+  }
+  assert.equal(writes.length, 0); assert.equal(c._inputTrace.length, 16);
+  assert.ok(!JSON.stringify(c._inputTrace).includes('绝不进入日志的正文'));
+  c._inputDebug = false; f.detach();
+});
+
+test('普通与小萃输入和退格合并换行不回写原生值/光标/焦点，清空亦不设置高度', async () => {
+  for (const askAI of [false, true]) {
+    const f = fixture(); await f.attach(); const c = f.component;
+    c.focusComposer(); c.keyboard({ detail: { height: 320 } }); if (askAI) c.askXiaocui();
+    const prefix = askAI ? c.data.inputValue : '';
+    const writes = [], update = c.setData;
+    c.setData = function(value) { writes.push(value); update.call(this, value); };
+    // 包括实际回车删除、单纯字数减少引起的软折行合并及删除到临界字数以下。
+    for (const text of ['第一行', '第一行\n第二行', '第一行\n第二行\n第三行', '第一行\n第二行\n第三',
+      '第一行\n第二行第三', '第一行第二行第三', '字'.repeat(46), '字'.repeat(39), '字'.repeat(20), '字', '']) {
+      c.input({ detail: { value: prefix + text } });
+      c.traceInputLines({ detail: { lineCount: Math.max(1, text.split('\n').length) } });
+      assert.equal(c.data.text, text); assert.equal(c.data.inputFocused, true); assert.equal(c.data.inputFocusRequested, true);
+      assert.equal(c.data.keyboardHeight, 320);
+    }
+    assert.ok(writes.every(value => !['nativeInputValue', 'inputCursor', 'inputFocused', 'inputFocusRequested', 'inputSurfaceHeight', 'inputBoxHeight'].some(key => Object.hasOwn(value, key))));
+    assert.equal(f.keyboardHides(), 0); f.detach();
+  }
+});
+
+test('背景直接贴合原生实际高度，文字顶对齐，textarea无滚动或动态尺寸祖先', () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
+  assert.ok(!markup.includes('comment-pill-surface')); assert.ok(!markup.includes('inputSurfaceHeight'));
+  assert.ok(!markup.includes('comment-input-scroll'));
+  assert.match(markup, /class="comment-entry"><view class="comment-input-content"><textarea/);
+  assert.match(markup.match(/<textarea\b[^>]*>/)[0], /auto-height bindlinechange="traceInputLines"/);
+  assert.match(css, /\.comment-input-pill[^}]*align-items: flex-start[^}]*padding: 15rpx 20rpx[^}]*background: #ededee/);
+  assert.match(css, /\.comment-textarea[^}]*min-height: 40rpx[^}]*max-height: 200rpx/);
+  for (const selector of ['comment-textarea', 'comment-input-content', 'comment-entry', 'comment-input-pill']) {
+    const rule = css.match(new RegExp('\\.' + selector + ' \\{([^}]+)\\}'))[1];
+    assert.ok(!/transition|animation|transform|overflow/.test(rule), selector);
+  }
+});
+
+test('键盘仍打开时原生缩行的临时blur不发送取消聚焦指令，真实收键盘后才解除请求', async () => {
+  const f = fixture(); await f.attach(); const c = f.component;
+  c.focusComposer(); c.keyboard({ detail: { height: 320 } });
+  c.input({ detail: { value: '第一行\n第二行' } });
+  const writes = [], update = c.setData;
+  c.setData = function(value) { writes.push(value); update.call(this, value); };
+  c.input({ detail: { value: '第一行第二行' } }); c.traceInputLines({ detail: { lineCount: 1, height: 20 } }); c.blurInput();
+  assert.equal(c.data.inputFocused, false); assert.equal(c.data.inputFocusRequested, true);
+  assert.ok(writes.every(value => !Object.hasOwn(value, 'inputFocusRequested')));
+  c.focusInput(); assert.equal(c.data.inputFocused, true); assert.equal(f.keyboardHides(), 0);
+  c.keyboard({ detail: { height: 0 } }); assert.equal(c.data.inputFocusRequested, false);
+  c.blurInput(); assert.equal(c.data.inputFocused, false); f.detach();
+});
+
+test('点击发送立即收键盘并恢复面板，不等待云端确认且成功回调不再收键盘', async () => {
+  for (const askAI of [false, true]) {
+  let finish;
+  const f = fixture({ send: () => new Promise(resolve => { finish = resolve; }) }); await f.attach(); const c = f.component;
+  c.focusComposer(); c.keyboard({ detail: { height: 320 } }); if (askAI) c.askXiaocui();
+  c.input({ detail: { value: (askAI ? c.data.inputValue : '') + '发送正文' } });
+  const sending = c.send(); assert.equal(f.keyboardHides(), 1); assert.equal(c.data.sending, true);
+  assert.equal(c.data.inputFocusRequested, false); assert.equal(c.data.keyboardHeight, 0);
+  finish({ reply }); await sending;
+  assert.equal(f.keyboardHides(), 1); assert.equal(c.data.inputFocused, false); assert.equal(c.data.inputFocusRequested, false);
+  assert.equal(c.data.keyboardHeight, 0); assert.equal(c.data.keyboardTop, c.keyboardTop(c.data.sheetTop, 0));
+  assert.equal(c.data.text, ''); assert.equal(c.data.sendError, ''); f.detach();
+  }
+});
+
+test('空白、超限、隐藏或卸载组件不进入发送，也不收键盘', async () => {
+  for (const invalid of ['empty', 'long', 'hidden', 'dead']) {
+    const f = fixture(); await f.attach(); const c = f.component;
+    c.setReplyInput('正文', false);
+    if (invalid === 'empty') c.setReplyInput('', false);
+    if (invalid === 'long') c.setData({ text: '字'.repeat(51) });
+    if (invalid === 'hidden') c._pageHidden = true;
+    if (invalid === 'dead') f.detach();
+    await c.send(); assert.equal(f.keyboardHides(), 0, invalid);
+    assert.equal(f.requests.filter(row => row.type === 'send').length, 0, invalid);
+    if (invalid !== 'dead') f.detach();
+  }
+});
+
+test('点击发送先收键盘，失败保留正文、回复对象和小萃选择，不自动重新聚焦', async () => {
+  const f = fixture({ send: async () => { throw new Error('审核暂不可用'); } }); await f.attach(); const c = f.component;
+  const target = { id: 'parent', rootId: 'root', nickname: '同学' };
+  c.askXiaocui(); c.keyboard({ detail: { height: 320 } }); c.input({ detail: { value: c.data.inputValue + '正文' } });
+  c.setData({ replyTarget: target }); await c.send();
+  assert.equal(f.keyboardHides(), 1); assert.equal(c.data.text, '正文'); assert.equal(c.data.askAI, true);
+  assert.deepEqual(c.data.replyTarget, target); assert.equal(c.data.sendError, '审核暂不可用');
+  assert.equal(c.data.inputFocusRequested, false); assert.equal(c.data.inputFocused, false); assert.equal(c.data.keyboardHeight, 0); f.detach();
+});
+
+test('切页、卸载或切换会话后的迟到发送确认不能收其他页面键盘', async () => {
+  for (const action of ['hide', 'detach', 'logout']) {
+    let finish;
+    const f = fixture({ send: () => new Promise(resolve => { finish = resolve; }) }); await f.attach(); const c = f.component;
+    c.input({ detail: { value: '原页面正文' } }); const sending = c.send();
+    if (action === 'hide') c._pageHidden = true;
+    else f[action]();
+    assert.equal(f.keyboardHides(), 1, action);
+    finish({ reply }); await sending; assert.equal(f.keyboardHides(), 1, action);
+    if (action !== 'detach') f.detach();
+  }
+});
+
+test('立即收键盘的API失败仍继续提交评论，不误报发送失败', async () => {
+  for (const hideKeyboard of [args => args.fail({ errMsg: 'hideKeyboard:fail' }), () => { throw new Error('API unavailable'); }]) {
+    const f = fixture({ hideKeyboard }); await f.attach(); const c = f.component;
+    c.input({ detail: { value: '已经提交' } }); await c.send();
+    assert.equal(f.keyboardHides(), 1); assert.equal(c.data.text, ''); assert.equal(c.data.sendError, '');
+    assert.ok(c.data.items.some(row => row._id === reply._id)); assert.equal(f.events.filter(event => event.name === 'changed').length, 1);
+    f.detach();
+  }
+});
+
+
+test('评论单行文字/胶囊/竖线圆环共用垂直中线，真机基线补偿不用于开发工具', async () => {
+  const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
+  const rule = name => css.slice(css.indexOf(name + ' {') + name.length + 2).split('}')[0];
+  const dimension = (selector, key) => Number(rule(selector).match(new RegExp('(?:^|[;\\s])' + key + ': ([0-9.]+)rpx'))[1]);
+  const line = dimension('.comment-textarea', 'line-height'), font = dimension('.comment-textarea', 'font-size');
+  const inset = dimension('.comment-input-content', 'padding');
+  const baseline = dimension('.has-native-textarea-metrics .comment-textarea', 'top');
+  const chip = dimension('.composer-ai-mention', 'top') + dimension('.composer-ai-chip', 'height') / 2;
+  assert.equal(baseline, (line - font) / 2);
+  for (const lines of [1, 2, 5]) {
+    const contentHeight = inset * 2 + line * lines;
+    const lastTextCenter = inset + baseline + font / 2 + line * (lines - 1);
+    const counterCenter = contentHeight - dimension('.comment-counter-slot', 'margin-bottom') - dimension('.comment-progress-anchor', 'height') / 2;
+    assert.equal(lastTextCenter, counterCenter);
+    assert.equal(chip, inset + baseline + font / 2);
+  }
+  assert.equal(dimension('.comment-input-content', 'min-height'), line + inset * 2);
+  for (const platform of ['ios', 'android', 'ohos', 'devtools', 'windows']) {
+    const f = fixture({ platform }); await f.attach();
+    assert.equal(f.component.data.nativeTextareaMetrics, ['ios', 'android', 'ohos'].includes(platform));
+    f.detach();
+  }
 });

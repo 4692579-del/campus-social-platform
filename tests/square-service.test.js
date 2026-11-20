@@ -12,7 +12,7 @@ const reaction = (f, id, active = true, kind = 'like', identity = f.alice) =>
 
 test('真实云函数入口兼容微信自动附带的userInfo，发帖回复仍使用可信上下文身份', async () => {
   const f = fixture(); const alice = await f.login(); await f.login(f.bob);
-  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './content-check' ? require('../cloudfunctions/userService/content-check') : name === './deepseek' ? require('../cloudfunctions/userService/deepseek') : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
+  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './content-check' ? require('../cloudfunctions/userService/content-check') : name === './deepseek' ? require('../cloudfunctions/userService/deepseek') : name === './ai-images' ? require('../cloudfunctions/userService/ai-images') : name === './ai-compose-images' ? require('../cloudfunctions/userService/ai-compose-images') : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
     init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
     openapi: { security: { msgSecCheck: async () => ({ result: { suggest: 'pass' } }) } },
   } };
@@ -30,6 +30,56 @@ test('真实云函数入口兼容微信自动附带的userInfo，发帖回复仍
   assert.equal(invalid.code, 'INVALID_POST');
   const spoof = await context.exports.main({ action: 'publishSquarePost', post: { scope: 'square', authorId: 'bob', content: '不能伪造作者', requestId: 'runtime-spoof-000001' }, userInfo: injected });
   assert.equal(spoof.code, 'INVALID_POST');
+});
+
+test('真实入口将已发布配图通过云SDK接入Flash识图，身份仍取可信上下文', async () => {
+  const f = fixture(); const alice = await f.login();
+  const published = await publish(f), id = published.square.post._id;
+  const image = `cloud://test.bucket/square-media/${alice._id}/${id}/0-${'a'.repeat(24)}.jpg`;
+  f.squarePosts.get(id).images = [image];
+  const calls = [], imageURL = 'https://test.bucket.tcb.qcloud.la/synthetic.jpg?sign=synthetic';
+  const cloud = { init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
+    getTempFileURL: async args => { calls.push(args); return { fileList: [{ fileID: image, status: 0, tempFileURL: imageURL }] }; },
+    openapi: { security: { msgSecCheck: async () => ({ result: { suggest: 'pass' } }) } } };
+  const context = { exports: {}, process: { env: {} }, require: name => {
+    if (name === 'wx-server-sdk') return cloud;
+    if (name === './deepseek') return { createDeepseek: () => async (input, attachments) => {
+      assert.equal(input.imageCount, 1); assert.deepEqual(attachments.images, [imageURL]); return '图中是一份食堂菜单。';
+    } };
+    return require('../cloudfunctions/userService/' + name.slice(2));
+  } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cloudfunctions/userService/index.js'), 'utf8'), context);
+  const question = await context.exports.main({ action: 'publishSquareReply', post: { scope: 'square', postId: id,
+    content: '@小萃 图中是什么？', askAI: true, requestId: 'runtime-vision-question-001' } });
+  assert.equal(question.success, true, question.message);
+  const result = await context.exports.main({ action: 'processSquareAIReply', postId: id, replyId: question.square.reply._id });
+  assert.equal(result.success, true, result.message); assert.equal(result.square.status, 'done');
+  assert.equal(result.square.reply.content, '图中是一份食堂菜单。'); assert.equal(calls.length, 1);
+});
+
+test('真实入口发布仅图片文案经私有下载校验、短效地址、图文模型和文字审核，不公开图片', async () => {
+  const f = fixture(); const alice = await f.login();
+  const image = `cloud://test.bucket/square-uploads/${alice._id}/photo.png`;
+  const imageURL = 'https://test.bucket.tcb.qcloud.la/private-photo.png?sign=synthetic';
+  const reads = [], checks = [];
+  const cloud = { init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
+    downloadFile: async args => { reads.push(args.fileID); return { fileContent: Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), Buffer.alloc(40)]) }; },
+    getTempFileURL: async args => { assert.equal(args.fileList[0].maxAge, 120); return { fileList: [{ fileID: image, status: 0, tempFileURL: imageURL }] }; },
+    uploadFile: () => assert.fail('识图不得公开未发布图片'),
+    openapi: { security: { msgSecCheck: async args => { checks.push(args); return { result: { suggest: 'pass' } }; } } } };
+  const context = { exports: {}, process: { env: {} }, require: name => {
+    if (name === 'wx-server-sdk') return cloud;
+    if (name === './deepseek') return { createDeepseek: options => async (input, attachments) => {
+      assert.equal(options.purpose, 'polish'); assert.equal(input.content, ''); assert.equal(input.imageCount, 1);
+      assert.deepEqual(attachments.images, [imageURL]); return '把好心情装进镜头里。';
+    } };
+    return require('../cloudfunctions/userService/' + name.slice(2));
+  } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../cloudfunctions/userService/index.js'), 'utf8'), context);
+  const result = await context.exports.main({ action: 'optimizeSquareContent', content: '', images: [image], userInfo: { openId: 'forged' } });
+  assert.equal(result.success, true, result.message); assert.equal(result.square.content, '把好心情装进镜头里。');
+  assert.deepEqual(reads, [image]); assert.equal(checks.length, 1); assert.equal(f.squarePosts.size, 0);
+  assert.ok(!/https|sign=|photo.png/.test(JSON.stringify(result)));
 });
 
 test('未认证普通用户可发布广场文字；真实身份绑定、服务器归属及展示字段受控', async () => {
@@ -140,7 +190,7 @@ test('内容长度、文字校验拒绝和服务异常均不写入动态', async
   assert.equal(failed.squarePosts.size, 0);
 });
 
-test('动态150字包含空格、换行和标点且不按UTF16拆分表情，回复保持300字', async () => {
+test('动态150字包含空格、换行和标点且不按UTF16拆分表情，回复单独限制50字', async () => {
   const f = fixture(); await f.login();
   for (const [index, content] of ['字'.repeat(149) + '！', '😊'.repeat(150), '字'.repeat(148) + ' \n'].entries()) {
     const result = await publish(f, content, f.alice, `length-valid-request${index}`);
@@ -150,8 +200,11 @@ test('动态150字包含空格、换行和标点且不按UTF16拆分表情，回
     assert.equal((await publish(f, content)).code, 'INVALID_POST');
   }
   const id = (await publish(f)).square.post._id;
-  const reply = await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: id, content: '回'.repeat(300), requestId: 'reply-length-300001' } }, f.alice);
+  const reply = await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: id, content: '回'.repeat(50), requestId: 'reply-length-500001' } }, f.alice);
   assert.equal(reply.success, true, reply.message);
+  for (const content of ['😊'.repeat(51), '回'.repeat(50) + ' ', '\n' + '回'.repeat(50)]) {
+    assert.equal((await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: id, content, requestId: 'reply-over-limit-0001' } }, f.alice)).code, 'INVALID_POST');
+  }
 });
 
 test('点赞采用目标状态，重复和并发请求不会虚增计数，可取消', async () => {
@@ -272,4 +325,17 @@ test('删除和举报遇到账号失效或写入失败不提示成功、不留�
   const failedId = (await publish(failed)).square.post._id;
   assert.equal((await failed.handle({ action: 'reportSquarePost', postId: failedId, reason: 'abuse' }, failed.bob)).success, false);
   assert.equal(failed.squareReports.size, 0);
+});
+
+
+test('普通及楼中回复按50个码点限制，空格换行计入，@小萃前缀也计入', async () => {
+  const f = fixture(); await f.login(); const id = (await publish(f)).square.post._id;
+  const send = (content, requestId, extra = {}) => f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: id, content, requestId, ...extra } }, f.alice);
+  const root = await send('😊'.repeat(50), 'comment-emoji-limit-01'); assert.equal(root.success, true);
+  const rootId = root.square.reply._id;
+  const child = await send('回'.repeat(50), 'comment-child-limit-01', { replyToId: rootId }); assert.equal(child.success, true);
+  for (const [i, content] of ['😊'.repeat(51), '字'.repeat(50) + ' ', '\n' + '字'.repeat(50), '@小萃 ' + '问'.repeat(47)].entries()) {
+    for (const nested of [false, true]) assert.equal((await send(content, 'comment-over-limit-' + i + '-' + nested, nested ? { replyToId: rootId } : {})).code, 'INVALID_POST');
+  }
+  assert.equal((await send('@小萃 ' + '问'.repeat(46), 'comment-ai-limit-001', { askAI: true })).success, true);
 });

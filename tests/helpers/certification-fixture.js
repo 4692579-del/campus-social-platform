@@ -100,7 +100,7 @@ function fixture(options = {}) {
     },
   };
   const handle = createUserService(db, {
-    generateAI: options.generateAI, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
+    generateAI: options.generateAI, resolveAIImages: options.resolveAIImages, resolveAICommentImages: options.resolveAICommentImages, resolveComposeImages: options.resolveComposeImages, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
     checkText: options.checkText || (async () => true),
     processSquareImages: options.processSquareImages,
     randomAccountId: options.randomAccountId,

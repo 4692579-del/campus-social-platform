@@ -14,7 +14,7 @@ let aiUsageCache = null, pendingAIUsage = null, aiUsageRevision = 0;
 
 function getCachedAIUsage() {
   const user = getCachedUser();
-  return user && aiUsageCache && aiUsageCache.owner === user._id && Date.parse(aiUsageCache.value.resetsAt) > Date.now() ? aiUsageCache.value : null;
+  return user && aiUsageCache && aiUsageCache.owner === user._id && Math.min(Date.parse(aiUsageCache.value.resetsAt), aiUsageCache.value.hourly ? Date.parse(aiUsageCache.value.hourly.resetsAt) : Infinity) > Date.now() ? aiUsageCache.value : null;
 }
 function invalidateAIUsage() {
   aiUsageRevision++;
@@ -32,6 +32,7 @@ async function getAIUsage({ force = false } = {}) {
     if (version !== sessionVersion || !getCachedUser() || getCachedUser()._id !== owner) throw new Error('登录状态已变更，请重新登录');
     if (revision !== aiUsageRevision) return getAIUsage({ force: false });
     if (!value || !Number.isFinite(value.usedPercent) || value.usedPercent < 0 || value.usedPercent > 100 || !Number.isFinite(Date.parse(value.resetsAt))) throw new Error('额度信息读取失败，请重试');
+    if (value.hourly && (!Number.isFinite(value.hourly.usedPercent) || value.hourly.usedPercent < 0 || value.hourly.usedPercent > 100 || !Number.isFinite(Date.parse(value.hourly.resetsAt)))) throw new Error('额度信息读取失败，请重试');
     aiUsageCache = { owner, value, time: Date.now() };
     return value;
   }).finally(() => { if (pendingAIUsage === promise) pendingAIUsage = null; });

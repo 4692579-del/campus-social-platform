@@ -15,6 +15,11 @@
     <view class="ai-usage-card">
       <view class="ai-usage-heading"><text>使用额度</text><button size="mini" wx:if="{{user}}" class="ai-usage-refresh" bindtap="refresh" disabled="{{refreshing}}" hover-class="ai-usage-refresh-pressed" aria-label="刷新额度"><image class="ai-usage-refresh-icon {{refreshing ? 'is-refreshing' : ''}}" src="/images/interface/refresh.svg" mode="aspectFit" /></button></view>
       <block wx:if="{{usage && user}}">
+        <view class="ai-usage-summary"><text class="ai-usage-label">本小时用量</text><view wx:if="{{usage.hourly}}" class="ai-usage-number"><text>{{hourlyPercentText}}%</text><text>已使用</text></view><text wx:else class="ai-usage-label">暂时无法读取</text></view>
+        <view wx:if="{{usage.hourly}}" class="ai-usage-track" aria-role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{usage.hourly.usedPercent}}" aria-label="{{'本小时额度已使用' + hourlyPercentText + '%'}}"><view class="ai-usage-fill {{usage.hourly.usedPercent >= 95 ? 'is-low' : ''}}" style="width: {{usage.hourly.usedPercent}}%;"></view></view>
+        <view class="ai-usage-reset"><image src="/images/interface/clock-muted.svg" mode="aspectFit" /><text>{{hourlyResetText}}</text></view>
+        <view wx:if="{{usage.hourly.exhausted}}" class="ai-usage-exhausted">本小时额度已用完，稍后再来找小萃吧</view>
+        <view class="ai-usage-separator"></view>
         <view class="ai-usage-summary"><text class="ai-usage-label">今日用量</text><view class="ai-usage-number"><text>{{percentText}}%</text><text>已使用</text></view></view>
         <view class="ai-usage-track" aria-role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{usage.usedPercent}}" aria-label="{{'今日额度已使用' + percentText + '%'}}"><view class="ai-usage-fill {{usage.usedPercent >= 95 ? 'is-low' : ''}}" style="width: {{usage.usedPercent}}%;"></view></view>
         <view wx:if="{{usage.exhausted}}" class="ai-usage-exhausted">今日额度已用完，明日再来找小萃吧</view>

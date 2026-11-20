@@ -9,9 +9,9 @@ Component({
     items: [
       { label: '首页', path: '/pages/home/index', icon: 'home' },
       { label: '集市', path: '/pages/market/index', icon: 'market' },
-      { label: '私信', path: '/pages/messages/index', icon: 'bell', iconSource: '/images/interface/bell', iconExtension: 'svg' },
+      { label: '私信', path: '/pages/messages/index', icon: 'bell' },
       { label: '任务', path: '/pages/tasks/index', icon: 'tasks' },
-      { label: '搜索', path: '/pages/search/index', icon: 'search', iconSource: '/images/interface/search', iconExtension: 'svg' },
+      { label: '搜索', path: '/pages/search/index', icon: 'search' },
     ],
   },
   lifetimes: {

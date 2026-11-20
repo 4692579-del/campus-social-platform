@@ -1,0 +1,6 @@
+:host { display: block; width: 100%; height: 100%; pointer-events: none; }
+.cui-renderer { position: relative; width: 100%; height: 100%; overflow: visible; background: transparent; pointer-events: none; }
+.cui-static { display: block; width: 100%; height: 100%; }
+.cui-static.is-hidden { opacity: 0; }
+.cui-canvas { position: absolute; left: 0; top: -50%; width: 100%; height: 200%; opacity: 0; background: transparent; pointer-events: none; }
+.cui-canvas.is-visible { opacity: 1; }

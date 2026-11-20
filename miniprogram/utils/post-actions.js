@@ -120,6 +120,10 @@ module.exports = {
     if (event.detail.id) { this.setData({ commentPostId: event.detail.id }); syncCommentsTabBar(this); }
   },
   closeComments() { if (this.data.commentPostId) this.setData({ commentPostId: '' }); syncCommentsTabBar(this); },
+  commentsUsingNativeMedia() {
+    const panel = typeof this.selectComponent === 'function' && this.selectComponent('#active-comments');
+    return Boolean(panel && typeof panel.isNativeMediaActive === 'function' && panel.isNativeMediaActive());
+  },
   commentLogin() { if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard(); this.closeComments(); login(this); },
   commentChanged(event) { sync(this, event.detail.id); },
   async managePost(event) {

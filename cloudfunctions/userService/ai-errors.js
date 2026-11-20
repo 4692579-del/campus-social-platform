@@ -1,4 +1,5 @@
 const MESSAGES = {
+  AI_HOURLY_QUOTA_EXHAUSTED: '本小时小萃AI额度已用完，下一整点重置额度',
   AI_QUOTA_EXHAUSTED: '今日小萃AI额度已用完，每日0点重置额度',
   AI_QUOTA_BUSY: '小萃正在处理其他请求，请稍后再试',
   AI_USAGE_EXPIRED: '本次请求已过期，请重新尝试',
@@ -12,6 +13,7 @@ const MESSAGES = {
   AI_NETWORK: 'AI 网络连接失败，请重试',
   AI_EMPTY: 'AI 暂未生成回复，请重试',
   AI_RESPONSE_INVALID: 'AI 回复格式异常，请重试',
+  AI_IMAGES_UNAVAILABLE: '小萃暂时无法读取动态或评论配图，请稍后重试',
   AI_CONTENT_REJECTED: '小萃的回复未通过内容检查',
   AI_CONTENT_CHECK_UNAVAILABLE: '回复内容检查暂不可用，请稍后重试',
   AI_SAVE_FAILED: 'AI 回复保存失败，请稍后重试',

@@ -13,7 +13,7 @@ function composerFixture(options = {}) {
     login: async () => { current = { ...user }; version++; return current; },
     logout: () => { current = null; version++; },
   };
-  const square = { optimizeContent: async content => { requests.push({ optimize: content }); return options.optimize ? options.optimize(content) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none') => {
+  const square = { optimizeContent: async (content, images = []) => { requests.push({ optimize: content, ...(images.length ? { images } : {}) }); return options.optimize ? options.optimize(content, images) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none') => {
     calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}) });
     return options.publish ? options.publish(content, id, images, declaration) : { _id: 'p_' + 'a'.repeat(40), content, images, declaration };
   } };
@@ -41,7 +41,7 @@ function composerFixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../miniprogram/utils/login-gate.js'), 'utf8'), gate);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../miniprogram/components/square-composer/index.js'), 'utf8'), {
     Component: value => { definition = value; }, wx,
-    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, fn); delays.set(id, delay); return id; }, clearTimeout(id) { timers.delete(id); delays.delete(id); },
+    setTimeout(fn, delay) { if (delay > 2500 && !options.manualOptimizationDelay) { queueMicrotask(fn); return ++timerId; } const id = ++timerId; timers.set(id, fn); delays.set(id, delay); return id; }, clearTimeout(id) { timers.delete(id); delays.delete(id); },
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square :
       name.includes('services/post-images') ? media : name.includes('login-gate') ? gate.module.exports : name.includes('content-declaration') ? require('../../miniprogram/utils/content-declaration') : require('../../miniprogram/utils/post-view'),
   });

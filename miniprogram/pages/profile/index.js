@@ -71,7 +71,7 @@ Page({
     this.clearProfileScrollSync();
     this.clearNavigationFrame();
     this._navMeasurementVersion = (this._navMeasurementVersion || 0) + 1;
-    this.closeComments();
+    if (!this.commentsUsingNativeMedia()) this.closeComments();
     this._visible = false;
     this._refreshing = false;
     this._viewVersion = (this._viewVersion || 0) + 1;

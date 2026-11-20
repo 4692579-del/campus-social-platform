@@ -1,0 +1,4 @@
+<view class="cui-renderer">
+  <image class="cui-static {{canvasVisible ? 'is-hidden' : ''}}" src="/images/ai/cui-wordmark.svg" mode="aspectFit" />
+  <canvas id="cui-motion" class="cui-canvas {{canvasVisible ? 'is-visible' : ''}}" type="2d" aria-hidden="true"></canvas>
+</view>
