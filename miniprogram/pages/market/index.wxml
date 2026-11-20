@@ -1,7 +1,0 @@
-<view class="cs-page has-tab-bar">
-  <view class="tab-placeholder">
-    <image class="tab-placeholder-icon" src="/images/tab-bar/market.png" mode="aspectFit" />
-    <view class="tab-placeholder-title">集市</view>
-    <view class="cs-muted">二手集市即将开放</view>
-  </view>
-</view>

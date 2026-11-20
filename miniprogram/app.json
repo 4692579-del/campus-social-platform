@@ -1,9 +1,8 @@
 {
   "pages": [
     "pages/home/index",
-    "pages/market/index",
     "pages/messages/index",
-    "pages/tasks/index",
+    "pages/inbox/index",
     "pages/search/index",
     "pages/square-compose/index",
     "pages/square-detail/index",
@@ -33,9 +32,8 @@
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/home/index", "text": "首页" },
-      { "pagePath": "pages/market/index", "text": "集市" },
       { "pagePath": "pages/messages/index", "text": "私信" },
-      { "pagePath": "pages/tasks/index", "text": "任务" },
+      { "pagePath": "pages/inbox/index", "text": "消息" },
       { "pagePath": "pages/search/index", "text": "搜索" }
     ]
   },

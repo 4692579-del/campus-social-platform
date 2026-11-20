@@ -1,10 +1,16 @@
 <view wx:if="{{!authBlocked && !commentsOpen && !composerOpen}}" class="tab-bar-viewport {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
-  <view class="tab-bar">
-    <view class="tab-items">
-      <button wx:for="{{items}}" wx:key="path" class="tab-item" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="tab-item-pressed">
-        <image class="tab-icon" src="/images/tab-bar/{{item.icon}}{{selected === index ? '-active' : ''}}.svg" mode="aspectFit" />
-      </button>
+  <view class="tab-dock">
+    <view class="tab-dock-scale {{compact ? 'is-compact' : ''}}">
+      <view class="tab-bar nav-glass">
+        <view class="tab-items">
+          <view class="tab-indicator {{indicatorAnimating ? 'is-sliding' : ''}}" style="opacity: {{selected >= 0 ? 1 : 0}}; width: {{100 / items.length}}%; transform: translateX({{indicatorPosition}}%); --tab-slide-from: {{indicatorFrom}}%; --tab-slide-to: {{indicatorTo}}%; animation-duration: {{indicatorDuration}}ms; animation-delay: {{indicatorDelay}}ms;" aria-hidden="true"></view>
+          <button wx:for="{{items}}" wx:key="path" class="tab-item {{selected === index ? 'is-selected' : ''}}" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="tab-item-pressed">
+            <view class="tab-icon-capsule"><image class="tab-icon tab-icon-idle" src="/images/tab-bar/{{item.icon}}.svg" mode="aspectFit" /><image class="tab-icon tab-icon-active" src="/images/tab-bar/{{item.icon}}-active.svg" mode="aspectFit" /></view>
+          </button>
+        </view>
+        <view class="tab-menu-shade" bindtap="closeProfileMenu" catchtouchmove="stopMenuTouch" aria-hidden="{{!menuOpen}}" aria-role="button" aria-label="收起侧面菜单"></view>
+      </view>
+      <button class="tab-compose-button nav-glass" bindtap="openComposer" hover-class="tab-item-pressed" aria-label="发布广场动态"><image class="compose-icon" src="/images/tab-bar/plus-blue.svg" mode="aspectFit" /></button>
     </view>
-    <view class="tab-menu-shade" bindtap="closeProfileMenu" catchtouchmove="stopMenuTouch" aria-hidden="{{!menuOpen}}" aria-role="button" aria-label="收起侧面菜单"></view>
   </view>
 </view>

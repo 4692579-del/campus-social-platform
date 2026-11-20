@@ -2,6 +2,14 @@ const users = require('./user');
 const { projectComment, reactComment } = require('../utils/comment-state');
 const { newestComments, oldestComments } = require('../utils/comment-order');
 const TTL = 60000;
+let ownStats = null, statsRevision = 0;
+let ownHistory = null, historyRevision = 0;
+const historyListeners = new Set();
+function subscribeHistory(listener) { historyListeners.add(listener); return () => historyListeners.delete(listener); }
+function historyChanged(invalidate = false) {
+  if (invalidate) { historyRevision++; if (ownHistory) ownHistory.time = 0; }
+  for (const listener of historyListeners) { try { listener({ invalidated: invalidate }); } catch (error) { /* 展示不影响保存。 */ } }
+}
 let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
 const posts = new Map(), postTimes = new Map(), replies = new Map(), pending = new Map(), revisions = new Map();
 const deleted = new Set();
@@ -16,8 +24,24 @@ function subscribeAI(listener) { aiListeners.add(listener); return () => aiListe
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { owner = key; generation += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
+  if (key !== owner) { ownHistory = null; historyRevision++; }
+  if (key !== owner) { owner = key; generation += 1; ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
+}
+function cachedOwnStats() { session(); return ownStats && ownStats.value; }
+function invalidateOwnStats() { statsRevision += 1; if (ownStats) ownStats.time = 0; }
+function getOwnStats() {
+  session();
+  if (!users.getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
+  if (ownStats && Date.now() - ownStats.time < TTL) return Promise.resolve(ownStats.value);
+  const revision = statsRevision;
+  return merged(`own-stats:${revision}`, async () => {
+    const result = await call('getSquareOwnStats', {}, true);
+    if (revision !== statsRevision) throw Object.assign(new Error('获赞数据已更新，请重试'), { code: 'STATS_CHANGED' });
+    if (!Number.isSafeInteger(result.receivedLikes) || result.receivedLikes < 0) throw new Error('获赞数据暂不可用');
+    ownStats = { time: Date.now(), value: { receivedLikes: result.receivedLikes } };
+    return ownStats.value;
+  });
 }
 function cachedFeed() { session(); return feed && feed.value; }
 function cachedAlbum() { session(); return albumFeed && albumFeed.value; }
@@ -35,6 +59,56 @@ function cachedOwnFeed() {
 }
 function cachedPost(id) { session(); return posts.get(id) || (feed && feed.value.items.find(item => item._id === id)) || null; }
 function cachedReplies(id) { session(); return replies.get(id) || null; }
+function cachedOwnReplies() { session(); return ownHistory && ownHistory.value; }
+function listOwnReplies({ cursor = '', force = false } = {}) {
+  session();
+  if (!force && !cursor && ownHistory && Date.now() - ownHistory.time < TTL) return Promise.resolve(ownHistory.value);
+  const revision = historyRevision;
+  return merged(`own-replies:${cursor}:${revision}`, async () => {
+    const versions = new Map(commentVersions);
+    const result = await call('listSquareOwnReplies', { cursor }, true);
+    if (revision !== historyRevision) throw Object.assign(new Error('回复记录已更新，请重试'), { code: 'HISTORY_CHANGED' });
+    if (!Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' ||
+      result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('回复记录暂不可用');
+    const rows = result.items.filter(item => item.reply && item._id === item.reply._id && !deleted.has(item.postId) && !commentGone(item.reply)).map(item => {
+      const current = comments.get(item._id);
+      let reply = pendingComment(current && versions.get(item._id) !== commentVersions.get(item._id) ? current : item.reply);
+      const blocked = Boolean(item.reply.hiddenByAncestor) || [...(reply.ancestorIds || []), reply.rootId].filter(Boolean).some(key => comments.get(key)?.folded);
+      if (blocked) reply = { ...reply, content: '', images: [], folded: true, hiddenByAncestor: true };
+      // 上文折叠是历史展示投影，不能伪装成本条评论自己的心碎状态写回共享缓存。
+      if (!reply.hiddenByAncestor) saveComment(reply);
+      const parent = comments.get(item.context._id);
+      const context = blocked ? { folded: true, content: '', imageCount: 0 } : parent ? { ...item.context,
+        folded: Boolean(parent.folded), content: parent.folded ? '' : Array.from(parent.content || '').slice(0, 100).join(''), imageCount: parent.folded ? 0 : (parent.images || []).length } : item.context;
+      return { ...item, reply, context };
+    });
+    const items = [...new Map([...(cursor && ownHistory ? ownHistory.value.items : []), ...rows].map(item => [item._id, item])).values()]
+      .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+    ownHistory = { time: Date.now(), value: { ...result, items } };
+    return ownHistory.value;
+  });
+}
+async function replyContext(id, replyId) {
+  session(); unavailable(id);
+  const revision = commentRemovals, versions = new Map(commentVersions);
+  const result = await merged(`reply-context:${id}:${replyId}:${revision}`, () => call('getSquareReplyContext', { postId: id, replyId }, true));
+  unavailable(id);
+  if (revision !== commentRemovals || !result.root || commentGone(result.root) || deletedComments.has(replyId)) throw new Error('评论已更新，请重试');
+  const project = row => pendingComment(versions.get(row._id) !== commentVersions.get(row._id) && comments.has(row._id) ? comments.get(row._id) : row);
+  return { ...result, root: project(result.root), items: result.items.filter(row => !commentGone(row)).map(project) };
+}
+function replyWindow(id, rootId, { offset = 0 } = {}) {
+  session();
+  const revision = commentRemovals, versions = new Map(commentVersions);
+  return merged(`reply-window:${id}:${rootId}:${offset}:${revision}`, async () => {
+    unavailable(id);
+    const result = await call('listSquareReplyChildren', { postId: id, rootId, offset });
+    unavailable(id);
+    if (revision !== commentRemovals || deletedComments.has(rootId)) throw new Error('评论已更新，请重试');
+    return { ...result, items: result.items.filter(row => !commentGone(row)).map(row =>
+      pendingComment(versions.get(row._id) !== commentVersions.get(row._id) && comments.has(row._id) ? comments.get(row._id) : row)) };
+  });
+}
 function cachedChildren(id, rootId) { session(); return children.get(`${id}:${rootId}`) || null; }
 function cachedComment(id) { session(); return comments.get(id) || null; }
 function subscribeComment(listener) { commentListeners.add(listener); return () => commentListeners.delete(listener); }
@@ -43,6 +117,18 @@ function saveComment(row, changed = false, notify = false) {
   comments.set(row._id, row);
   if (changed) commentVersions.set(row._id, ++mutation);
   for (const list of [...replies.values(), ...children.values()]) list.items = list.items.map(item => item._id === row._id ? row : item);
+  if (ownHistory) {
+    ownHistory.value.items = ownHistory.value.items.map(item => {
+      if (row.folded && [...(item.reply.ancestorIds || []), item.reply.rootId].includes(row._id)) return { ...item,
+        reply: { ...item.reply, folded: true, hiddenByAncestor: true, content: '', images: [] }, context: { folded: true, content: '', imageCount: 0 } };
+      if (item._id === row._id && !item.reply.hiddenByAncestor) return { ...item, reply: row };
+      if (item.context._id === row._id) return { ...item, context: { ...item.context, folded: row.folded,
+        content: row.folded ? '' : Array.from(row.content || '').slice(0, 100).join(''), imageCount: row.folded ? 0 : (row.images || []).length } };
+      return item;
+    });
+    if (changed) ownHistory.time = 0;
+    if (notify) historyChanged();
+  }
   if (notify) for (const listener of commentListeners) {
     try { listener(row); } catch (error) { /* 展示订阅不能影响后台保存。 */ }
   }
@@ -59,7 +145,11 @@ function likedPost(post, liked) {
 }
 function pendingLike(post) {
   const write = likeWrites.get(post._id);
-  return write ? likedPost(post, write.desired) : post;
+  let value = write ? likedPost(post, write.desired) : post;
+  const current = posts.get(post._id);
+  if (current && (current.quoteVersion || 0) > (value.quoteVersion || 0)) value = { ...value, quoteCount: current.quoteCount, quoteVersion: current.quoteVersion };
+  const quote = removedQuote(value.quote);
+  return quote !== value.quote ? { ...value, quote } : value;
 }
 function subscribePost(listener) { postListeners.add(listener); return () => postListeners.delete(listener); }
 function updatePost(post, prepend = false) {
@@ -88,7 +178,16 @@ function updatePost(post, prepend = false) {
 function unavailable(id) {
   if (deleted.has(id)) throw Object.assign(new Error('动态不存在或已不可见'), { code: 'POST_NOT_FOUND' });
 }
+function removedQuote(quote, id) {
+  if (!quote) return quote;
+  if (quote._id === id || deleted.has(quote._id)) return quote.unavailable ? quote : { _id: quote._id, unavailable: true };
+  const nested = removedQuote(quote.quote, id);
+  return nested === quote.quote ? quote : { ...quote, quote: nested };
+}
 function removePost(id, knownOwn = false) {
+  if (ownHistory) ownHistory.value.items = ownHistory.value.items.filter(item => item.postId !== id);
+  historyChanged(true);
+  invalidateOwnStats();
   const newlyRemoved = !deleted.has(id);
   const row = posts.get(id) || (ownFeed && ownFeed.value.items.find(item => item._id === id));
   const own = knownOwn || Boolean(row && (row.isOwn || row.author && users.getCachedUser() && users.getCachedUser().accountId && row.author.accountId === users.getCachedUser().accountId));
@@ -109,6 +208,10 @@ function removePost(id, knownOwn = false) {
     if (removed) cached.value.nextOffset = Math.max(0, cached.value.nextOffset - 1);
     cached.time = 0;
   }
+  for (const post of [...posts.values()]) {
+    const quote = removedQuote(post.quote, id);
+    if (quote !== post.quote) updatePost({ ...post, quote });
+  }
 }
 async function call(action, data = {}, authenticated = false) {
   session();
@@ -124,7 +227,7 @@ async function call(action, data = {}, authenticated = false) {
     if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) users.logout();
     throw Object.assign(new Error(result && result.code !== 'INVALID_ACTION' ? result.message :
       ['processSquareAIReply', 'optimizeSquareContent'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
-        ['listSquareReplyChildren', 'setSquareCommentState'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
+        ['listSquareReplyChildren', 'setSquareCommentState', 'listSquareOwnReplies', 'getSquareReplyContext'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
   return result.square;
@@ -214,11 +317,13 @@ function readComments(id, rootId, { offset, force }) {
     return value;
   });
 }
-async function publish(content, requestId, images = [], declaration = 'none') {
+async function publish(content, requestId, images = [], declaration = 'none', quotePostId = '') {
+  if (quotePostId && !/^p_[a-f0-9]{40}$/.test(quotePostId)) throw new Error('引用的动态无效');
   const result = await call('publishSquarePost', { post: { content, requestId, scope: 'square', ...(images.length ? { images } : {}),
-    ...(declaration !== 'none' ? { declaration } : {}) } }, true);
+    ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}) } }, true);
   revisions.set(result.post._id, ++mutation);
   updatePost(result.post, true);
+  if (result.quotedPost) updatePost(result.quotedPost);
   const added = (result.post.images || []).map((fileID, index) => ({ _id: `${result.post._id}_${index}`, postId: result.post._id, fileID, createdAt: result.post.createdAt, index }));
   if (added.length) {
     const previous = albumFeed && albumFeed.value;
@@ -275,6 +380,7 @@ async function saveLike(id, write) {
       if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
       unavailable(id);
       if (!result.post || typeof result.post.liked !== 'boolean') throw new Error('点赞状态未确认，请重试');
+      invalidateOwnStats();
       write.confirmed = merge(result.post);
       if (result.post.liked !== target) throw new Error('点赞状态未确认，请重试');
       revisions.set(id, ++mutation);
@@ -313,6 +419,7 @@ async function reply(id, content, requestId, replyToId, askAI = false, images = 
   result.reply = pendingComment(result.reply);
   saveComment(result.reply, true);
   if (result.root) { result.root = pendingComment(result.root); saveComment(result.root, true); }
+  historyChanged(true);
   return result;
 }
 function processAIReply(id, replyId) {
@@ -403,6 +510,7 @@ async function saveCommentState(replyId, write) {
     if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
     commentWrites.delete(replyId);
     saveComment(write.confirmed, true, true);
+    historyChanged(true);
     return write.confirmed;
   } catch (error) {
     if (valid()) {
@@ -421,6 +529,7 @@ async function deletePost(id) {
   const result = await call('deleteSquarePost', { postId: id }, true);
   if (result.deletedId !== id) throw new Error('删除未确认，请重试');
   removePost(id, true);
+  if (result.quotedPost) updatePost(result.quotedPost);
   return id;
 }
 async function deleteReply(id, replyId) {
@@ -428,6 +537,9 @@ async function deleteReply(id, replyId) {
   if (result.deletedId !== replyId || !result.post) throw new Error('删除未确认，请重试');
   unavailable(id);
   deletedComments.add(replyId); commentRemovals += 1;
+  if (ownHistory) ownHistory.value.items = ownHistory.value.items.filter(item => !commentGone(item.reply)).map(item =>
+    item.context._id === replyId ? { ...item, context: { unavailable: true } } : item);
+  historyChanged(true);
   revisions.set(id, ++mutation);
   for (const [key, row] of comments) if (commentGone(row)) {
     comments.delete(key); commentWrites.delete(key); commentVersions.set(key, ++mutation);
@@ -465,4 +577,4 @@ async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };
+module.exports = { cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };

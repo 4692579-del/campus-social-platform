@@ -1,7 +1,0 @@
-<view class="cs-page has-tab-bar">
-  <view class="tab-placeholder">
-    <image class="tab-placeholder-icon" src="/images/tab-bar/tasks.png" mode="aspectFit" />
-    <view class="tab-placeholder-title">任务</view>
-    <view class="cs-muted">跑腿互助即将开放</view>
-  </view>
-</view>

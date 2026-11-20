@@ -4,6 +4,7 @@
   "backgroundColor": "#FFFFFF",
   "disableScroll": true,
   "usingComponents": {
+    "square-composer": "/components/square-composer/index",
     "square-post": "/components/square-post/index",
     "comments-sheet": "/components/comments-sheet/index"
   }

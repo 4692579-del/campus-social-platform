@@ -70,7 +70,7 @@
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
     <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
     <block wx:else>
-      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" />
+      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>
@@ -79,7 +79,7 @@
   <view wx:else class="content-empty"><view class="empty-title">{{isVerified ? '校园圈动态将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view></view>
   </view>
   <view class="profile-panel {{selectedContent === 'replies' ? 'is-active' : ''}}" style="left: 25%;" aria-hidden="{{selectedContent !== 'replies'}}">
-    <view class="content-empty"><view class="empty-title">{{contentTabs[1].empty}}</view></view>
+    <profile-replies id="profile-replies" active="{{selectedContent === 'replies'}}" viewer="{{user}}" bind:open="openHistoryPost" bind:reply="replyToHistory" />
   </view>
   <view class="profile-panel {{selectedContent === 'reposts' ? 'is-active' : ''}}" style="left: 50%;" aria-hidden="{{selectedContent !== 'reposts'}}">
     <view class="content-empty"><view class="empty-title">{{contentTabs[2].empty}}</view></view>
@@ -99,7 +99,7 @@
   </view>
   </scroll-view>
   <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: error, loading: loading}}" />
-  <comments-sheet id="active-comments" wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
+  <comments-sheet id="active-comments" wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" focus-reply-id="{{historyCommentPostId === commentPostId ? historyReplyId : ''}}" focus-reply-input="{{historyCommentPostId === commentPostId && historyReplyInput}}" bind:close="closeHistoryComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>
 
-<square-composer wx:if="{{composerOpen}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />
+<square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />

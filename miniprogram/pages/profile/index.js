@@ -31,7 +31,7 @@ Page({
       { key: 'reposts', label: '转发', icon: 'reposts', empty: '还没有转发的动态' },
       { key: 'album', label: '相册', icon: 'album', iconSource: '/images/interface/album', iconExtension: 'svg', empty: '还没有上传照片' },
     ],
-    emptyText: '还没有发布动态', commentPostId: '',
+    emptyText: '还没有发布动态', commentPostId: '', historyCommentPostId: '', historyReplyId: '', historyReplyInput: false,
     postsMenuOpen: false, postScope: 'square', ownPosts: [], postsLoading: false, postsMoreLoading: false,
     postsError: '', postsHasMore: false, postsOffset: 0,
     albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '',
@@ -262,14 +262,14 @@ Page({
     if (this.data.profileRefreshing || this.interactionBlocked() || !this.data.user || this._unloaded || this._visible === false) return;
     const request = this._profilePullRequest = {};
     this.setData({ profileRefreshing: true });
-    try { if (this.data.selectedContent === 'album') await this.loadAlbum(true); else await this.loadOwnPosts(true); }
+    try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadAlbum(true); else await this.loadOwnPosts(true); }
     finally {
       if (this._profilePullRequest === request) { this._profilePullRequest = null; this.setData({ profileRefreshing: false }); }
     }
   },
   syncNavigation() {
     if (typeof this.getTabBar === 'function' && this.getTabBar()) this.getTabBar().setData({
-      selected: 4, menuOpen: this.data.menuOpen, authBlocked: this.interactionBlocked(), commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen),
+      selected: 3, menuOpen: this.data.menuOpen, authBlocked: this.interactionBlocked(), commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen),
     });
   },
   setMenuTabBarOpen(open) {
@@ -485,6 +485,31 @@ Page({
     if (tab.key === 'album') return this.loadAlbum();
   },
   closePostsMenu() { this.setData({ postsMenuOpen: false }); },
+  openComments(event) {
+    this.setData({ historyCommentPostId: '', historyReplyId: '', historyReplyInput: false });
+    return postActions.openComments.call(this, event);
+  },
+  openHistoryPost(event) {
+    if (this._openingPost || this._unloaded || this._visible === false || this.interactionBlocked()) return;
+    const { id, replyId } = event.detail;
+    if (!/^p_[a-f0-9]{40}$/.test(id || '') || !/^[rc]_[a-f0-9]{40}$/.test(replyId || '')) return;
+    this._openingPost = true;
+    wx.navigateTo({ url: `/pages/square-detail/index?id=${id}&replyId=${replyId}`, fail: () => {
+      this._openingPost = false;
+      if (!this._unloaded && this._visible !== false) wx.showToast({ title: '动态打开失败，请重试', icon: 'none' });
+    } });
+  },
+  replyToHistory(event) {
+    if (this.interactionBlocked() || !this.data.user || this._visible === false) return;
+    const { id, replyId } = event.detail;
+    if (!/^p_[a-f0-9]{40}$/.test(id || '') || !/^[rc]_[a-f0-9]{40}$/.test(replyId || '')) return;
+    this.setData({ historyCommentPostId: id, historyReplyId: replyId, historyReplyInput: true, commentPostId: id });
+    this.syncNavigation();
+  },
+  closeHistoryComments() {
+    this.closeComments();
+    this.setData({ historyCommentPostId: '', historyReplyId: '', historyReplyInput: false });
+  },
   selectPostScope(event) {
     if (this.interactionBlocked()) return;
     const scope = event.currentTarget.dataset.scope;
@@ -557,19 +582,20 @@ Page({
     finally { this._albumPreviewing = false; }
   },
   loadMoreOwnPosts() {
+    if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history && !this.data.commentPostId) return history.loadMore(); return; }
     if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen) return;
     if (this.data.selectedContent === 'album') { if (this.data.albumHasMore) return this.loadAlbum(false, true); return; }
     if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' && this.data.postsHasMore) return this.loadOwnPosts(false, true);
   },
   shareProfile() { if (!this.interactionBlocked()) wx.showToast({ title: '个人主页分享将在后续开放', icon: 'none' }); },
-  publishPost() {
+  publishPost(event) {
     if (this.interactionBlocked() || !this.data.user || this.data.commentPostId) return;
     this.resetProfilePull();
-    this.setData({ composerOpen: true, postsMenuOpen: false });
+    this.setData({ composerOpen: true, postsMenuOpen: false, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
     this.syncNavigation();
   },
   closeComposer(event) {
-    this.setData({ composerOpen: false });
+    this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' });
     const user = userService.getCachedUser();
     if ((user && user._id) !== (this.data.user && this.data.user._id)) this.applyUser(user);
     if (event.detail.published) {

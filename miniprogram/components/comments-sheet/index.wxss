@@ -19,6 +19,8 @@ button::after { border: 0; }
 .comments-status { padding: 52rpx 28rpx; color: #98a1ad; font-size: 26rpx; text-align: center; }
 .comment-group { padding: 24rpx 28rpx 12rpx; }
 .comment-row { display: flex; gap: 18rpx; padding: 0; }
+.comment-row.is-located { border-radius: 14rpx; animation: located-reply 1.8s ease-out both; }
+@keyframes located-reply { from { background-color: rgba(71,117,250,.13); } to { background-color: transparent; } }
 .comment-avatar { width: 64rpx; height: 64rpx; flex-shrink: 0; border-radius: 50%; background: #f0f2f4; }
 .comment-avatar.is-ai { box-sizing: border-box; border: 1rpx solid #d3d8df; background: #fff; }
 .comment-main { flex: 1; min-width: 0; }

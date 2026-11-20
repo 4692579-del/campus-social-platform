@@ -23,4 +23,4 @@ function commentGroups(roots, threads) {
       showCollapse: !root.folded && Boolean(thread.open || (fresh.length && !remainingCount)) };
   });
 }
-module.exports = { commentGroups };
+module.exports = { commentGroups, rowView };

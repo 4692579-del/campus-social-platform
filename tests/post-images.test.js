@@ -73,7 +73,7 @@ test('图片轮播预览使用当前动态全部图片与点击位置，预览�
   let definition, finish;
   const previews = [], events = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), {
-    Component: value => { definition = value; }, require: () => ({ previewImages: (...args) => { previews.push(args); return new Promise(resolve => { finish = resolve; }); } }), wx: { showToast() {} },
+    Component: value => { definition = value; }, require: name => name.includes('post-image-layout') ? require('../miniprogram/utils/post-image-layout') : ({ previewImages: (...args) => { previews.push(args); return new Promise(resolve => { finish = resolve; }); } }), wx: { showToast() {} },
   });
   const files = ['cloud://test.bucket/a.jpg', 'cloud://test.bucket/b.jpg'];
   const component = { ...definition.methods, data: { post: { _id: 'post', images: files }, imageIndex: 0 }, setData(values) { Object.assign(this.data, values); }, triggerEvent: (...args) => events.push(args) };
@@ -87,7 +87,7 @@ test('图片轮播预览使用当前动态全部图片与点击位置，预览�
 test('图文卡片往返页面与大图预览时不重建图片，保留当前图片和展开正文，同组图片更新不复位', () => {
   let definition;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), {
-    Component: value => { definition = value; }, wx: {},
+    Component: value => { definition = value; }, require: () => require('../miniprogram/utils/post-image-layout'), wx: {},
   });
   const post = { _id: 'first', content: '真实正文', author: { nickname: '真实用户' }, images: ['one', 'two', 'three'] };
   const changes = [];

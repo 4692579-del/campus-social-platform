@@ -1,0 +1,14 @@
+<view class="tab-secondary-page">
+  <view class="tab-page-header" style="height: {{navHeight}}px;">
+    <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">消息</view>
+  </view>
+<view class="cs-page has-tab-bar">
+  <view class="tab-placeholder">
+    <image class="tab-placeholder-icon" src="/images/tab-bar/paper-plane-active.svg" mode="aspectFit" />
+    <view class="tab-placeholder-title">消息</view>
+    <view class="cs-muted">消息功能暂未开放</view>
+  </view>
+</view>
+</view>
+
+<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px;" aria-hidden="true"></view>

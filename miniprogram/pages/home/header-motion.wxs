@@ -1,0 +1,40 @@
+// 列表坐标保持固定。只在视图层移动标题栏，靠近列表顶部时最多移动真实已滚过的距离。
+function paint(owner) {
+  var state = owner.getState();
+  var config = state.config;
+  if (!config) return;
+  var positions = state.positions || {};
+  var top = Math.max(0, positions[config.active] || 0);
+  var gap = Math.max(0, config.header - config.safe);
+  var offset = config.compact && !config.blocked ? Math.min(top, gap) : 0;
+  offset = Math.round(offset * 100) / 100;
+  var disabled = gap > 0 && offset >= gap;
+  if (state.offset === offset && state.disabled === disabled) return;
+  var header = state.header || owner.selectComponent('.home-header');
+  if (!header) return;
+  state.header = header;
+  state.offset = offset;
+  state.disabled = disabled;
+  header.setStyle({ transform: 'translateY(-' + offset + 'px)', 'pointer-events': disabled ? 'none' : 'auto' });
+}
+
+function sync(value, oldValue, owner) {
+  owner.getState().config = value;
+  paint(owner);
+}
+
+function scroll(event, owner) {
+  var state = owner.getState();
+  var dataset = event.instance ? event.instance.getDataset() : event.currentTarget.dataset;
+  var key = dataset.feed;
+  if (key !== 'square' && key !== 'campus') return;
+  var positions = state.positions || (state.positions = {});
+  positions[key] = event.detail.scrollTop || 0;
+  if (state.config && key !== state.config.active) return;
+  paint(owner);
+  // 沿用已有逻辑层的方向、防回弹与底栏两档切换；不上传标题栏逐帧位移。
+  owner.callMethod('onHomeFeedScroll', { currentTarget: { dataset: { feed: key } },
+    detail: { scrollTop: event.detail.scrollTop, scrollHeight: event.detail.scrollHeight } });
+}
+
+module.exports = { sync: sync, scroll: scroll };

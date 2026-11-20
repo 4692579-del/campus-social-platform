@@ -8,7 +8,7 @@ Page({
   ...gate,
   ...postActions,
   data: {
-    user: null, postId: '', posts: [], commentMounts: [], loading: false, error: '', unavailable: false,
+    user: null, postId: '', posts: [], commentMounts: [], focusReplyId: '', loading: false, error: '', unavailable: false, composerOpen: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72,
     loginSheetOpen: false, loginLoading: false, loginError: '',
   },
@@ -20,7 +20,7 @@ Page({
       this.setData({ unavailable: true });
       return;
     }
-    this.setData({ postId: options.id });
+    this.setData({ postId: options.id, focusReplyId: /^[rc]_[a-f0-9]{40}$/.test(options.replyId || '') ? options.replyId : '' });
     this.syncViewer();
   },
   onShow() {
@@ -48,6 +48,7 @@ Page({
     const version = users.getSessionVersion();
     const changed = this._sessionVersion !== version;
     if (changed) {
+      this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' });
       this._sessionVersion = version;
       this._request = null;
       this._loadSequence = (this._loadSequence || 0) + 1;
@@ -85,7 +86,8 @@ Page({
     return request;
   },
   retry() { return this.loadPost(true); },
-  interactionBlocked() { return this.data.loginSheetOpen || this.data.loginLoading; },
+  interactionBlocked() { return this.data.loginSheetOpen || this.data.loginLoading || this.data.composerOpen; },
+  closeComposer() { this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' }); square.consumePublication(); },
   requestLogin() { this.syncViewer(); gate.requestLogin.call(this); },
   onLoggedIn() { this.syncViewer(); return this.loadPost(); },
   cancelLogin() { gate.cancelLogin.call(this); this.syncViewer(); return this.loadPost(); },

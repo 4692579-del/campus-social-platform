@@ -1,6 +1,6 @@
 <import src="../../templates/xiaocui-icon.wxml" />
 <template name="comment">
-  <view id="comment-{{row._id}}" class="comment-row {{child ? 'is-child' : ''}}" data-id="{{row._id}}" bindtap="selectReply">
+  <view id="comment-{{row._id}}" class="comment-row {{child ? 'is-child' : ''}} {{row.highlighted ? 'is-located' : ''}}" data-id="{{row._id}}" bindtap="{{history ? 'openComment' : 'selectReply'}}">
     <image class="comment-avatar {{row.author.isAI ? 'is-ai' : ''}}" src="{{row.author.isAI ? '/images/ai/xiaocui.jpg' : (row.author.avatarFileID || '/images/avatar.png')}}" mode="aspectFill" />
     <view class="comment-main">
       <view class="comment-heading"><text>{{row.author.nickname}}</text><text wx:if="{{row.author.isAI}}" class="comment-ai-badge">AI</text><image wx:if="{{row.author.verified}}" class="comment-badge" src="/images/verification/verified.png" /><text wx:if="{{row.addressed}}" class="comment-address">回复 {{row.replyToName}}</text><button wx:if="{{!row.pending}}" class="comment-more" data-id="{{row._id}}" catchtap="manageComment" aria-label="评论更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view>
@@ -12,8 +12,8 @@
         </view>
       </block>
       <view class="comment-meta">
-        <text class="comment-time">{{row.pending ? '发送中…' : row.timeText}}</text><text wx:if="{{!row.folded && !row.pending}}" class="comment-reply-label">回复</text>
-        <view wx:if="{{!row.pending}}" class="comment-actions">
+        <text class="comment-time">{{row.pending ? '发送中…' : row.timeText}}</text><text wx:if="{{!row.folded && !row.pending}}" class="comment-reply-label" data-id="{{row._id}}" catchtap="selectReply">回复</text>
+        <view wx:if="{{!row.pending && !row.hiddenByAncestor}}" class="comment-actions">
           <button class="comment-action {{row.liked ? 'is-liked' : ''}}" data-id="{{row._id}}" data-kind="like" catchtap="reactComment" aria-label="{{row.liked ? '取消点赞' : '点赞评论'}}"><image src="/images/interface/heart{{row.liked ? '-active' : '-muted'}}.svg" /><text>{{row.likeCount || 0}}</text></button>
           <button class="comment-action comment-dislike" data-id="{{row._id}}" data-kind="fold" catchtap="reactComment" aria-label="{{row.folded ? '恢复此评论及回复' : '仅为我折叠此评论及回复'}}"><image src="/images/interface/heart-broken{{row.folded ? '-active' : '-muted'}}.svg" /></button>
         </view>
@@ -34,6 +34,7 @@
       <scroll-view class="comments-list" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation bindscrolltolower="loadMore" lower-threshold="100">
         <block wx:if="{{embedded}}"><slot name="post"></slot><view class="comments-header embedded-comments-title"><text>回复</text></view></block>
         <view wx:if="{{error}}" class="comments-error">{{error}}<button bindtap="retry">重试</button></view>
+        <view wx:if="{{locateError}}" class="comments-error">{{locateError}}<button bindtap="retryLocate">重新定位</button></view>
         <view wx:if="{{loading}}" class="comments-status">正在读取评论…</view>
         <view wx:elif="{{!items.length && !error}}" class="comments-status">还没有评论，说说你的想法吧</view>
         <view wx:for="{{items}}" wx:key="_id" class="comment-group">
@@ -42,6 +43,7 @@
             <block wx:if="{{!item.threadOpen}}"><template wx:for="{{item.freshChildren}}" wx:for-item="fresh" wx:key="_id" is="comment" data="{{row: fresh, child: true}}" /></block>
             <button wx:if="{{item.showExpand}}" class="thread-toggle" data-id="{{item._id}}" bindtap="toggleThread"><view class="thread-line"></view><text>展开 {{item.remainingCount}} 条回复</text><image src="/images/interface/chevron-down.svg" /></button>
             <block wx:if="{{item.threadOpen}}">
+              <button wx:if="{{item.threadEarlier}}" class="thread-toggle" data-id="{{item._id}}" bindtap="earlierChildren" disabled="{{item.threadLoading}}"><view class="thread-line"></view><text>查看更早的回复</text></button>
               <template wx:for="{{item.visibleChildren}}" wx:for-item="child" wx:key="_id" is="comment" data="{{row: child, child: true}}" />
               <view wx:if="{{item.threadLoading}}" class="thread-status">正在读取回复…</view>
               <view wx:elif="{{item.threadError}}" class="thread-error">{{item.threadError}}<button data-id="{{item._id}}" bindtap="retryChildren">重试</button></view>

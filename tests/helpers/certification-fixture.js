@@ -15,12 +15,31 @@ function fixture(options = {}) {
     assert.ok(source.has(name), '集合必须由部署者创建');
     const records = source.get(name);
     return {
+      aggregate() {
+        let condition = {}, grouping;
+        const pipeline = {
+          match(value) { condition = value; return pipeline; },
+          group(value) { grouping = value; return pipeline; },
+          async end() {
+            if (options.readError && options.readError.collection === name) throw new Error('aggregate read failed');
+            queries.push({ name, condition, aggregate: true });
+            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) => row[key] === value));
+            const total = { _id: grouping._id };
+            for (const [key, value] of Object.entries(grouping)) if (key !== '_id') {
+              assert.equal(value.operation, 'sum');
+              total[key] = rows.reduce((sum, row) => sum + (typeof row[value.field.slice(1)] === 'number' ? row[value.field.slice(1)] : 0), 0);
+            }
+            return { list: rows.length ? [total] : [] };
+          },
+        };
+        return pipeline;
+      },
       where(condition) {
         const ordering = [];
         let offset = 0, limit = Infinity;
         const query = {
           count: async () => ({ total: [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-            value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
+            value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
           orderBy: (field, direction) => { ordering.push([field, direction]); return query; },
           skip: value => { offset = value; return query; },
           limit: value => { limit = value; return query; },
@@ -28,7 +47,7 @@ function fixture(options = {}) {
             if (options.readError && options.readError.collection === name) throw Object.assign(new Error(options.readError.message || 'read failed'), { code: options.readError.code });
             queries.push({ name, condition, ordering, offset, limit });
             const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-              value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
+              value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
             rows.sort((a, b) => {
               for (const [field, direction] of ordering) {
                 const difference = a[field] === b[field] ? 0 : a[field] < b[field] ? -1 : 1;
@@ -79,7 +98,8 @@ function fixture(options = {}) {
     };
   }
   const db = {
-    command: { gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }) },
+    command: { lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
+      aggregate: { sum: field => ({ operation: 'sum', field }) } },
     collection: name => collection(name, tables),
     serverDate: () => options.serverTime || '2026-11-14T10:00:00.000Z',
     async runTransaction(callback) {

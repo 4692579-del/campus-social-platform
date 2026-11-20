@@ -1,9 +1,9 @@
 <template name="actions">
   <view class="post-actions">
-    <button class="post-action {{post.liked ? 'liked' : ''}}" catchtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><image src="/images/interface/heart{{post.liked ? '-active' : '-muted'}}.svg" mode="aspectFit" /><text>{{post.likeCount || 0}}</text></button>
-    <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/interface/message-square-muted.svg" mode="aspectFit" /><text>{{post.replyCount || 0}}</text></button>
-    <view class="post-action" catchtap="stopEvent" aria-label="转发，0，暂未开放"><image src="/images/interface/repeat-muted.svg" mode="aspectFit" /><text>0</text></view>
-    <view class="post-action" catchtap="stopEvent" aria-label="转发，0，暂未开放"><image src="/images/interface/paper-plane-muted.svg" mode="aspectFit" /><text>0</text></view>
+    <button class="post-action {{post.liked ? 'liked' : ''}}" catchtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><image src="/images/post-actions/like{{post.liked ? '-active' : ''}}.svg" mode="aspectFit" /><text>{{post.likeCount || 0}}</text></button>
+    <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/post-actions/comment.svg" mode="aspectFit" /><text>{{post.replyCount || 0}}</text></button>
+    <button class="post-action" catchtap="quote" aria-label="引用动态"><image src="/images/post-actions/quote.svg" mode="aspectFit" /><text>{{post.quoteCount || 0}}</text></button>
+    <view class="post-action" catchtap="stopEvent" aria-label="分享，0，暂未开放"><image src="/images/post-actions/share.svg" mode="aspectFit" /><text>0</text></view>
   </view>
 </template>
 <view class="post-card {{detail ? 'is-detail' : ''}}" bindtap="open">
@@ -14,14 +14,15 @@
     </view>
     <text class="post-text" selectable>{{detail || expanded ? (post.fullContent || post.content) : post.content}}</text>
     <view wx:if="{{post.truncated && !detail}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
-    <view wx:if="{{imageFiles.length}}" class="post-image-gallery" catchtap="stopEvent">
-      <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" bindchange="imageChanged" indicator-dots indicator-color="rgba(255,255,255,.5)" indicator-active-color="#ffffff">
-        <swiper-item wx:for="{{imageFiles}}" wx:key="*this"><image class="post-photo" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" catchtap="previewImage" /></swiper-item>
+    <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{imageFiles.length > 1 ? 'is-carousel' : 'is-single'}}" style="width: {{galleryWidth}}%; height: {{galleryHeight}}rpx;" catchtap="stopEvent">
+      <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="帖子图片，左右滑动查看">
+        <swiper-item wx:for="{{imageFiles}}" wx:key="*this" class="post-image-slide"><view class="post-photo-frame"><image class="post-photo" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" data-file="{{item}}" bindload="photoLoaded" catchtap="previewImage" /></view></swiper-item>
       </swiper>
-      <image wx:else class="post-photo" src="{{imageFiles[imageIndex] || imageFiles[0]}}" mode="aspectFill" lazy-load data-index="{{imageIndex}}" catchtap="previewImage" />
-      <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter">{{imageIndex + 1}} / {{imageFiles.length}}</view>
+      <view wx:else class="post-photo-frame"><image class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" /></view>
+      <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter" aria-label="{{'第' + (imageIndex + 1) + '张，共' + imageFiles.length + '张'}}">{{imageIndex + 1}} / {{imageFiles.length}}</view>
     </view>
     <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>
+    <quote-card wx:if="{{post.quotePostId}}" class="post-quote" quote="{{post.quote}}" />
     <view wx:if="{{detail && post.exactTime}}" class="post-date">{{post.exactTime}}</view>
     <template is="actions" data="{{post: post}}" />
   </view>

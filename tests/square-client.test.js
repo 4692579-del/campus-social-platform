@@ -34,17 +34,101 @@ test('分层回复缓存不混入一级列表，迟到读取不会覆盖刚发�
   assert.equal(f.service.cachedChildren(id, root._id).items[0].folded, true);
   f.users.logout(); assert.equal(f.service.cachedChildren(id, root._id), null); assert.equal(f.service.cachedReplies(id), null);
 });
-function client(handler) {
+function client(handler, clock = Date) {
   let current = { ...user }, version = 0;
   const calls = [];
   const users = { getCachedUser: () => current, getSessionVersion: () => version, logout: () => { current = null; version++; } };
-  const context = { module: { exports: {} }, require: name => name.includes('comment-order') ? require('../miniprogram/utils/comment-order') : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : users,
+  const context = { Date: clock, module: { exports: {} }, require: name => name.includes('comment-order') ? require('../miniprogram/utils/comment-order') : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : users,
     wx: { cloud: { callFunction: async args => { calls.push(args.data); return handler(args.data); } } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/services/square.js'), 'utf8'), context);
   return { service: context.module.exports, users, calls, login(value = user) { current = { ...value }; version++; } };
 }
 
 const commentRow = (extra = {}) => ({ _id: 'r_' + 'a'.repeat(40), content: '评论', author: post().author, likeCount: 0, liked: false, folded: false, ...extra });
+test('并发引用响应乱序不能回退数量，删除后的新版本可以正确减少数量', async () => {
+  const source = post(); let finishFirst;
+  const quoted = n => post({ _id: 'p_' + String(n).repeat(40), quotePostId: source._id, quote: { _id: source._id, content: source.content } });
+  const f = client(data => {
+    if (data.action === 'publishSquarePost') {
+      const result = { result: { success: true, square: { post: quoted(data.post.requestId === 'first' ? 'b' : 'c'),
+        quotedPost: { ...source, quoteCount: data.post.requestId === 'first' ? 1 : 2, quoteVersion: data.post.requestId === 'first' ? 1 : 2 } } } };
+      return data.post.requestId === 'first' ? new Promise(resolve => { finishFirst = () => resolve(result); }) : result;
+    }
+    if (data.action === 'deleteSquarePost') return { result: { success: true, square: { deletedId: data.postId, quotedPost: { ...source, quoteCount: 1, quoteVersion: 3 } } } };
+    return { result: { success: true, square: { items: [{ ...source, quoteCount: 2, quoteVersion: 2 }], hasMore: false, nextOffset: 1 } } };
+  });
+  const first = f.service.publish('引用一', 'first', [], 'none', source._id);
+  await f.service.publish('引用二', 'second', [], 'none', source._id);
+  finishFirst(); await first; assert.equal(f.service.cachedPost(source._id).quoteCount, 2);
+  await f.service.deletePost(quoted('b')._id); assert.equal(f.service.cachedPost(source._id).quoteCount, 1);
+  await f.service.list({ force: true }); assert.equal(f.service.cachedPost(source._id).quoteCount, 1);
+});
+test('引用发布只提交ID且同步真实数量；原帖删除及迟到列表不能恢复引用正文', async () => {
+  const source = post(), quoted = post({ _id: 'p_' + 'b'.repeat(40), content: '', quotePostId: source._id, quote: { _id: source._id, content: source.content, images: [], author: source.author } });
+  const f = client(data => ({ result: { success: true, square: data.action === 'publishSquarePost'
+    ? { post: quoted, quotedPost: { ...source, quoteCount: 1 } }
+    : data.action === 'deleteSquarePost' ? { deletedId: data.postId }
+    : { items: [quoted], hasMore: false, nextOffset: 1 } } }));
+  await f.service.publish('', 'quote-client-0000001', [], 'none', source._id);
+  assert.equal(f.calls[0].post.quotePostId, source._id); assert.equal(f.calls[0].post.quote, undefined);
+  assert.equal(f.service.cachedPost(source._id).quoteCount, 1);
+  await f.service.deletePost(source._id);
+  assert.equal(f.service.cachedPost(quoted._id).quote.unavailable, true);
+  assert.equal(f.service.cachedPost(quoted._id).quote.content, undefined);
+  await f.service.list({ force: true });
+  assert.equal(f.service.cachedFeed().items[0].quote.unavailable, true);
+});
+const historyRow = (n = 1, extra = {}) => { const row = commentRow({ _id: 'r_' + n.toString(16).padStart(40, '0'), sortKey: String(n).padStart(16, '0') + '_r_' + n.toString(16).padStart(40, '0'), ...extra });
+  return { _id: row._id, postId: post()._id, sortKey: row.sortKey, reply: row, context: { _id: post()._id, content: '上文', author: post().author, imageCount: 0 }, contextKind: 'post' }; };
+test('历史定位向前分页独立读取窗口，不将首屏缓存拼到不连续的目标窗口', async () => {
+  const root = commentRow(), first = commentRow({ _id: 'c_' + 'b'.repeat(40), rootId: root._id });
+  const later = { ...first, _id: 'c_' + 'c'.repeat(40) };
+  const f = client(data => ({ result: { success: true, square: { items: data.offset ? [later] : [first], hasMore: true, nextOffset: data.offset + 20 } } }));
+  await f.service.listChildren(post()._id, root._id);
+  const result = await f.service.replyWindow(post()._id, root._id, { offset: 60 });
+  assert.equal(result.items.length, 1); assert.equal(result.items[0]._id, later._id);
+  assert.equal(f.service.cachedChildren(post()._id, root._id).items.length, 1);
+  assert.equal(f.service.cachedChildren(post()._id, root._id).items[0]._id, first._id);
+});
+test('历史上文折叠只生成展示投影，不覆盖评论本身的缓存和真实心碎状态', async () => {
+  const rootId = 'r_' + 'f'.repeat(40), original = commentRow({ _id: 'c_' + 'b'.repeat(40), rootId, ancestorIds: [rootId], content: '原回复', images: ['photo'] });
+  const item = { _id: original._id, postId: post()._id, sortKey: 'key', context: { folded: true },
+    reply: { ...original, content: '', images: [], hiddenByAncestor: true, folded: true } };
+  const f = client(data => ({ result: { success: true, square: data.action === 'listSquareOwnReplies'
+    ? { items: [item], hasMore: false, nextCursor: 'key' } : { items: [original], hasMore: false, nextOffset: 1 } } }));
+  await f.service.listChildren(post()._id, rootId); await f.service.listOwnReplies();
+  assert.equal(f.service.cachedOwnReplies().items[0].reply.folded, true);
+  assert.equal(f.service.cachedComment(original._id).folded, false);
+  assert.equal(f.service.cachedChildren(post()._id, rootId).items[0].content, '原回复');
+  assert.equal(f.service.cachedChildren(post()._id, rootId).items[0].images[0], 'photo');
+});
+test('本人回复缓存合并分页、合并请求、删除立即同步、退出清空并拒绝迟到读取', async () => {
+  let finish, delayed = false;
+  const first = historyRow(2), second = historyRow(1);
+  const f = client(data => {
+    if (data.action === 'deleteSquareReply') return { result: { success: true, square: { deletedId: first._id, post: post() } } };
+    if (delayed) return new Promise(resolve => { finish = resolve; });
+    return { result: { success: true, square: { items: data.cursor ? [second] : [first], hasMore: !data.cursor, nextCursor: data.cursor ? second.sortKey : first.sortKey } } };
+  });
+  const a = f.service.listOwnReplies(), b = f.service.listOwnReplies(); assert.equal(a, b);
+  await a; await f.service.listOwnReplies(); assert.equal(f.calls.length, 1);
+  await f.service.listOwnReplies({ cursor: first.sortKey }); assert.equal(f.service.cachedOwnReplies().items.length, 2);
+  await f.service.deleteReply(post()._id, first._id);
+  assert.deepEqual(Array.from(f.service.cachedOwnReplies().items, row => row._id), [second._id]);
+  delayed = true; const old = f.service.listOwnReplies({ force: true });
+  f.users.logout(); assert.equal(f.service.cachedOwnReplies(), null);
+  finish({ result: { success: true, square: { items: [first], hasMore: false, nextCursor: first.sortKey } } });
+  await assert.rejects(old, error => error.code === 'SESSION_CHANGED'); assert.equal(f.service.cachedOwnReplies(), null);
+});
+test('历史读取不能恢复刚删除的评论，服务更新错误明确提示部署', async () => {
+  let finish; const row = historyRow();
+  const f = client(data => data.action === 'deleteSquareReply' ? { result: { success: true, square: { deletedId: row._id, post: post() } } } : new Promise(resolve => { finish = resolve; }));
+  const old = f.service.listOwnReplies(); await f.service.deleteReply(post()._id, row._id);
+  finish({ result: { success: true, square: { items: [row], hasMore: false, nextCursor: row.sortKey } } });
+  await assert.rejects(old, error => error.code === 'HISTORY_CHANGED'); assert.equal(f.service.cachedOwnReplies(), null);
+  const unavailable = client(() => ({ result: { success: false, code: 'INVALID_ACTION' } }));
+  await assert.rejects(unavailable.service.listOwnReplies(), /重新部署 userService/);
+});
 test('图文优化按图片顺序和正文合并，图片变化不复用旧请求，空文案带图可以生成', async () => {
   const pending = [], f = client(() => new Promise(resolve => pending.push(resolve)));
   const images = ['cloud://test.bucket/square-uploads/alice/one.jpg', 'cloud://test.bucket/square-uploads/alice/two.jpg'];
@@ -575,4 +659,52 @@ test('评论服务在调用云端前拒绝51个码点和空内容，保留emoji�
   const f = client(() => { calls++; throw new Error('不得请求云端'); });
   for (const content of ['😊'.repeat(51), '字'.repeat(50) + ' ', '', '   ']) await assert.rejects(f.service.reply(post()._id, content, 'comment-limit-request1'), error => error.code === 'INVALID_POST');
   assert.equal(calls, 0);
+});
+
+
+test('获赞统计合并请求、复用会话缓存，删除及点赞确认后重新读取', async () => {
+  let finish, likes = 38;
+  const f = client(data => {
+    if (data.action === 'getSquareOwnStats') return new Promise(resolve => { finish = () => resolve({ result: { success: true, square: { receivedLikes: likes } } }); });
+    if (data.action === 'deleteSquarePost') return { result: { success: true, square: { deletedId: data.postId } } };
+    return { result: { success: true, square: { post: post({ liked: data.active, likeCount: data.active ? 1 : 0 }) } } };
+  });
+  assert.equal(f.service.cachedOwnStats(), null);
+  const first = f.service.getOwnStats(), same = f.service.getOwnStats();
+  assert.equal(first, same); finish(); assert.equal((await first).receivedLikes, 38);
+  assert.equal((await f.service.getOwnStats()).receivedLikes, 38); assert.equal(f.calls.length, 1);
+  await f.service.react(post()._id, 'like', true, post());
+  const refreshed = f.service.getOwnStats(); likes = 39; finish(); assert.equal((await refreshed).receivedLikes, 39);
+  await f.service.deletePost(post()._id);
+  const deleted = f.service.getOwnStats(); likes = 0; finish(); assert.equal((await deleted).receivedLikes, 0);
+});
+
+test('获赞迟到读取不能覆盖切换账号或删除后的数据，失败仍保留真实缓存', async () => {
+  const pending = [], f = client(() => new Promise(resolve => pending.push(resolve)));
+  const first = f.service.getOwnStats();
+  pending.shift()({ result: { success: true, square: { receivedLikes: 27 } } }); await first;
+  f.login({ ...user, _id: 'bob' });
+  assert.equal(f.service.cachedOwnStats(), null);
+  const old = f.service.getOwnStats(); f.login();
+  pending.shift()({ result: { success: true, square: { receivedLikes: 99 } } });
+  await assert.rejects(old, { code: 'SESSION_CHANGED' }); assert.equal(f.service.cachedOwnStats(), null);
+  const read = f.service.getOwnStats(), removal = f.service.deletePost(post()._id);
+  pending[1]({ result: { success: true, square: { deletedId: post()._id } } }); await removal;
+  pending[0]({ result: { success: true, square: { receivedLikes: 999 } } });
+  await assert.rejects(read, { code: 'STATS_CHANGED' }); assert.equal(f.service.cachedOwnStats(), null);
+});
+
+
+test('获赞缓存到期后台重查，失败和异常数值不覆盖已有真实统计', async () => {
+  let now = 1000000, result = 5, fail = false;
+  const f = client(() => {
+    if (fail) throw new Error('offline');
+    return { result: { success: true, square: { receivedLikes: result } } };
+  }, { now: () => now });
+  assert.equal((await f.service.getOwnStats()).receivedLikes, 5);
+  now += 60001; fail = true;
+  await assert.rejects(f.service.getOwnStats()); assert.equal(f.service.cachedOwnStats().receivedLikes, 5);
+  fail = false; result = -1;
+  await assert.rejects(f.service.getOwnStats()); assert.equal(f.service.cachedOwnStats().receivedLikes, 5);
+  result = 6; assert.equal((await f.service.getOwnStats()).receivedLikes, 6);
 });

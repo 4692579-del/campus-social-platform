@@ -13,6 +13,7 @@ function fixture(options = {}) {
   let aiListener, keyboardHides = 0;
   const users = { getCachedUser: () => current, getSessionVersion: () => version };
   const square = { cachedReplies: () => options.cached || null,
+    ...(options.replyContext ? { replyContext: options.replyContext } : {}),
     ...(options.ai ? { processAIReply: options.ai, subscribeAI: listener => { aiListener = listener; return () => { aiListener = null; }; } } : {}),
     cachedChildren: () => options.cachedChildren || null,
     listChildren: async (postId, rootId, args) => { requests.push({ type: 'children', postId, rootId, ...args }); return options.children ? options.children(args) : { items: [], hasMore: false, nextOffset: 0 }; },
@@ -41,13 +42,66 @@ function fixture(options = {}) {
       getMenuButtonBoundingClientRect: () => options.capsule || { top: 52, height: 32 } },
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('services/post-images') ? media : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
   });
-  const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current },
+  const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current, focusReplyId: options.focusReplyId || '', focusReplyInput: Boolean(options.focusReplyInput) },
     setData(value) { applyPageData(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
   return { component, events, requests, toasts, keyboardHides: () => keyboardHides, emitAI: result => aiListener && aiListener(result), attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
     hide: () => definition.pageLifetimes.hide.call(component), show: () => definition.pageLifetimes.show.call(component),
     logout() { current = null; version++; },
   };
 }
+
+test('历史回复定位展开目标窗口和更早分页，仅明确点击回复才聚焦输入框', async () => {
+  const rootId = 'r_' + 'b'.repeat(40), targetId = 'c_' + 'c'.repeat(40);
+  const root = { ...reply, _id: rootId, replyCount: 65 }, target = { ...reply, _id: targetId, rootId, replyToId: rootId, ancestorIds: [rootId] };
+  for (const focusReplyInput of [false, true]) {
+    const f = fixture({ focusReplyId: targetId, focusReplyInput,
+      replyContext: async () => ({ root, targetId, items: [target], startOffset: 40, nextOffset: 60, hasMore: true }),
+      children: args => ({ items: [{ ...target, _id: 'c_' + 'd'.repeat(40) }], nextOffset: args.offset + 20, hasMore: true }) });
+    await f.attach(); const c = f.component;
+    assert.equal(c.data.scrollIntoView, `comment-${targetId}`);
+    assert.equal(c.data.items[0].threadOpen, true); assert.equal(c.data.items[0].threadEarlier, true);
+    assert.equal(c.data.items[0].visibleChildren[0].highlighted, true);
+    assert.equal(c.data.inputFocusRequested, focusReplyInput);
+    assert.equal(Boolean(c.data.replyTarget), focusReplyInput);
+    await c.earlierChildren({ currentTarget: { dataset: { id: rootId } } });
+    assert.equal(c._threads.get(rootId).focusStart, 20); assert.equal(c._threads.get(rootId).nextOffset, 60);
+    assert.equal(c._threads.get(rootId).items.length, 2);
+    f.detach();
+  }
+});
+test('定位读取迟到或换账号时，不恢复旧评论、不弹键盘；定位失败可以重试', async () => {
+  const targetId = 'r_' + 'b'.repeat(40); let finish, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const f = fixture({ focusReplyId: targetId, focusReplyInput: true, replyContext: () => new Promise(resolve => { finish = resolve; started(); }) });
+  const attaching = f.attach(); await ready;
+  f.logout(); finish({ root: { ...reply, _id: targetId }, targetId, items: [], startOffset: 0, nextOffset: 0, hasMore: false });
+  await attaching;
+  assert.equal(f.component.data.inputFocusRequested, false); assert.equal(f.component.data.scrollIntoView, '');
+  f.detach();
+  let fail = true;
+  const g = fixture({ focusReplyId: targetId, replyContext: async () => {
+    if (fail) throw new Error('评论不可见');
+    return { root: { ...reply, _id: targetId }, targetId, items: [], startOffset: 0, nextOffset: 0, hasMore: false };
+  } });
+  await g.attach(); assert.equal(g.component.data.locateError, '评论不可见');
+  fail = false; await g.component.retryLocate(); assert.equal(g.component.data.locateError, '');
+  assert.equal(g.component.data.scrollIntoView, `comment-${targetId}`); g.detach();
+});
+
+test('恢复定位讨论的祖先折叠后重读窗口，但不把恢复操作当成再次请求键盘', async () => {
+  const rootId = 'r_' + 'b'.repeat(40), targetId = 'c_' + 'c'.repeat(40);
+  const root = { ...reply, _id: rootId, replyCount: 1 }, target = { ...reply, _id: targetId, rootId, ancestorIds: [rootId] };
+  let folded = true, reads = 0;
+  const f = fixture({ focusReplyId: targetId, focusReplyInput: true,
+    replyContext: async () => { reads++; return { root: { ...root, folded }, targetId: folded ? rootId : targetId,
+      items: folded ? [] : [target], startOffset: 0, nextOffset: 1, hasMore: false, blocked: folded }; },
+    state: async () => { folded = false; return { ...root, folded: false }; } });
+  await f.attach(); assert.equal(f.component.data.inputFocusRequested, false);
+  await f.component.reactComment({ currentTarget: { dataset: { id: rootId, kind: 'fold' } } });
+  assert.equal(reads, 2); assert.equal(f.component.data.scrollIntoView, `comment-${targetId}`);
+  assert.equal(f.component.data.inputFocusRequested, false);
+  assert.equal(f.component.data.items[0].visibleChildren[0]._id, targetId); f.detach();
+});
 
 test('评论图片先上传并在输入框上方显示，分次最多三张，可移除预览，纯图片发送后不存相册', async () => {
   let n = 0;
@@ -291,7 +345,7 @@ test('面板关闭后的迟到读取不更新组件；动态不可见时显示�
 
 test('动态卡片可进入详情，详情内不重复导航；原地展开和两条杠菜单保留', () => {
   let definition;
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), { Component: value => { definition = value; } });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), { Component: value => { definition = value; }, require: () => require('../miniprogram/utils/post-image-layout') });
   const events = [];
   const component = { ...definition.methods, data: { post: { _id: id }, expanded: false }, setData(value) { Object.assign(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
   component.open(); assert.equal(events.shift().name, 'open');

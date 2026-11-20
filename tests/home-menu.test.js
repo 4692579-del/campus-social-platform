@@ -34,17 +34,20 @@ function fixture(options = {}) {
   const routes = [], navigation = [], toasts = [], modals = [], requests = [], feedRequests = [], bar = {};
   const service = {
     getCachedUser: () => options.cachedUser || null,
+    getSessionVersion: () => options.sessionVersion || 0,
     restore: async () => { requests.push('restore'); return options.restore ? options.restore() : { ...user }; },
     login: async () => { requests.push('login'); return options.login ? options.login() : { ...user }; },
     logout: () => requests.push('logout'),
   };
-  const square = { cachedFeed: () => options.cachedFeed || null, consumePublication: () => false, list: async args => {
+  const square = { cachedOwnStats: () => options.cachedOwnStats || null,
+    getOwnStats: () => options.getOwnStats ? options.getOwnStats() : Promise.resolve({ receivedLikes: 0 }),
+    cachedFeed: () => options.cachedFeed || null, consumePublication: () => false, list: async args => {
     feedRequests.push(args); return options.list ? options.list(args) : { items: [], hasMore: false, nextOffset: 0 };
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
     setTimeout: setTimer, clearTimeout: clearTimer,
-    require: name => name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-motion') ? require('../miniprogram/utils/tab-page-motion') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       ...(options.nextTick ? { nextTick: options.nextTick } : {}),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),
@@ -57,6 +60,32 @@ function fixture(options = {}) {
     runTimer(delay) { const entry = [...delays].find(([, ms]) => ms === delay); assert.ok(entry, '缺少指定时长计时器：' + delay); const fn = timers.get(entry[0]); clearTimer(entry[0]); fn(); },
   };
 }
+
+test('首页滚动同步收起标题栏和缩小底栏，返回及打开发布恢复，图文列表保持原节点数据', async () => {
+  const result = { items: [{ _id: 'p_' + 'a'.repeat(40), content: '真实动态', images: ['cloud://real/photo.jpg'], author: { nickname: '同学' } }], hasMore: false, nextOffset: 1 };
+  const f = fixture({ cachedUser: user, cachedFeed: result, list: () => result });
+  f.page.onLoad(); await f.page.onShow(); const posts = f.page.data.posts;
+  const touch = () => f.page.onHomeFeedTouchStart({ currentTarget: { dataset: { feed: 'square' } } });
+  const scroll = top => f.page.onHomeFeedScroll({ currentTarget: { dataset: { feed: 'square' } }, detail: { scrollTop: top, scrollHeight: 2000 } });
+  touch(); scroll(5); assert.equal(f.page.data.chromeCompact, true); assert.equal(f.bar.compact, true);
+  scroll(40); scroll(36); assert.equal(f.page.data.chromeCompact, false); assert.equal(f.bar.compact, false);
+  scroll(50); assert.equal(f.page.data.chromeCompact, true);
+  f.page.openComposer(); assert.equal(f.page.data.chromeCompact, false); assert.equal(f.bar.compact, false);
+  assert.equal(f.page.data.composerOpen, true);
+  f.page.closeComposer({ detail: { published: false } });
+  touch(); scroll(60); assert.equal(f.page.data.chromeCompact, true);
+  f.page.onHide(); await f.page.onShow();
+  assert.equal(f.page.data.chromeCompact, false); assert.equal(f.bar.compact, false);
+  assert.equal(f.page.data.posts, posts);
+});
+
+test('原生标签切换过程中，首页迟到的导航同步不覆盖目标索引和已恢复的底栏尺寸', () => {
+  const f = fixture();
+  const bar = { _switching: true, data: { selected: 3, compact: false }, setData(values) { Object.assign(this.data, values); } };
+  f.page.getTabBar = () => bar;
+  f.page.data.chromeCompact = true; f.page.syncNavigation();
+  assert.equal(bar.data.selected, 3); assert.equal(bar.data.compact, false);
+});
 
 test('顶部Cui点击回到当前列表顶部，重复下滑后可再次使用，保留动态和图片且不查询云端', () => {
   const post = { _id: 'normal', content: '图文动态', images: ['cloud://test/photo.jpg'], author: { nickname: '同学' } };
@@ -641,4 +670,22 @@ test('发布时账号失效关闭面板，同时清理底栏发布遮挡标记',
   assert.equal(f.bar.composerOpen, true);
   f.page.applyUser(null);
   assert.equal(f.page.data.composerOpen, false); assert.equal(f.bar.composerOpen, false);
+});
+
+
+test('侧栏获赞先展示缓存，后台更新只写统计；失败及切换账号不显示假零或旧账号数据', async () => {
+  let finish, fail = false;
+  const options = { cachedUser: user, cachedOwnStats: { receivedLikes: 27 }, getOwnStats: () => fail ? Promise.reject(new Error('offline')) : new Promise(resolve => { finish = resolve; }) };
+  const f = fixture(options); f.page.onLoad();
+  assert.equal(f.page.data.menuLikeCount, 27);
+  f.page.openMenu(); const rows = f.page.data.posts, avatar = f.page.data.homeAvatarSource;
+  finish({ receivedLikes: 35 }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.page.data.menuLikeCount, 35); assert.equal(f.page.data.posts, rows); assert.equal(f.page.data.homeAvatarSource, avatar);
+  options.cachedOwnStats = { receivedLikes: 35 }; fail = true;
+  f.page.closeMenu(); f.page.openMenu(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.page.data.menuLikeCount, 35);
+  fail = false; f.page.closeMenu(); f.page.openMenu();
+  options.cachedUser = { ...user, _id: 'bob' }; options.cachedOwnStats = null; options.sessionVersion = 1;
+  f.page.applyUser(options.cachedUser); finish({ receivedLikes: 999 }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.page.data.menuLikeCount, '—');
 });

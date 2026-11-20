@@ -51,11 +51,22 @@ function paintLike(page, id, post) {
     const row = page.data[key][index];
     if (Boolean(row.liked) !== liked) values[`${key}[${index}].liked`] = liked;
     if ((Number(row.likeCount) || 0) !== count) values[`${key}[${index}].likeCount`] = count;
+    if (Number.isSafeInteger(post.quoteCount) && row.quoteCount !== post.quoteCount) values[`${key}[${index}].quoteCount`] = post.quoteCount;
+    if (post.quote && JSON.stringify(row.quote) !== JSON.stringify(post.quote)) values[`${key}[${index}].quote`] = post.quote;
   }
   if (Object.keys(values).length) page.setData(values);
 }
 
 module.exports = {
+  quotePost(event) {
+    if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.data.commentPostId || this.interactionBlocked && this.interactionBlocked() || !login(this)) return;
+    const post = find(this, event.detail.id);
+    if (!post) return;
+    if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
+    if (typeof this.openComposer === 'function') this.openComposer({ quotePost: post });
+    else if (typeof this.publishPost === 'function') this.publishPost({ quotePost: post });
+    else this.setData({ composerOpen: true, composerQuote: post, composerQuoteOwnerId: users.getCachedUser()._id });
+  },
   openPost(event) {
     if (this._openingPost || this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
     const id = event.detail.id;

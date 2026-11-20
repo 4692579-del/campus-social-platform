@@ -7,17 +7,18 @@
       <button class="compose-cancel" bindtap="cancel" disabled="{{publishing || savingDraft || choosingImages}}">取消</button>
       <text class="compose-title">发布动态</text>
       <view class="compose-capsule">
-        <button bindtap="saveAndClose" disabled="{{publishing || savingDraft || choosingImages || (!count && !images.length)}}" aria-label="保存草稿并收起"><image src="/images/interface/file-lines.svg" mode="aspectFit" /></button>
+        <button bindtap="saveAndClose" disabled="{{publishing || savingDraft || choosingImages || (!count && !images.length && !quotePostId)}}" aria-label="保存草稿并收起"><image src="/images/interface/file-lines.svg" mode="aspectFit" /></button>
         <view class="capsule-divider"></view>
         <button data-panel="declaration" bindtap="openPanel" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="添加内容声明"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button>
       </view>
     </view>
-    <view class="compose-body"><view class="compose-body-inner">
+    <view class="compose-body"><view class="compose-body-inner {{quotePostId ? 'has-quote' : ''}}">
       <view class="compose-author"><image class="compose-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="compose-destination"><text class="compose-nickname">{{user.nickname || '未登录'}}</text><image src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /><text class="compose-scope">动态广场</text></view></view>
       <view class="compose-editor">
         <textarea class="compose-textarea" wx:if="{{!panel && !exitConfirmVisible}}" value="{{content}}" fixed hold-keyboard focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
         <text wx:else class="compose-editor-preview {{!content ? 'compose-placeholder' : ''}}">{{content || '有什么新鲜事想和大家分享？'}}</text>
       </view>
+      <scroll-view wx:if="{{quotePostId}}" class="compose-quote-scroll" scroll-y enhanced show-scrollbar="{{false}}"><view class="compose-quote-content"><quote-card quote="{{quote}}" removable disabled="{{publishing || savingDraft || choosingImages}}" bind:remove="removeQuote" /><view wx:if="{{quoteError}}" class="compose-quote-error">{{quoteError}}<button bindtap="retryQuote">重试</button></view></view></scroll-view>
       <scroll-view wx:if="{{images.length}}" class="compose-selected-images" scroll-x enhanced show-scrollbar="{{false}}">
         <view class="selected-image-strip"><view wx:for="{{images}}" wx:key="key" class="selected-image"><image src="{{item.fileID || item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewSelectedImage" /><button class="remove-image" data-index="{{index}}" bindtap="removeImage" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="移除第{{index + 1}}张图片"><image src="/images/interface/x.svg" /></button></view></view>
       </scroll-view>

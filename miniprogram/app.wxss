@@ -18,6 +18,20 @@ button::after{
   border: none;
 }
 
+/* 四个原生 tab 页面采用相同的全屏视窗，不在切换时增删系统导航栏。 */
+.tab-secondary-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: #fff; }
+.tab-page-header { position: relative; flex-shrink: 0; width: 100%; background: #fff; }
+.tab-page-title { position: absolute; left: 25%; right: 25%; display: flex; align-items: center; justify-content: center; color: #15191d; font-size: 32rpx; font-weight: 600; }
+.tab-secondary-page .search-page { flex: 1; min-height: 0; }
+
+/* 只淡化正文区域，不动画整张 feed，不遮住顶部或底栏，不制造全透明空白。 */
+.tab-page-fader { position: fixed; z-index: 90; left: 0; right: 0; bottom: 0; background: #fff; pointer-events: none; opacity: 0; animation-fill-mode: both; }
+.tab-page-fader.is-leaving { animation: tab-content-out 80ms ease-out both; }
+.tab-page-fader.is-entering { animation: tab-content-in 180ms ease-out both; }
+@keyframes tab-content-out { from { opacity: 0; } to { opacity: .24; } }
+@keyframes tab-content-in { from { opacity: .24; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tab-page-fader { display: none; animation: none; } }
+
 
 page {
   background: #f6f6f6;
@@ -37,8 +51,8 @@ page {
 .cs-tag { display: inline-block; background: #eef3ff; color: #3d63c6; border-radius: 10rpx; padding: 6rpx 14rpx; font-size: 22rpx; }
 .cs-avatar { width: 112rpx; height: 112rpx; border-radius: 50%; background: #f3f3f3; }
 
-/* 自定义底栏固定在屏幕底部，为内容与设备安全区预留空间。 */
-.has-tab-bar { padding-bottom: calc(120rpx + constant(safe-area-inset-bottom)); padding-bottom: calc(120rpx + env(safe-area-inset-bottom)); }
+/* 悬浮胶囊底栏：为胶囊、下方间距与设备安全区预留滚动空间。 */
+.cs-page.has-tab-bar, .search-page.has-tab-bar { padding-bottom: calc(128rpx + constant(safe-area-inset-bottom)); padding-bottom: calc(128rpx + env(safe-area-inset-bottom)); }
 .tab-placeholder { min-height: 65vh; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; }
 .tab-placeholder-icon { width: 88rpx; height: 88rpx; margin-bottom: 28rpx; opacity: 0.65; }
 .tab-placeholder-title { font-size: 32rpx; font-weight: 600; margin-bottom: 12rpx; }

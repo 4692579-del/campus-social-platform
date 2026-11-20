@@ -1,4 +1,11 @@
+<view class="tab-secondary-page">
+  <view class="tab-page-header" style="height: {{navHeight}}px;">
+    <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">搜索</view>
+  </view>
 <view class="search-page has-tab-bar">
   <view class="search-field"><image src="/images/interface/search.svg" mode="aspectFit" /><input value="{{keyword}}" bindinput="onInput" bindconfirm="search" confirm-type="search" maxlength="100" placeholder="搜索" placeholder-class="search-placeholder" /></view>
   <view class="search-notice">搜索功能即将开放</view>
 </view>
+</view>
+
+<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px;" aria-hidden="true"></view>

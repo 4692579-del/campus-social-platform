@@ -1,7 +1,2 @@
-Page({
-  onShow() { this.syncNavigation(); },
-  onReady() { this.syncNavigation(); },
-  syncNavigation() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) this.getTabBar().setData({ selected: 2 });
-  },
-});
+const secondaryTabPage = require('../../utils/secondary-tab-page');
+Page(secondaryTabPage(1));

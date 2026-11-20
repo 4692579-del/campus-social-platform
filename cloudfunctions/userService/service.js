@@ -251,7 +251,7 @@ function createUserService(db, options) {
       }
       return { success: true, user: publicProfile(user) };
     } catch (error) {
-      const commentAction = event && ['listSquareReplies', 'listSquareReplyChildren', 'publishSquareReply', 'setSquareCommentState'].includes(event.action);
+      const commentAction = event && ['listSquareReplies', 'listSquareReplyChildren', 'publishSquareReply', 'setSquareCommentState', 'listSquareOwnReplies', 'getSquareReplyContext'].includes(event.action);
       const diagnostic = `${error.code || ''} ${error.errCode || ''} ${error.errMsg || error.message || ''}`;
       if (commentAction && /DATABASE_COLLECTION_NOT_EXIST|collection[^\n]*(not exist|does not exist|not found)|-502005/i.test(diagnostic)) {
         // 配置错误单独标识；日志只保留类别，不输出请求正文或账号资料。

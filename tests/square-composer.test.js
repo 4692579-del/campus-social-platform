@@ -4,6 +4,56 @@ const { composerFixture, user } = require('./helpers/square-composer-fixture');
 const input = value => ({ detail: { value } });
 const option = key => ({ currentTarget: { dataset: { key } } });
 const panel = name => ({ currentTarget: { dataset: { panel: name } } });
+const quote = { _id: 'p_' + 'b'.repeat(40), content: '原动态正文不会放进我的输入框', images: ['cloud://test.bucket/square-media/bob/source/image.jpg'], author: { nickname: '原作者' } };
+test('引用入口预填原卡片，支持仅引用发布，原帖文字和图片不进入本次正文与上传参数', async () => {
+  const f = composerFixture({ initialQuote: quote, cachedQuote: quote, detail: async () => quote });
+  await f.attach(); const c = f.component;
+  assert.equal(c.data.quotePostId, quote._id); assert.equal(c.data.content, ''); assert.equal(c.data.images.length, 0);
+  assert.equal(c.data.quote.content, quote.content); assert.equal(c.data.canPublish, true); assert.equal(c.data.canOptimize, false);
+  assert.equal(f.storage.size, 0); await c.publish();
+  assert.equal(f.calls[0].quotePostId, quote._id); assert.equal(f.calls[0].content, ''); assert.equal(f.calls[0].images, undefined);
+  assert.equal(f.events.length, 0); f.flushClose(); assert.equal(f.events[0].detail.published, true); f.detach();
+});
+test('移除引用保留自己的文案图片与焦点，取消和草稿保存真实记录引用ID，不存原帖快照', async () => {
+  const f = composerFixture({ initialQuote: quote, detail: async () => quote });
+  await f.attach(); const c = f.component;
+  c.cancel(); assert.equal(c.data.exitConfirmVisible, true);
+  c.continueEditing(); c.onInput(input('自己的文案'));
+  c.setData({ images: [{ key: 'mine', fileID: 'cloud://test.bucket/square-uploads/alice/mine.jpg', type: 'jpg' }] });
+  c.removeQuote(); assert.equal(c.data.content, '自己的文案'); assert.equal(c.data.images.length, 1);
+  assert.equal(c.data.quotePostId, ''); assert.equal(c.data.editorFocusRequested, true);
+  await c.attachQuote(quote._id); await c.saveAndClose();
+  const saved = f.storage.get('square.draft.alice'); assert.equal(saved.quotePostId, quote._id); assert.equal(saved.quote, undefined);
+  const g = composerFixture({ storage: f.storage, detail: async () => quote }); await g.attach();
+  assert.equal(g.component.data.quotePostId, quote._id); assert.equal(g.component.data.content, '自己的文案');
+  g.component.cancel(); assert.equal(g.component.data.exitConfirmVisible, false); f.detach(); g.detach();
+});
+test('迟到引用读取不能恢复已移除内容或覆盖新账号；读取失败保留草稿并可移除', async () => {
+  let finish;
+  const f = composerFixture({ initialQuote: quote, detail: () => new Promise(resolve => { finish = resolve; }) });
+  const pending = f.attach(); f.component.removeQuote(); finish(quote); await pending;
+  assert.equal(f.component.data.quotePostId, ''); assert.equal(f.component.data.canPublish, false); f.detach();
+  const g = composerFixture({ initialQuote: quote, detail: () => new Promise(resolve => { finish = resolve; }) });
+  const old = g.attach(); g.setUser({ ...user, _id: 'bob' }); g.show(); finish(quote); await old;
+  assert.equal(g.component.data.user._id, 'bob'); assert.equal(g.component.data.quotePostId, ''); g.detach();
+  const h = composerFixture({ initialQuote: quote, detail: async () => { throw Object.assign(new Error('原动态不可见'), { code: 'POST_NOT_FOUND' }); } });
+  await h.attach(); h.component.onInput(input('保留自己的文案'));
+  assert.equal(h.component.data.canPublish, false); assert.equal(h.component.data.quote.unavailable, true);
+  h.component.removeQuote(); assert.equal(h.component.data.canPublish, true); assert.equal(h.component.data.content, '保留自己的文案'); h.detach();
+});
+test('本轮小萃只优化本人输入和本次附图，引用原文及配图不进入请求', async () => {
+  const f = composerFixture({ initialQuote: quote, detail: async () => quote, optimize: (content, images) => {
+    assert.equal(content, '自己的文案'); assert.equal(images.length, 0); return '润色后的本人文案';
+  } });
+  await f.attach(); f.component.onInput(input('自己的文案')); await f.component.optimizeContent();
+  assert.equal(f.component.data.content, '润色后的本人文案'); assert.equal(f.component.data.quotePostId, quote._id); f.detach();
+});
+test('引用后台读取网络失败保留已有真实预览，不误报原帖已删除或清空正在输入的文案', async () => {
+  const f = composerFixture({ initialQuote: quote, detail: async () => { throw new Error('网络失败'); } });
+  await f.attach(); f.component.onInput(input('继续编辑'));
+  assert.equal(f.component.data.quote.content, quote.content); assert.equal(f.component.data.quote.unavailable, undefined);
+  assert.equal(f.component.data.quoteError, '网络失败'); assert.equal(f.component.data.canPublish, true); f.detach();
+});
 
 test('仅选图片即显示小萃入口，上传后请求图文生成，可恢复空文案且不自动存草稿或发布', async () => {
   const selected = [{ key: 'only-photo', path: '/photo.jpg', type: 'jpg' }];

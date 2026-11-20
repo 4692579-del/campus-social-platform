@@ -1,3 +1,7 @@
+<view class="tab-secondary-page">
+  <view class="tab-page-header" style="height: {{navHeight}}px;">
+    <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">私信</view>
+  </view>
 <view class="cs-page has-tab-bar">
   <view class="tab-placeholder">
     <image class="tab-placeholder-icon" src="/images/tab-bar/messages-active.png" mode="aspectFit" />
@@ -5,3 +9,6 @@
     <view class="cs-muted">私信功能即将开放</view>
   </view>
 </view>
+</view>
+
+<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px;" aria-hidden="true"></view>

@@ -5,12 +5,19 @@ const square = require('../../services/square');
 const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
 const homeRefresh = require('../../utils/home-refresh');
+const { readTabLayout, patchState } = require('../../utils/tab-page-layout');
+const tabPageMotion = require('../../utils/tab-page-motion');
+const homeScrollChrome = require('../../utils/home-scroll-chrome');
 const DEFAULT_AVATAR = '/images/avatar.png';
 
 Page({
   ...postActions,
   ...homeRefresh,
+  ...tabPageMotion.methods,
+  ...homeScrollChrome.methods,
   data: {
+    ...tabPageMotion.data,
+    ...homeScrollChrome.data,
     user: null, identity: describeUser(null), avatarFailed: false,
     homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true,
     loading: false, error: '', accountHint: '未登录', menuOpen: false, confirmingLogout: false, composerOpen: false,
@@ -18,7 +25,7 @@ Page({
     navTop: 28, navButtonHeight: 32, navHeight: 72,
     brandRefreshPhase: 'idle', nativeRefreshing: false, refreshThreshold: 72,
     brandBouncing: false, squareTopTarget: '', campusTopTarget: '',
-    followerCount: 0, followingCount: 0, menuItems, utilityMenuItems,
+    menuLikeCount: '—', followerCount: 0, followingCount: 0, menuItems, utilityMenuItems,
     activeTab: 'square', tabMenuKey: '', tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
     tabIndicatorLeft: 43.75, tabIndicatorWidth: 85,
     posts: [], feedLoading: false, feedError: '', feedHasMore: false, feedOffset: 0, feedMoreLoading: false, pullRefreshing: false, skeletons: [1, 2, 3],
@@ -28,16 +35,10 @@ Page({
     ],
   },
   onLoad() {
-    try {
-      const info = wx.getWindowInfo();
-      this._homeWidth = info.windowWidth || info.screenWidth || 375;
-      const capsule = wx.getMenuButtonBoundingClientRect();
-      const status = info.statusBarHeight || 0;
-      const valid = capsule && capsule.height > 0 && capsule.top >= status;
-      const navTop = valid ? capsule.top : status + 8;
-      const navButtonHeight = valid ? capsule.height : 32;
-      this.setData({ navTop, navButtonHeight, navHeight: navTop + navButtonHeight + 8 });
-    } catch (error) { /* 旧客户端使用默认的顶部留白。 */ }
+    const { windowWidth, ...layout } = readTabLayout(wx);
+    this._homeWidth = windowWidth;
+    patchState(this, layout);
+    this.configureHomeChrome();
     this.setData(this.tabIndicatorState(this.data.activeTab));
     const cached = userService.getCachedUser();
     if (cached) this.applyUser(cached);
@@ -45,30 +46,33 @@ Page({
     if (feed) this.showFeed(feed);
   },
   onShow() {
+    this.showTabMotion('/pages/home/index');
+    this.resetHomeChrome();
     this._openingPost = false;
     this._visible = true;
     this.startPostUpdates();
     this._viewVersion = (this._viewVersion || 0) + 1;
     this._menuNavigating = false;
     // 返回时直接呈现首页，离开时保留的菜单不再播放收起动画。
-    this.setData({ menuInstant: true, tabMenuKey: '' });
+    patchState(this, { menuInstant: true, tabMenuKey: '' });
     // 先同步当前账号及头像，再露出首页，避免显示上一账号的图片。
     const account = this.refreshUser(false);
-    this.setData({ menuOpen: false });
+    patchState(this, { menuOpen: false });
     if (square.consumePublication()) this.setData({ activeTab: 'square', ...this.tabIndicatorState('square'), tabFilters: { ...this.data.tabFilters, square: 'square' } });
     this.syncNavigation();
-    this.measureHomeTabs();
+    if (!this._tabAnchors) this.measureHomeTabs();
     if (this.isSquareFeed()) this.loadFeed(false);
     return account;
   },
   onHide() {
+    this.hideTabMotion();
     this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (bar) bar.setData({ composerOpen: false });
+    if (bar) patchState(bar, { composerOpen: false });
     this.stopPostUpdates();
     this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
     this.closeTabMenu();
-    if (!this.commentsUsingNativeMedia()) this.closeComments();
+    if (this.data.commentPostId && !this.commentsUsingNativeMedia()) this.closeComments();
     this.stopHomeRefresh();
     this._visible = false;
     this._refreshing = false;
@@ -78,10 +82,11 @@ Page({
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     if (!this._menuNavigating) this.closeMenu();
     this._openAfterRestore = false;
-    this.setData({ loading: false, confirmingLogout: false, authChecking: false, loginSheetOpen: false });
+    patchState(this, { loading: false, confirmingLogout: false, authChecking: false, loginSheetOpen: false });
     this.setAuthBlocked(false);
   },
   onUnload() {
+    this.hideTabMotion();
     this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
@@ -97,9 +102,10 @@ Page({
     this.setAuthBlocked(false);
   },
   onReady() { this.syncNavigation(); this.measureHomeTabs(); },
-  openComments(event) { this.stopHomeRefresh(); postActions.openComments.call(this, event); },
+  openComments(event) { this.revealHomeChrome(); this.stopHomeRefresh(); postActions.openComments.call(this, event); },
   backToFeedTop() {
     if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.data.brandRefreshPhase !== 'idle') return;
+    this.revealHomeChrome();
     const tab = this.data.activeTab, key = tab === 'campus' ? 'campusTopTarget' : 'squareTopTarget';
     const sequence = this._brandScrollSequence = (this._brandScrollSequence || 0) + 1;
     if (!this.data.brandBouncing) {
@@ -126,6 +132,8 @@ Page({
   },
   onResize(event) {
     this._homeWidth = event.size.windowWidth || this._homeWidth || 375;
+    this.configureHomeChrome();
+    this.resetHomeChrome();
     this._tabAnchors = null;
     this.setData(this.tabIndicatorState(this.data.activeTab));
     this.measureHomeTabs();
@@ -161,16 +169,21 @@ Page({
     else measure();
   },
   syncNavigation() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) this.getTabBar().setData({ selected: 0, menuOpen: this.data.menuOpen, menuInstant: this.data.menuInstant, authBlocked: this.interactionBlocked(), commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen) });
+    const bar = typeof this.getTabBar === 'function' && this.getTabBar();
+    if (bar) patchState(bar, {
+      ...(!bar._switching ? { selected: 0, compact: Boolean(this.data.chromeCompact && !this.data.menuOpen && !this.data.commentPostId && !this.interactionBlocked()) } : {}),
+      menuOpen: this.data.menuOpen, menuInstant: this.data.menuInstant, authBlocked: this.interactionBlocked(),
+      commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen),
+    });
   },
   setMenuTabBarOpen(open) {
     const tabBar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (tabBar) tabBar.setData({ menuOpen: open, menuInstant: this.data.menuInstant });
+    if (tabBar) patchState(tabBar, { menuOpen: open, menuInstant: this.data.menuInstant });
   },
   interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen); },
   setAuthBlocked(blocked) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (bar) bar.setData({ authBlocked: Boolean(blocked), composerOpen: Boolean(this.data.composerOpen && this._visible !== false && !this._unloaded) });
+    if (bar) patchState(bar, { authBlocked: Boolean(blocked), composerOpen: Boolean(this.data.composerOpen && this._visible !== false && !this._unloaded) });
   },
   currentView(version) {
     return !this._unloaded && this._visible !== false && version === (this._viewVersion || 0);
@@ -182,7 +195,7 @@ Page({
     const cached = userService.getCachedUser();
     if (cached) this.applyUser(cached);
     else if (this.data.user) this.applyUser(null);
-    this.setData({ loading: !cached, error: '', accountHint: cached ? '' : '正在读取账号…' });
+    patchState(this, { loading: !cached, error: '', accountHint: cached ? '' : '正在读取账号…' });
     try {
       const user = await userService.restore({ force: force !== false });
       if (this.currentView(version)) this.applyUser(user);
@@ -191,7 +204,7 @@ Page({
     } finally {
       if (this.currentView(version)) {
         this._refreshing = false;
-        this.setData({ loading: false });
+        patchState(this, { loading: false });
         if (this._openAfterRestore) { this._openAfterRestore = false; this.openMenu(); }
       }
     }
@@ -204,11 +217,11 @@ Page({
     const avatarSource = user && user.avatarFileID || DEFAULT_AVATAR;
     if (previousId !== (user && user._id)) this.stopHomeRefresh();
     if (accountChanged) this.closeComments();
-    this.setData({ user, identity: describeUser(user), error,
+    patchState(this, { user, identity: describeUser(user), error,
       ...(avatarChanged ? { homeAvatarSource: avatarSource, homeAvatarReady: avatarSource === DEFAULT_AVATAR, avatarFailed: false } : {}),
       ...(accountChanged ? { menuOpen: false, composerOpen: false } : {}),
       authChecking: false, loginSheetOpen: user ? false : this.data.loginSheetOpen,
-      accountHint: error ? '账号信息暂不可用' : '未登录', followerCount: 0, followingCount: 0 });
+      accountHint: error ? '账号信息暂不可用' : '未登录', menuLikeCount: user ? (square.cachedOwnStats() || {}).receivedLikes ?? '—' : '—', followerCount: 0, followingCount: 0 });
     if (accountChanged) this.setMenuTabBarOpen(false);
     this.setAuthBlocked(this.interactionBlocked());
     if (previousId !== (user && user._id) && this._visible === true) {
@@ -228,6 +241,7 @@ Page({
   },
   openMenu() {
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.composerOpen) return;
+    this.revealHomeChrome();
     if (this.data.loginSheetOpen) return;
     this.closeTabMenu();
     if (this.data.loading) {
@@ -246,6 +260,18 @@ Page({
     this.stopHomeRefresh();
     this.setData({ menuOpen: true, menuInstant: false });
     this.setMenuTabBarOpen(true);
+    this.refreshMenuStats();
+  },
+  refreshMenuStats() {
+    const user = userService.getCachedUser(), version = userService.getSessionVersion();
+    if (!user) return;
+    const cached = square.cachedOwnStats();
+    if (cached) this.setData({ menuLikeCount: cached.receivedLikes });
+    square.getOwnStats().then(stats => {
+      if (this._unloaded || this._visible === false || userService.getSessionVersion() !== version ||
+          !this.data.user || this.data.user._id !== user._id) return;
+      if (this.data.menuLikeCount !== stats.receivedLikes) this.setData({ menuLikeCount: stats.receivedLikes });
+    }).catch(() => { /* 保留真实缓存；首次失败显示破折号，不伪造零获赞。 */ });
   },
   closeMenu() {
     if (!this.data.menuOpen || this._menuNavigating) return;
@@ -346,6 +372,7 @@ Page({
     const key = event.currentTarget.dataset.key;
     if (this.data.tabs.some(tab => tab.key === key)) {
       if (this.data.activeTab === key) { this.toggleTabMenu(event); return; }
+      this.resetHomeChrome();
       this.stopHomeRefresh();
       this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: '' });
       if (this.isSquareFeed()) this.loadFeed(false);
@@ -354,6 +381,7 @@ Page({
   isSquareFeed() { return this.data.activeTab === 'square' && this.data.tabFilters.square === 'square'; },
   toggleTabMenu(event) {
     if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
+    this.revealHomeChrome();
     const key = event.currentTarget.dataset.key;
     if (!this.data.tabs.some(tab => tab.key === key)) return;
     const switched = this.data.activeTab !== key;
@@ -386,7 +414,7 @@ Page({
     const version = this._viewVersion || 0, epoch = this._feedEpoch || 0;
     const cached = square.cachedFeed();
     if (cached) this.showFeed(cached);
-    this.setData({ feedLoading: !this.data.posts.length && !cached, feedMoreLoading: append, feedError: '' });
+    patchState(this, { feedLoading: !this.data.posts.length && !cached, feedMoreLoading: append, feedError: '' });
     this._feedAppend = append;
     const request = (async () => {
       try {
@@ -396,7 +424,7 @@ Page({
         if (this.currentView(version) && epoch === (this._feedEpoch || 0) && error.code !== 'SESSION_CHANGED') this.setData({ feedError: error.message || '动态读取失败，请稍后重试' });
       } finally {
         if (this.currentView(version) && epoch === (this._feedEpoch || 0)) {
-          this._feedBusy = false; this._feedPromise = null; this.setData({ feedLoading: false, feedMoreLoading: false });
+          this._feedBusy = false; this._feedPromise = null; patchState(this, { feedLoading: false, feedMoreLoading: false });
         }
       }
     })();
@@ -405,16 +433,17 @@ Page({
   },
   retryFeed() { return this.loadFeed(true); },
   loadMoreFeed() { if (!this.data.menuOpen && !this.data.tabMenuKey && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.isSquareFeed() && this.data.feedHasMore) return this.loadFeed(false, true); },
-  openComposer() {
+  openComposer(event) {
     if (this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId) return;
+    this.revealHomeChrome();
     if (!this.data.user) { this.openMenu(); return; }
     this.closeTabMenu();
     this.stopHomeRefresh();
-    this.setData({ composerOpen: true });
+    this.setData({ composerOpen: true, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
     this.syncNavigation();
   },
   closeComposer(event) {
-    this.setData({ composerOpen: false });
+    this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' });
     const user = userService.getCachedUser();
     if ((user && user._id) !== (this.data.user && this.data.user._id)) this.applyUser(user);
     if (event.detail.published) {

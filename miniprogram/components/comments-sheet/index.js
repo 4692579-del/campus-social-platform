@@ -28,8 +28,9 @@ const popup = (name, options) => new Promise((resolve, reject) => wx[name]({ ...
 
 Component({
   options: { multipleSlots: true },
-  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number },
-  observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); } },
+  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean },
+  observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); },
+    focusReplyId() { if (this._roots) this.locateReply(); } },
   data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0,
     selectedImages: [], choosingImages: false,
     text: '', inputValue: '', nativeInputValue: '', inputCursor: -1, askAI: false, count: 0, remainingCount: COMMENT_MAX, countWarning: false, countProgress: 0, limitHintVisible: false, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
@@ -62,7 +63,7 @@ Component({
       this.measureSheet();
       const cached = square.cachedReplies(this.data.postId);
       if (cached) this.showReplies(cached);
-      return this.load();
+      return this.load().then(() => this.locateReply());
     },
     detached() { this.discardCommentUploads(); clearTimeout(this._limitHintTimer); this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
   },
@@ -73,6 +74,7 @@ Component({
       this.setData({ selectedImages: [], choosingImages: false, replyTarget: null }); this.setReplyInput('', false); this.triggerEvent('close'); return;
     }
     this.resumeAIReplies(this._roots); for (const thread of this._threads.values()) this.resumeAIReplies(thread.items);
+    if (this.data.focusReplyId) this.locateReply();
   } },
   methods: {
     stopEvent() {},
@@ -257,6 +259,12 @@ Component({
         }
       }
       const items = commentGroups(roots, threads), values = {};
+      for (const root of items) {
+        root.highlighted = root._id === this._highlightReply;
+        const thread = threads.get(root._id);
+        root.threadEarlier = Boolean(thread && thread.focusStart > 0);
+        for (const row of [...root.visibleChildren, ...root.freshChildren]) row.highlighted = row._id === this._highlightReply;
+      }
       if (items.length !== this.data.items.length || items.some((row, index) => row._id !== this.data.items[index]._id)) values.items = items;
       else for (let index = 0; index < items.length; index++) if (JSON.stringify(items[index]) !== JSON.stringify(this.data.items[index])) values[`items[${index}]`] = items[index];
       if (Object.keys(values).length) this.setData(values);
@@ -265,6 +273,7 @@ Component({
       if (row.status === 'deleted') { this.removeCommentRow(row); return; }
       if (this._removedComments.has(row._id) || this._removedComments.has(row.rootId)) return;
       let found = false;
+      if (this._focusRoot && this._focusRoot._id === row._id) this._focusRoot = row;
       const replace = item => { if (item._id !== row._id) return item; found = true; return row; };
       this._roots = this._roots.map(replace);
       for (const thread of this._threads.values()) thread.items = thread.items.map(replace);
@@ -332,10 +341,56 @@ Component({
     },
     showReplies(result) {
       this._roots = result.items.filter(row => !this._removedComments.has(row._id));
+      if (this._focusRoot && !this._removedComments.has(this._focusRoot._id) && !this._roots.some(row => row._id === this._focusRoot._id)) this._roots.push(this._focusRoot);
       this.setData({ hasMore: result.hasMore, nextOffset: result.nextOffset });
       this.renderComments();
       if (typeof square.warmReplyChildren === 'function') square.warmReplyChildren(this.data.postId, result.items);
       this.resumeAIReplies(result.items);
+    },
+    async locateReply() {
+      const id = this.data.focusReplyId;
+      if (!/^[rc]_[a-f0-9]{40}$/.test(id || '') || this._locatedReply === id || this._locatingReply === id || typeof square.replyContext !== 'function') return;
+      const epoch = this._epoch, version = users.getSessionVersion(), draftRequest = this._requestId;
+      this._locatingReply = id;
+      try {
+        const result = await square.replyContext(this.data.postId, id);
+        if (!this.valid(epoch, version) || this._pageHidden || this.data.focusReplyId !== id || this._removedComments.has(id)) return;
+        this._focusRoot = result.root;
+        this._roots = [...this._roots.filter(row => row._id !== result.root._id), result.root];
+        if (result.items.length) {
+          const thread = this.thread(result.root._id);
+          thread.items = result.items; thread.open = true; thread.focusStart = result.startOffset;
+          thread.hasMore = result.hasMore; thread.nextOffset = result.nextOffset;
+        }
+        const focusInput = this.data.focusReplyInput && this._focusInputHandled !== id;
+        this._focusInputHandled = id;
+        this._locatedReply = id; this._highlightReply = result.targetId;
+        this.renderComments();
+        const reveal = () => {
+          if (!this.valid(epoch, version) || this._pageHidden) return;
+          this.setData({ scrollIntoView: `comment-${result.targetId}` });
+          if (focusInput && !result.blocked && draftRequest === this._requestId && !this.data.text && !this.data.selectedImages.length && !this.data.sending)
+            this.selectReply({ currentTarget: { dataset: { id } } });
+        };
+        if (typeof wx.nextTick === 'function') wx.nextTick(reveal); else reveal();
+      } catch (error) {
+        if (this.valid(epoch, version) && !this._pageHidden) this.setData({ locateError: error.message || '暂时无法定位这条回复' });
+      } finally { if (this._locatingReply === id) this._locatingReply = ''; }
+    },
+    retryLocate() { this.setData({ locateError: '' }); return this.locateReply(); },
+    async earlierChildren(event) {
+      const id = event.currentTarget.dataset.id, thread = this.thread(id);
+      if (thread.loading || !thread.focusStart || this._dead) return;
+      const epoch = this._epoch, version = users.getSessionVersion(), offset = Math.max(0, thread.focusStart - 20);
+      thread.loading = true; thread.error = ''; this.renderComments();
+      try {
+        const read = square.replyWindow || square.listChildren;
+        const result = await read(this.data.postId, id, { offset, force: true });
+        if (!this.valid(epoch, version) || this._removedComments.has(id)) return;
+        thread.items = [...new Map([...result.items, ...thread.items].filter(row => !this._removedComments.has(row._id)).map(row => [row._id, row])).values()];
+        thread.focusStart = offset;
+      } catch (error) { if (this.valid(epoch, version)) thread.error = error.message || '回复读取失败，请重试'; }
+      finally { thread.loading = false; if (this.valid(epoch, version)) this.renderComments(); }
     },
     thread(id) {
       if (!this._threads.has(id)) {
@@ -380,6 +435,7 @@ Component({
       const thread = this.thread(id);
       thread.open = true;
       this.renderComments();
+      if (thread.focusStart !== undefined) return;
       return this.loadChildren(id);
     },
     collapseThread(event) {
@@ -395,10 +451,11 @@ Component({
       const epoch = this._epoch, version = users.getSessionVersion();
       thread.loading = append || !thread.items.length; thread.error = ''; this.renderComments();
       try {
-        const result = await square.listChildren(this.data.postId, id, { offset: append ? thread.nextOffset : 0, force });
+        const read = thread.focusStart !== undefined && square.replyWindow ? square.replyWindow : square.listChildren;
+        const result = await read(this.data.postId, id, { offset: append ? thread.nextOffset : 0, force });
         if (!this.valid(epoch, version) || this._removedComments.has(id)) return;
         // 读取过程中刚发出的回复继续保留在独立显示区。
-        thread.items = [...new Map([...result.items, ...thread.items.filter(row => thread.fresh.has(row._id))].filter(row => !this._removedComments.has(row._id)).map(row => [row._id, row])).values()];
+        thread.items = [...new Map([...result.items, ...thread.items.filter(row => thread.fresh.has(row._id) || thread.focusStart !== undefined)].filter(row => !this._removedComments.has(row._id)).map(row => [row._id, row])).values()];
         thread.hasMore = result.hasMore; thread.nextOffset = result.nextOffset;
         this.resumeAIReplies(result.items);
       } catch (error) {
@@ -413,7 +470,7 @@ Component({
       if (!users.getCachedUser()) { this.login(); return; }
       const { id, kind } = event.currentTarget.dataset;
       const row = this.findComment(id);
-      if (!row || !['like', 'fold'].includes(kind)) return;
+      if (!row || row.hiddenByAncestor || !['like', 'fold'].includes(kind)) return;
       const epoch = this._epoch, version = users.getSessionVersion();
       let operation = this._commentClicks.get(id);
       if (!operation) { operation = { confirmed: row, sequence: 0 }; this._commentClicks.set(id, operation); }
@@ -434,6 +491,10 @@ Component({
             // 发送进行中保留请求目标，防止重试时意外变成一级评论。
             if (!this.data.sending) this.cancelReply();
           }
+        }
+        if (kind === 'fold' && !latest.folded && this._focusRoot) {
+          this._locatedReply = '';
+          await this.locateReply();
         }
       } catch (error) {
         if (!latestClick()) return;

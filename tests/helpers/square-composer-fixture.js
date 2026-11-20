@@ -13,9 +13,9 @@ function composerFixture(options = {}) {
     login: async () => { current = { ...user }; version++; return current; },
     logout: () => { current = null; version++; },
   };
-  const square = { optimizeContent: async (content, images = []) => { requests.push({ optimize: content, ...(images.length ? { images } : {}) }); return options.optimize ? options.optimize(content, images) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none') => {
-    calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}) });
-    return options.publish ? options.publish(content, id, images, declaration) : { _id: 'p_' + 'a'.repeat(40), content, images, declaration };
+  const square = { cachedPost: () => options.cachedQuote || null, detail: async id => options.detail ? options.detail(id) : { _id: id, content: '真实被引用动态', images: [] }, optimizeContent: async (content, images = []) => { requests.push({ optimize: content, ...(images.length ? { images } : {}) }); return options.optimize ? options.optimize(content, images) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none', quotePostId = '') => {
+    calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}) });
+    return options.publish ? options.publish(content, id, images, declaration, quotePostId) : { _id: 'p_' + 'a'.repeat(40), content, images, declaration, ...(quotePostId ? { quotePostId } : {}) };
   } };
   const media = {
     chooseImages: async count => options.chooseImages ? options.chooseImages(count) : [],
@@ -45,7 +45,7 @@ function composerFixture(options = {}) {
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square :
       name.includes('services/post-images') ? media : name.includes('login-gate') ? gate.module.exports : name.includes('content-declaration') ? require('../../miniprogram/utils/content-declaration') : require('../../miniprogram/utils/post-view'),
   });
-  const component = { ...definition.methods, data: structuredClone(definition.data),
+  const component = { ...definition.methods, data: { ...structuredClone(definition.data), initialQuote: options.initialQuote || null, quoteOwnerId: options.quoteOwnerId || 'alice' },
     setData(values) { applyPageData(this.data, values); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
   return { component, page: component, calls, storage, events, toasts, requests, timers, delays,
     attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),

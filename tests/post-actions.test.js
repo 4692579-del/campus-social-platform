@@ -36,6 +36,15 @@ function fixture(options = {}) {
 }
 const event = { detail: { id: post._id } };
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
+test('引用图标拉起现有发布面板，游客先登录，实时引用数量只更新对应字段', () => {
+  const f = fixture(); let source;
+  f.page.openComposer = event => { source = event.quotePost; };
+  f.page.quotePost(event); assert.equal(source._id, post._id);
+  const guest = fixture({ guest: true }); guest.page.quotePost(event); assert.equal(guest.logins.length, 1);
+  f.page.startPostUpdates(); f.emitPost({ ...post, liked: false, likeCount: 0, quoteCount: 2 });
+  assert.equal(f.page.data.posts[0].quoteCount, 2); assert.equal(f.page.data.ownPosts[0].quoteCount, 2);
+  assert.ok(f.updates.every(update => Object.keys(update).every(key => /quoteCount$/.test(key))));
+});
 
 test('爱心与数量先于云端响应更新，快速取消可立即操作，只更新卡片两个字段', async () => {
   const completions = [];

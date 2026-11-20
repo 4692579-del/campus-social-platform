@@ -339,3 +339,30 @@ test('普通及楼中回复按50个码点限制，空格换行计入，@小萃�
   }
   assert.equal((await send('@小萃 ' + '问'.repeat(46), 'comment-ai-limit-001', { askAI: true })).success, true);
 });
+
+
+test('本人获赞统计覆盖全部已发布广场动态，忽略客户端指定的账号及已删除内容', async () => {
+  const f = fixture(), alice = await f.login(), bob = await f.login(f.bob);
+  const read = identity => f.handle({ action: 'getSquareOwnStats', userId: bob._id, authorId: bob._id }, identity);
+  assert.equal((await read(f.alice)).square.receivedLikes, 0);
+  for (let i = 0; i < 137; i++) f.squarePosts.set(`own-${i}`, { authorId: alice._id, scope: 'square', status: 'published', likeCount: i });
+  for (const [key, row] of Object.entries({
+    other: { authorId: bob._id, scope: 'square', status: 'published', likeCount: 9999 },
+    deleted: { authorId: alice._id, scope: 'square', status: 'deleted', likeCount: 8888 },
+    campus: { authorId: alice._id, scope: 'campus', status: 'published', likeCount: 7777 },
+    legacy: { authorId: alice._id, scope: 'square', status: 'published' },
+  })) f.squarePosts.set(key, row);
+  assert.equal((await read(f.alice)).square.receivedLikes, 9316);
+  assert.equal((await read(f.bob)).square.receivedLikes, 9999);
+  f.squarePosts.get('own-136').status = 'deleted';
+  assert.equal((await read(f.alice)).square.receivedLikes, 9180);
+  f.users.get(alice._id).status = 'disabled';
+  assert.equal((await read(f.alice)).code, 'ACCOUNT_DISABLED');
+  assert.equal((await read({ openid: 'unregistered', env: 'test' })).success, false);
+});
+
+test('获赞聚合查询失败不会返回伪造的零统计', async () => {
+  const f = fixture({ readError: { collection: 'square_posts' } }); await f.login();
+  const result = await f.handle({ action: 'getSquareOwnStats' }, f.alice);
+  assert.equal(result.success, false); assert.equal(result.square, undefined);
+});

@@ -6,6 +6,7 @@ const media = require('../../services/post-images');
 const { declarations, declarationKey } = require('../../utils/content-declaration');
 
 Component({
+  properties: { initialQuote: Object, quoteOwnerId: String },
   data: { user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
     optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], optimizeHelpUsed: false, optimizeHelpVisible: false,
     viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, closing: false,
@@ -13,6 +14,7 @@ Component({
     audiences: [{ key: 'anyone', label: '任何人' }, { key: 'friends', label: '我的萃友' },
       { key: 'followers', label: '我的粉丝' }, { key: 'following', label: '我的关注' }],
     declarations,
+    quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '',
     loginSheetOpen: false, loginLoading: false, loginError: '' },
   lifetimes: {
     attached() { this.measure(); return this.initialize(); },
@@ -36,6 +38,8 @@ Component({
       if (this._unloaded) return;
       const current = users.getCachedUser();
       if ((current && current._id) !== (this.data.user && this.data.user._id)) {
+        this._quoteSequence = (this._quoteSequence || 0) + 1;
+        if (!current) { this._savedQuoteId = ''; this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' }); }
         this.hideLimitHint();
         if (current) this.onLoggedIn(current);
         else { this.cancelOptimization(); this._editorOwnerId = null; this._savedContent = ''; this._savedImages = []; this._savedDeclaration = 'none'; this._optimizedOriginal = null; this.setData({ user: null, content: '', images: [], declaration: 'none', count: 0, remainingCount: 150, countWarning: false, countProgress: 0, canPublish: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], exitConfirmVisible: false }); this.requestLogin(); }
@@ -66,11 +70,11 @@ Component({
     },
     async initialize() {
       const cached = users.getCachedUser();
-      if (cached) { this.onLoggedIn(cached); return; }
+      if (cached) return this.onLoggedIn(cached);
       try {
         const user = await users.restore({ force: false });
         if (this._unloaded || this._closing) return;
-        if (user) this.onLoggedIn(user);
+        if (user) return this.onLoggedIn(user);
         else this.requestLogin();
       } catch (error) { if (!this._unloaded && !this._closing) { this.setData({ error: error.message }); this.requestLogin(); } }
     },
@@ -78,6 +82,9 @@ Component({
       const changed = this._editorOwnerId !== user._id;
       this._editorOwnerId = user._id;
       if (changed) {
+        this._quoteSequence = (this._quoteSequence || 0) + 1;
+        this._savedQuoteId = '';
+        this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' });
         this.cancelOptimization(); this._optimizedOriginal = null;
         this.hideLimitHint();
         this._savedContent = '';
@@ -97,12 +104,47 @@ Component({
           this._savedImages = images.map(image => image.fileID);
           this._knownUploads = new Set(this._savedImages);
           this._savedDeclaration = declarationKey(draft.declaration);
+          this._savedQuoteId = /^p_[a-f0-9]{40}$/.test(draft.quotePostId || '') ? draft.quotePostId : '';
           this.setData({ images, declaration: this._savedDeclaration, ...this.noticeState(false, this._savedDeclaration) });
           this._savedContent = draft.content;
           this._requestId = draft.requestId || token();
           this.setContent(draft.content);
         }
       } catch (error) { /* 无草稿时直接开始输入。 */ }
+      let id = this._savedQuoteId, preview;
+      if (!this._initialQuoteUsed && this.data.quoteOwnerId === user._id && /^p_[a-f0-9]{40}$/.test(this.data.initialQuote?._id || '')) {
+        this._initialQuoteUsed = true; preview = this.data.initialQuote; id = preview._id;
+        if (id !== this._savedQuoteId) this._requestId = token();
+      }
+      if (id) return this.attachQuote(id, preview);
+    },
+    refreshQuotePublish() {
+      this.setData({ canPublish: Boolean(this.data.content.trim() || this.data.images.length || this.data.quotePostId) && this.data.count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
+    },
+    async attachQuote(id, preview) {
+      const version = users.getSessionVersion(), owner = this._editorOwnerId, sequence = this._quoteSequence = (this._quoteSequence || 0) + 1;
+      const cached = typeof square.cachedPost === 'function' && square.cachedPost(id) || preview;
+      const current = () => !this._unloaded && !this._closing && sequence === this._quoteSequence && version === users.getSessionVersion() && owner === this._editorOwnerId;
+      this.setData({ quotePostId: id, quote: cached ? { ...cached, content: cached.fullContent || cached.content } : { _id: id, loading: true }, quoteReady: Boolean(cached && !cached.unavailable), quoteLoading: true, quoteError: '' });
+      this.refreshQuotePublish();
+      try {
+        const post = await square.detail(id);
+        if (!current()) return;
+        this.setData({ quote: { ...post, content: post.fullContent || post.content }, quoteReady: true });
+      } catch (error) {
+        if (current()) {
+          const gone = ['POST_NOT_FOUND', 'QUOTE_UNAVAILABLE'].includes(error.code);
+          this.setData({ ...(!gone && cached && !cached.unavailable ? {} : { quote: { _id: id, unavailable: gone, failed: !gone }, quoteReady: false }),
+            quoteError: error.message || '原动态读取失败，请重试或移除引用' });
+        }
+      } finally { if (current()) { this.setData({ quoteLoading: false }); this.refreshQuotePublish(); } }
+    },
+    retryQuote() { if (this.data.quotePostId && !this.data.quoteLoading && !this.busy()) return this.attachQuote(this.data.quotePostId); },
+    removeQuote() {
+      if (this.busy()) return;
+      this.cancelOptimization(); this._quoteSequence = (this._quoteSequence || 0) + 1; this._requestId = token();
+      this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '', error: '' });
+      this.refreshQuotePublish();
     },
     noticeState(canOptimize = this.data.canOptimize, declaration = this.data.declaration) {
       const visible = { optimize: canOptimize, declaration: declaration !== 'none' };
@@ -119,7 +161,7 @@ Component({
       this.setData({ content, count, remainingCount, countWarning: remainingCount <= 20,
         ...(!canOptimize ? { optimizeHelpVisible: false } : {}),
         canOptimize, ...this.noticeState(canOptimize), ...(changed ? { canUndoOptimization: false, optimizeError: '' } : {}),
-        countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length) && count <= 150 });
+        countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length || this.data.quotePostId) && count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
     },
     onInput(event) {
       if (this._unloaded || this._closing || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
@@ -210,18 +252,19 @@ Component({
       if (!user || !this.data.user || user._id !== this.data.user._id) return false;
       try {
         const key = `square.draft.${user._id}`;
-        if (this.data.content.trim() || this.data.images.length) wx.setStorageSync(key, { content: this.data.content, declaration: this.data.declaration, requestId: this._requestId || (this._requestId = token()),
+        if (this.data.content.trim() || this.data.images.length || this.data.quotePostId) wx.setStorageSync(key, { content: this.data.content, declaration: this.data.declaration, requestId: this._requestId || (this._requestId = token()), ...(this.data.quotePostId ? { quotePostId: this.data.quotePostId } : {}),
           ...(this.data.images.length ? { images: this.data.images.map(image => ({ key: image.key, fileID: image.fileID, type: image.type })) } : {}) });
         else wx.removeStorageSync(key);
         this._savedContent = this.data.content;
         this._savedImages = this.data.images.map(image => image.fileID);
         this._savedDeclaration = this.data.declaration;
+        this._savedQuoteId = this.data.quotePostId;
         return true;
       } catch (error) { return false; }
     },
     async saveAndClose() {
       if (this.busy()) return;
-      if (!this.data.content.trim() && !this.data.images.length) { wx.showToast({ title: '请先写点内容或选择图片', icon: 'none' }); return; }
+      if (!this.data.content.trim() && !this.data.images.length && !this.data.quotePostId) { wx.showToast({ title: '请先写点内容或选择图片', icon: 'none' }); return; }
       this.cancelOptimization();
       this.setData({ savingDraft: true, error: '' });
       const version = users.getSessionVersion();
@@ -348,7 +391,7 @@ Component({
       try {
         const images = this.data.images.length ? await this.uploadSelectedImages() : [];
         if (this._unloaded || version !== users.getSessionVersion()) return;
-        await square.publish(this.data.content, this._requestId, images, this.data.declaration);
+        await square.publish(this.data.content, this._requestId, images, this.data.declaration, this.data.quotePostId);
         if (this._unloaded || users.getSessionVersion() !== version) return;
         this._published = true;
         try { wx.removeStorageSync(`square.draft.${user._id}`); } catch (error) { /* 已发布的内容不会重复提交。 */ }
@@ -375,6 +418,7 @@ Component({
         this._requestId = null;
         this._savedImages = [];
         this._savedDeclaration = 'none';
+        this._savedQuoteId = '';
         const uploads = [...(this._knownUploads || [])];
         Promise.resolve().then(() => media.discardUploads(uploads)).catch(() => {});
         return true;
@@ -385,6 +429,8 @@ Component({
     },
     discardAndClose() {
       if (this.busy() || !this.data.exitConfirmVisible || !this.clearDraft()) return;
+      this._quoteSequence = (this._quoteSequence || 0) + 1;
+      this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' });
       this.setData({ images: [], error: '' });
       this.setContent('');
       this.finishClose();
@@ -393,12 +439,12 @@ Component({
       if (this.busy() || this.data.exitConfirmVisible) return;
       this.cancelOptimization();
       const imageKeys = this.data.images.map(image => image.fileID || image.key);
-      if ((this.data.content.length || this.data.images.length) && (this.data.content !== (this._savedContent || '') || this.data.declaration !== (this._savedDeclaration || 'none') || JSON.stringify(imageKeys) !== JSON.stringify(this._savedImages || []))) {
+      if ((this.data.content.length || this.data.images.length || this.data.quotePostId) && (this.data.content !== (this._savedContent || '') || this.data.declaration !== (this._savedDeclaration || 'none') || JSON.stringify(imageKeys) !== JSON.stringify(this._savedImages || []) || this.data.quotePostId !== (this._savedQuoteId || ''))) {
         this.setData({ exitConfirmVisible: true, panel: '', keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, error: '' });
         if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
         return;
       }
-      if (!this.data.content.length && !this.data.images.length && !this.clearDraft()) return;
+      if (!this.data.content.length && !this.data.images.length && !this.data.quotePostId && !this.clearDraft()) return;
       this.finishClose();
     },
   },

@@ -6,10 +6,10 @@
   </view>
   <view class="detail-body" style="top: {{navHeight}}px;">
     <block wx:if="{{posts.length}}">
-      <comments-sheet wx:for="{{commentMounts}}" wx:key="key" id="detail-comments" post-id="{{postId}}" viewer="{{user}}" embedded top-offset="{{navHeight}}" bind:login="commentLogin" bind:close="onCommentsClose" bind:changed="commentChanged">
+      <comments-sheet wx:for="{{commentMounts}}" wx:key="key" id="detail-comments" post-id="{{postId}}" viewer="{{user}}" embedded top-offset="{{navHeight}}" focus-reply-id="{{focusReplyId}}" bind:login="commentLogin" bind:close="onCommentsClose" bind:changed="commentChanged">
         <view slot="post">
           <view wx:if="{{error}}" class="inline-error">{{error}}<button class="retry-link" bindtap="retry">重试</button></view>
-          <square-post post="{{posts[0]}}" viewer="{{user}}" detail bind:react="reactPost" bind:reply="focusComments" bind:more="managePost" />
+          <square-post post="{{posts[0]}}" viewer="{{user}}" detail bind:react="reactPost" bind:reply="focusComments" bind:more="managePost" bind:quote="quotePost" />
         </view>
       </comments-sheet>
     </block>
@@ -19,3 +19,5 @@
   </view>
   <template is="login-sheet" data="{{loginSheetOpen, loading: loginLoading, error: loginError, cancelText: '暂不登录'}}" />
 </view>
+
+<square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" />
