@@ -10,7 +10,7 @@ module.exports = function secondaryTabPage(index, extra = {}) {
     onLoad() { this.updateTabLayout(); },
     onShow() {
       this._visible = true;
-      this.showTabMotion(`/pages/${['home', 'messages', 'inbox', 'search'][index]}/index`);
+      this.showTabMotion(`/pages/${['home', 'inbox', 'messages', 'search'][index]}/index`);
       this.syncNavigation();
     },
     onReady() { this.syncNavigation(); },

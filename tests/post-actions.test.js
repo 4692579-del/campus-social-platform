@@ -139,3 +139,21 @@ test('未登录管理动态时打开登录，保留删除和举报入口的身�
   const guest = fixture({ guest: true }); await guest.page.managePost(event);
   assert.equal(guest.logins.length, 1); assert.equal(guest.sheets.length, 0);
 });
+
+
+test('引用蓝色状态只更新对应字段，三类列表同步且未确认操作不改变颜色', () => {
+  const f = fixture(); f.page.data.quotePosts = [{ ...post }];
+  f.page.openComposer = () => {};
+  f.page.quotePost(event); assert.equal(f.page.data.posts[0].quoted, undefined);
+  f.page.startPostUpdates();
+  f.emitPost({ ...post, liked: false, likeCount: 0, quoted: true });
+  for (const key of ['posts', 'ownPosts', 'quotePosts']) assert.equal(f.page.data[key][0].quoted, true);
+  assert.ok(f.updates.every(update => Object.keys(update).every(key => /\.quoted$/.test(key))));
+  f.switchUser(); f.emitPost({ ...post, quoted: false });
+  assert.equal(f.page.data.posts[0].quoted, true);
+  const template = fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.wxml'), 'utf8');
+  assert.match(template, /post\.quoted \? '-active' : ''/);
+  const normal = fs.readFileSync(path.join(__dirname, '../miniprogram/images/post-actions/quote.svg'), 'utf8');
+  const active = fs.readFileSync(path.join(__dirname, '../miniprogram/images/post-actions/quote-active.svg'), 'utf8');
+  assert.equal(active.trim(), normal.replace('#454745', '#4775FA').trim());
+});

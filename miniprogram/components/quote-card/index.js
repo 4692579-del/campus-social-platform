@@ -1,7 +1,6 @@
 const { postView } = require('../../utils/post-view');
 const { imageLayout, rememberSize } = require('../../utils/post-image-layout');
 const ID = /^p_[a-f0-9]{40}$/;
-const height = images => Math.min(360, Math.max(140, imageLayout(images, false).galleryHeight * .72));
 Component({
   properties: { quote: Object, removable: Boolean, disabled: Boolean },
   data: { frames: [] },
@@ -14,7 +13,7 @@ Component({
       const { quote: nested, ...body } = item;
       frames.push({ ...postView({ content: '', author: null, declaration: 'none', createdAt: '', ...body }),
         unavailable: Boolean(item.unavailable), collapsed: Boolean(item.collapsed), loading: Boolean(item.loading), failed: Boolean(item.failed), images,
-        imageIndex: previous && previous.imageIndex < images.length ? previous.imageIndex : 0, galleryHeight: height(images) });
+        imageIndex: previous && previous.imageIndex < images.length ? previous.imageIndex : 0, ...imageLayout(images, false, this._imageWidths && this._imageWidths.get(item._id)) });
     }
     const patch = {};
     if (frames.length !== this.data.frames.length || frames.some((row, i) => row._id !== this.data.frames[i]._id)) patch.frames = frames;
@@ -22,16 +21,39 @@ Component({
       if (key !== 'quote' && JSON.stringify(value) !== JSON.stringify(this.data.frames[i][key])) patch[`frames[${i}].${key}`] = value;
     } });
     if (Object.keys(patch).length) this.setData(patch);
+    if (typeof wx.nextTick === 'function') wx.nextTick(() => this.measureImages());
   } },
-  lifetimes: { detached() { this._dead = true; } },
-  pageLifetimes: { hide() { this._hidden = true; }, show() {
+  lifetimes: { ready() { this.measureImages(); }, detached() { this._dead = true; } },
+  pageLifetimes: { resize() { this.measureImages(); }, hide() { this._hidden = true; }, show() {
     this._hidden = false; this._opening = false;
     const patch = {};
-    this.data.frames.forEach((row, i) => { const next = height(row.images); if (next !== row.galleryHeight) patch[`frames[${i}].galleryHeight`] = next; });
+    this.data.frames.forEach((row, i) => { const layout = imageLayout(row.images, false, this._imageWidths && this._imageWidths.get(row._id)); for (const key of ['galleryWidth', 'galleryHeight']) if (layout[key] !== row[key]) patch[`frames[${i}].${key}`] = layout[key]; });
     if (Object.keys(patch).length) this.setData(patch);
+    this.measureImages();
   } },
   methods: {
     stopEvent() {},
+    measureImages() {
+      if (this._dead || this._hidden || typeof this.createSelectorQuery !== 'function') return;
+      const sequence = this._measureSequence = (this._measureSequence || 0) + 1;
+      const ids = this.data.frames.map(row => row._id);
+      this.createSelectorQuery().selectAll('.quote-media-width').fields({ size: true, dataset: true }).exec(result => {
+        if (this._dead || this._hidden || sequence !== this._measureSequence || ids.join() !== this.data.frames.map(row => row._id).join()) return;
+        let width = 375;
+        try { width = wx.getWindowInfo().windowWidth || width; } catch (error) { /* 保留标准rpx换算。 */ }
+        this._imageWidths = this._imageWidths || new Map();
+        const patch = {};
+        for (const box of result && result[0] || []) {
+          const i = Number(box.dataset.frame), row = this.data.frames[i];
+          if (!row || !(box.width > 0)) continue;
+          const available = Math.round(box.width * 750 / width * 100) / 100;
+          this._imageWidths.set(row._id, available);
+          const layout = imageLayout(row.images, false, available);
+          for (const key of ['galleryWidth', 'galleryHeight']) if (layout[key] !== row[key]) patch[`frames[${i}].${key}`] = layout[key];
+        }
+        if (Object.keys(patch).length) this.setData(patch);
+      });
+    },
     remove() { if (!this.data.disabled && !this._dead) this.triggerEvent('remove'); },
     open(event) {
       if (this.data.removable || this._dead || this._hidden || this._opening) return;
@@ -54,8 +76,11 @@ Component({
       const i = Number(event.currentTarget.dataset.frame), row = this.data.frames[i], file = event.currentTarget.dataset.file;
       if (this._dead || !row || !row.images.includes(file)) return;
       rememberSize(file, event.detail.width, event.detail.height);
-      const next = height(row.images);
-      if (!this._hidden && file === row.images[0] && row.galleryHeight !== next) this.setData({ [`frames[${i}].galleryHeight`]: next });
+      if (!this._hidden && file === row.images[0]) {
+        const layout = imageLayout(row.images, false, this._imageWidths && this._imageWidths.get(row._id)), patch = {};
+        for (const key of ['galleryWidth', 'galleryHeight']) if (layout[key] !== row[key]) patch[`frames[${i}].${key}`] = layout[key];
+        if (Object.keys(patch).length) this.setData(patch);
+      }
     },
   },
 });

@@ -14,7 +14,7 @@ function fixture() {
   });
   const c = { ...definition.methods, data: { ...structuredClone(definition.data), removable: false, disabled: false },
     setData(values) { patches.push(values); applyPageData(this.data, values); }, triggerEvent(name) { events.push(name); } };
-  return { c, patches, routes, events, toasts, show: () => definition.pageLifetimes.show.call(c),
+  return { c, patches, routes, events, toasts, show: () => definition.pageLifetimes.show.call(c), hide: () => definition.pageLifetimes.hide.call(c),
     set(value) { c.data.quote = value; definition.observers.quote.call(c, value); } };
 }
 test('引用卡片保留图片节点和页码；点击跳到被引用详情，编辑态只能移除', () => {
@@ -31,4 +31,26 @@ test('删除的引用不保留正文图片，不可见卡片不假装跳转成�
   const f = fixture(); f.set(quote); f.set({ _id: quote._id, unavailable: true });
   assert.equal(f.c.data.frames[0].content, ''); assert.equal(f.c.data.frames[0].images.length, 0);
   f.c.open({ currentTarget: { dataset: { id: quote._id } } }); assert.equal(f.routes.length, 0); assert.equal(f.toasts.length, 1);
+});
+test('引用图片沿用动态原始比例，按引用正文实际宽度适配，横图矮竖图高且超长图收窄', () => {
+  const { rememberSize, imageLayout } = require('../miniprogram/utils/post-image-layout');
+  const f = fixture(), file = 'quote-original-ratio';
+  f.c.createSelectorQuery = () => ({ selectAll() { return this; }, fields() { return this; }, exec(fn) { fn([[{ width: 260, dataset: { frame: 0 } }]]); } });
+  for (const [width, height] of [[1200,600],[600,600],[600,1200]]) {
+    rememberSize(file,width,height); f.set({ ...quote, images: [file] }); f.c.measureImages();
+    const expected = imageLayout([file],false,520), row = f.c.data.frames[0];
+    assert.equal(row.galleryWidth,expected.galleryWidth); assert.equal(row.galleryHeight,expected.galleryHeight);
+    assert.ok(Math.abs(520*row.galleryWidth/100/row.galleryHeight-width/height)<0.001);
+  }
+  assert.ok(f.c.data.frames[0].galleryWidth<100);
+});
+test('引用多图滑到第二张后，隐藏期间首次解码只缓存比例，返回只修正几何并保留页码及图源', () => {
+  const f = fixture(), images = ['quote-delayed-first','quote-delayed-second'];
+  f.set({ ...quote, images });
+  f.c.imageChanged({ currentTarget: { dataset: { frame: 0 } }, detail: { current: 1 } });
+  f.patches.length=0; f.hide();
+  f.c.photoLoaded({ currentTarget: { dataset: { frame: 0, file: images[0] } }, detail: { width: 600,height: 1000 } });
+  assert.equal(f.patches.length,0); f.show();
+  assert.equal(f.c.data.frames[0].imageIndex,1);
+  assert.ok(f.patches.every(patch => Object.keys(patch).every(key => /gallery(Width|Height)$/.test(key))));
 });

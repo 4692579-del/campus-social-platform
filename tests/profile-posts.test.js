@@ -11,14 +11,14 @@ const post = { _id: 'p_' + 'a'.repeat(40), content: '本人的广场动态', aut
 const result = { items: [post], hasMore: false, nextOffset: 1 };
 const event = key => ({ currentTarget: { dataset: { key } } });
 function fixture(options = {}) {
-  let definition, cached = options.cached || null, current = { ...user }, albumCache = options.albumCache || null;
+  let definition, cached = options.cached || null, current = { ...user }, albumCache = options.albumCache || null, quoteCache = options.quoteCache || null;
   const calls = [], routes = [];
   const users = { getCachedUser: () => current, getSessionVersion: () => 0, restore: async () => current };
   const square = {
-    cachedOwnFeed: () => cached, cachedPost: () => null,
+    cachedOwnFeed: type => type === 'quotes' ? quoteCache : cached, cachedPost: () => null,
     cachedAlbum: () => albumCache,
     album: async args => { calls.push({ album: true, ...args }); albumCache = options.album ? await options.album(args) : { items: [], hasMore: false, nextOffset: 0 }; return albumCache; },
-    list: async args => { calls.push(args); cached = options.list ? await options.list(args) : result; return cached; },
+    list: async args => { calls.push(args); if (args.postType === 'quotes') { quoteCache = options.quotes ? await options.quotes(args) : { items: [], hasMore: false, nextOffset: 0 }; return quoteCache; } cached = options.list ? await options.list(args) : result; return cached; },
     react: async () => ({ ...post, liked: true, likeCount: 1 }),
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
@@ -29,7 +29,7 @@ function fixture(options = {}) {
       navigateTo: args => routes.push(args.url), showToast() {}, stopPullDownRefresh() {} },
   });
   const page = { ...definition, data: structuredClone(definition.data), setData: values => applyPageData(page.data, values) };
-  return { page, calls, routes, setUser: value => { if ((current && current._id) !== (value && value._id)) { cached = null; albumCache = null; } current = value; page.applyUser(value); } };
+  return { page, calls, routes, setUser: value => { if ((current && current._id) !== (value && value._id)) { cached = null; albumCache = null; quoteCache = null; } current = value; page.applyUser(value); } };
 }
 
 test('个人主页发布打开原位面板，取消回到原个人主页，不跳转或清空动态', () => {
@@ -129,4 +129,33 @@ test('下拉刷新合并正在进行的读取，失败后停止转圈并保留�
   assert.equal(f.page.data.profileRefreshing, false);
   assert.equal(f.page.data.ownPosts[0].content, post.content);
   assert.equal(f.page.data.postsError, '网络失败');
+});
+
+
+test('引用标签同步预填真实缓存，独立分页和刷新，普通动态不包含引用且切换不销毁列表', async () => {
+  const quote = { ...post, _id: 'p_' + 'b'.repeat(40), quotePostId: post._id };
+  const older = { ...quote, _id: 'p_' + 'c'.repeat(40) };
+  const f = fixture({ cached: { ...result, items: [post, quote] }, quoteCache: { items: [quote], hasMore: true, nextOffset: 20 },
+    quotes: async args => ({ items: args.offset ? [quote, older] : [quote], hasMore: !args.offset, nextOffset: args.offset ? 21 : 20 }) });
+  f.page.onLoad(); assert.equal(f.page.data.ownPosts.length, 1); assert.equal(f.page.data.quotePosts[0]._id, quote._id);
+  await f.page.selectContent(event('reposts'));
+  assert.equal(f.page.data.contentIndex, 2); assert.equal(f.calls.at(-1).postType, 'quotes');
+  await f.page.loadMoreOwnPosts(); assert.equal(f.calls.at(-1).offset, 20); assert.equal(f.page.data.quotePosts.length, 2);
+  await f.page.refreshProfilePosts(); assert.equal(f.calls.at(-1).force, true); assert.equal(f.calls.at(-1).postType, 'quotes');
+  f.page.selectContent(event('posts')); assert.equal(f.page.data.quotePosts[0]._id, quote._id);
+  const template = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.wxml'), 'utf8');
+  assert.match(template, /square-post wx:for="{{quotePosts}}" wx:key="_id"/);
+});
+
+test('引用读取失败保留旧卡片，换账号及隐藏后的迟到结果不恢复旧记录', async () => {
+  const quote = { ...post, quotePostId: 'source' }; let finish, attempts = 0;
+  const f = fixture({ quoteCache: { items: [quote], hasMore: true, nextOffset: 20 }, quotes: async () => {
+    if (++attempts === 1) throw new Error('网络失败');
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  f.page.onLoad(); await f.page.selectContent(event('reposts'));
+  assert.equal(f.page.data.quotePosts.length, 1); assert.equal(f.page.data.quotesError, '网络失败');
+  const pending = f.page.retryOwnQuotes(); f.page.onHide(); f.setUser({ ...user, _id: 'bob' });
+  finish({ items: [quote], hasMore: false, nextOffset: 1 }); await pending;
+  assert.equal(f.page.data.quotePosts.length, 0); assert.equal(f.page.data.quotesError, '');
 });

@@ -9,8 +9,8 @@ function rememberSize(file, width, height) {
   if (sizes.size > MAX_ENTRIES) sizes.delete(sizes.keys().next().value);
   return true;
 }
-function imageLayout(files = [], detail = false) {
-  const available = detail ? 718 : 628;
+function imageLayout(files = [], detail = false, contentWidth) {
+  const available = Number.isFinite(contentWidth) && contentWidth > 0 ? contentWidth : detail ? 718 : 628;
   const size = sizes.get(files[0]), ratio = size ? size.width / size.height : 4 / 3;
   if (files.length <= 1) {
     const width = Math.min(available, 840 * ratio);

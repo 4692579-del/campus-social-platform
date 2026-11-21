@@ -11,6 +11,7 @@ function historyChanged(invalidate = false) {
   for (const listener of historyListeners) { try { listener({ invalidated: invalidate }); } catch (error) { /* 展示不影响保存。 */ } }
 }
 let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
+const profileFeeds = new Map();
 const posts = new Map(), postTimes = new Map(), replies = new Map(), pending = new Map(), revisions = new Map();
 const deleted = new Set();
 const likeWrites = new Map(), postListeners = new Set();
@@ -25,7 +26,7 @@ function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
   if (key !== owner) { ownHistory = null; historyRevision++; }
-  if (key !== owner) { owner = key; generation += 1; ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
+  if (key !== owner) { owner = key; generation += 1; profileFeeds.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
 }
 function cachedOwnStats() { session(); return ownStats && ownStats.value; }
@@ -45,17 +46,22 @@ function getOwnStats() {
 }
 function cachedFeed() { session(); return feed && feed.value; }
 function cachedAlbum() { session(); return albumFeed && albumFeed.value; }
-function cachedOwnFeed() {
+function ownCache(postType) { return postType === 'all' ? ownFeed : profileFeeds.get(postType); }
+function ownMatches(post, postType) { return postType === 'all' || Boolean(post.quotePostId) === (postType === 'quotes'); }
+function cachedOwnFeed(postType = 'all') {
   session();
-  if (!ownFeed && feed) {
-    const user = users.getCachedUser();
-    const items = user && user.accountId ? feed.value.items.filter(post => post.author.accountId === user.accountId) : [];
-    // 首页已有的本人动态先展示，分页完整性仍由后台的本人查询确认。
-    if (items.length) ownFeed = { time: 0, value: { items, hasMore: true, nextOffset: 0 } };
+  let cached = ownCache(postType);
+  if (!cached && (ownFeed || feed)) {
+    const user = users.getCachedUser(), source = ownFeed || feed;
+    const items = user && user.accountId ? source.value.items.filter(post => post.author.accountId === user.accountId && ownMatches(post, postType)) : [];
+    if (items.length) {
+      cached = { time: 0, value: { items, hasMore: true, nextOffset: 0 } };
+      if (postType === 'all') ownFeed = cached; else profileFeeds.set(postType, cached);
+    }
   }
-  if (!ownFeed) return null;
-  ownFeed.value.items = ownFeed.value.items.map(post => posts.has(post._id) ? previewPost(posts.get(post._id)) : post);
-  return ownFeed.value;
+  if (!cached) return null;
+  cached.value.items = cached.value.items.map(post => posts.has(post._id) ? previewPost(posts.get(post._id)) : post);
+  return cached.value;
 }
 function cachedPost(id) { session(); return posts.get(id) || (feed && feed.value.items.find(item => item._id === id)) || null; }
 function cachedReplies(id) { session(); return replies.get(id) || null; }
@@ -147,7 +153,7 @@ function pendingLike(post) {
   const write = likeWrites.get(post._id);
   let value = write ? likedPost(post, write.desired) : post;
   const current = posts.get(post._id);
-  if (current && (current.quoteVersion || 0) > (value.quoteVersion || 0)) value = { ...value, quoteCount: current.quoteCount, quoteVersion: current.quoteVersion };
+  if (current && (current.quoteVersion || 0) > (value.quoteVersion || 0)) value = { ...value, quoteCount: current.quoteCount, quoteVersion: current.quoteVersion, quoted: current.quoted };
   const quote = removedQuote(value.quote);
   return quote !== value.quote ? { ...value, quote } : value;
 }
@@ -155,6 +161,7 @@ function subscribePost(listener) { postListeners.add(listener); return () => pos
 function updatePost(post, prepend = false) {
   if (deleted.has(post._id)) return;
   post = pendingLike(post);
+  const firstPublication = prepend && !posts.has(post._id);
   posts.set(post._id, post);
   postTimes.set(post._id, Date.now());
   if (feed) {
@@ -162,15 +169,22 @@ function updatePost(post, prepend = false) {
     feed.value.items = feed.value.items.map(item => item._id === post._id ? previewPost(post) : item);
     if (prepend && !found) feed.value.items.unshift(previewPost(post));
   } else if (prepend) feed = { time: 0, value: { items: [previewPost(post)], hasMore: true, nextOffset: 0 } };
-  if (ownFeed) {
-    const found = ownFeed.value.items.some(item => item._id === post._id);
-    ownFeed.value.items = ownFeed.value.items.map(item => item._id === post._id ? previewPost(post) : item);
-    if (prepend && !found) {
-      ownFeed.value.items.unshift(previewPost(post));
-      ownFeed.value.nextOffset += 1;
-      if (Number.isSafeInteger(ownFeed.value.total)) ownFeed.value.total += 1;
+  for (const postType of ['all', 'posts', 'quotes']) {
+    const cached = ownCache(postType), matches = ownMatches(post, postType);
+    if (cached) {
+      const found = cached.value.items.some(item => item._id === post._id);
+      cached.value.items = cached.value.items.map(item => item._id === post._id ? previewPost(post) : item);
+      if (prepend && matches && !found) {
+        cached.value.items.unshift(previewPost(post));
+        cached.value.nextOffset += 1;
+        if (Number.isSafeInteger(cached.value.total)) cached.value.total += 1;
+      }
+      if (firstPublication && Number.isSafeInteger(cached.value.allTotal)) cached.value.allTotal += 1;
+    } else if (prepend && matches) {
+      const saved = { time: 0, value: { items: [previewPost(post)], hasMore: true, nextOffset: 0 } };
+      if (postType === 'all') ownFeed = saved; else profileFeeds.set(postType, saved);
     }
-  } else if (prepend) ownFeed = { time: 0, value: { items: [previewPost(post)], hasMore: true, nextOffset: 0 } };
+  }
   for (const listener of postListeners) {
     try { listener(post); } catch (error) { /* 页面观察者不能影响已完成的保存或缓存更新。 */ }
   }
@@ -202,8 +216,10 @@ function removePost(id, knownOwn = false) {
   posts.delete(id); postTimes.delete(id); replies.delete(id);
   if (newlyRemoved && own && ownFeed && Number.isSafeInteger(ownFeed.value.total)) ownFeed.value.total = Math.max(0, ownFeed.value.total - 1);
   for (const key of children.keys()) if (key.startsWith(`${id}:`)) children.delete(key);
-  for (const cached of [feed, ownFeed]) if (cached) {
+  for (const [postType, cached] of [['feed', feed], ['all', ownFeed], ...profileFeeds]) if (cached) {
     const removed = cached.value.items.some(post => post._id === id);
+    if (newlyRemoved && own && postType !== 'feed' && postType !== 'all' && row && Number.isSafeInteger(cached.value.total) && ownMatches(row, postType)) cached.value.total = Math.max(0, cached.value.total - 1);
+    if (newlyRemoved && own && Number.isSafeInteger(cached.value.allTotal)) cached.value.allTotal = Math.max(0, cached.value.allTotal - 1);
     cached.value.items = cached.value.items.filter(post => post._id !== id);
     if (removed) cached.value.nextOffset = Math.max(0, cached.value.nextOffset - 1);
     cached.time = 0;
@@ -238,29 +254,31 @@ function merged(key, request) {
   pending.set(key, promise);
   return promise;
 }
-function list({ force = false, offset = 0, mine = false } = {}) {
+function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}) {
   session();
-  const cached = mine ? ownFeed : feed;
+  const cached = mine ? ownCache(postType) : feed;
   if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cached.value);
-  return merged(`${mine ? 'own' : 'feed'}:${offset}`, async () => {
+  return merged(`${mine ? 'own:' + postType : 'feed'}:${offset}`, async () => {
     const revision = mutation;
     const before = new Map(revisions);
     let requestOffset = offset, removalVersion = removals;
-    let result = await call('listSquarePosts', { offset: requestOffset, ...(mine ? { mine: true } : {}) }, mine);
+    let result = await call('listSquarePosts', { offset: requestOffset, ...(mine ? { mine: true, ...(postType !== 'all' ? { postType } : {}) } : {}) }, mine);
     // 删除会移动服务端分页位置，旧分页返回时重新对齐首页，防止跳过一条动态。
     if (removalVersion !== removals) {
       requestOffset = 0; removalVersion = removals;
-      result = await call('listSquarePosts', { offset: 0, ...(mine ? { mine: true } : {}) }, mine);
+      result = await call('listSquarePosts', { offset: 0, ...(mine ? { mine: true, ...(postType !== 'all' ? { postType } : {}) } : {}) }, mine);
       if (removalVersion !== removals) throw new Error('动态列表已更新，请刷新后重试');
     }
-    if (mine && result.mine !== true) throw new Error('个人动态服务需要更新，请重新部署 userService 云函数');
+    if (mine && (result.mine !== true || postType !== 'all' && result.postType !== postType)) throw new Error('个人动态服务需要更新，请重新部署 userService 云函数');
     const currentItems = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
     const timestamp = post => new Date(post.createdAt && post.createdAt.$date || post.createdAt).getTime() || 0;
-    const latest = mine ? ownFeed : feed;
+    const latest = mine ? ownCache(postType) : feed;
     const items = (requestOffset || revision !== mutation) && latest ? [...new Map([...latest.value.items, ...currentItems].map(item => [item._id, item])).values()].sort((a, b) => timestamp(b) - timestamp(a)) : currentItems;
     const total = mine && latest && (requestOffset || revision !== mutation) && Number.isSafeInteger(latest.value.total) ? latest.value.total : result.total;
-    const saved = { value: { ...result, ...(mine && Number.isSafeInteger(total) ? { total } : {}), items }, time: Date.now() };
-    if (mine) ownFeed = saved;
+    const allTotal = mine && latest && (requestOffset || revision !== mutation) ? latest.value.allTotal : result.allTotal;
+    const saved = { value: { ...result, ...(mine && Number.isSafeInteger(total) ? { total } : {}), ...(Number.isSafeInteger(allTotal) ? { allTotal } : {}), items }, time: Date.now() };
+    if (mine && postType === 'all') ownFeed = saved;
+    else if (mine) profileFeeds.set(postType, saved);
     else feed = saved;
     for (const post of items) if (!post.truncated || typeof post.fullContent === 'string') {
       posts.set(post._id, { ...post, content: post.fullContent || post.content, truncated: false }); postTimes.set(post._id, Date.now());
@@ -398,6 +416,7 @@ async function saveLike(id, write) {
       if (write.confirmed) updatePost(merge(write.confirmed));
       if (feed) feed.time = 0;
       if (ownFeed) ownFeed.time = 0;
+      for (const cached of profileFeeds.values()) cached.time = 0;
       postTimes.delete(id);
     }
     throw error;

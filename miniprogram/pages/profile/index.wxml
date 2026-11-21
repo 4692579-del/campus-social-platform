@@ -70,7 +70,7 @@
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
     <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
     <block wx:else>
-      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>
@@ -82,7 +82,14 @@
     <profile-replies id="profile-replies" active="{{selectedContent === 'replies'}}" viewer="{{user}}" bind:open="openHistoryPost" bind:reply="replyToHistory" />
   </view>
   <view class="profile-panel {{selectedContent === 'reposts' ? 'is-active' : ''}}" style="left: 50%;" aria-hidden="{{selectedContent !== 'reposts'}}">
-    <view class="content-empty"><view class="empty-title">{{contentTabs[2].empty}}</view></view>
+    <view wx:if="{{quotesError}}" class="profile-post-error"><text>{{quotesError}}</text><button size="mini" bindtap="retryOwnQuotes">重试</button></view>
+    <view wx:if="{{quotesLoading && !quotePosts.length}}" class="content-empty"><view class="empty-title">正在读取引用…</view></view>
+    <block wx:else>
+      <square-post wx:for="{{quotePosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+      <view wx:if="{{!quotePosts.length && !quotesError}}" class="content-empty"><view class="empty-title">{{contentTabs[2].empty}}</view></view>
+      <view wx:if="{{quotesMoreLoading}}" class="profile-post-end">正在加载…</view>
+      <view wx:elif="{{quotePosts.length && !quotesHasMore}}" class="profile-post-end">已经看到这里了</view>
+    </block>
   </view>
   <view class="profile-panel {{selectedContent === 'album' ? 'is-active' : ''}}" style="left: 75%;" aria-hidden="{{selectedContent !== 'album'}}">
     <view wx:if="{{albumError}}" class="profile-post-error"><text>{{albumError}}</text><button bindtap="retryAlbum">重试</button></view>

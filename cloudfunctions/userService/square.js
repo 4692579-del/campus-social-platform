@@ -107,7 +107,9 @@ function createSquareService(db, options = {}) {
   async function present(rows, viewer, preview = false) {
     if (!rows.length) return [];
     const authorIds = [...new Set(rows.map(row => row.authorId))];
-    const [authors, quotes, states] = await Promise.all([profilesFor(authorIds), quoteViews(rows), viewer ? reactions.where({ userId: viewer._id, postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get().then(result => result.data) : Promise.resolve([])]);
+    const [authors, quotes, states, quoted] = await Promise.all([profilesFor(authorIds), quoteViews(rows), viewer ? reactions.where({ userId: viewer._id, postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get().then(result => result.data) : Promise.resolve([]),
+      viewer ? posts.aggregate().match({ scope: 'square', status: 'published', authorId: viewer._id,
+        quotePostId: db.command.in(rows.map(row => row._id)) }).group({ _id: '$quotePostId' }).end().then(result => new Set(result.list.map(row => row._id))) : Promise.resolve(new Set())]);
     return rows.map(row => ({ _id: row._id, content: preview ? Array.from(row.content).slice(0, 280).join('') : row.content,
       ...(preview ? { fullContent: row.content } : {}), images: row.images || [], declaration: DECLARATIONS.includes(row.declaration) ? row.declaration : 'none',
       truncated: preview && Array.from(row.content).length > 280, author: authors.get(row.authorId), createdAt: row.createdAt,
@@ -115,7 +117,7 @@ function createSquareService(db, options = {}) {
       likeCount: row.likeCount || 0, replyCount: row.replyCount || 0, repostCount: 0,
       isOwn: Boolean(viewer && viewer._id === row.authorId),
       liked: states.some(state => state.postId === row._id && state.kind === 'like'),
-      reposted: false }));
+      quoted: quoted.has(row._id), reposted: false }));
   }
   function pagination(event) {
     const offset = event.offset === undefined ? 0 : event.offset;
@@ -144,15 +146,20 @@ function createSquareService(db, options = {}) {
     if (action === 'listSquarePosts') {
       const offset = pagination(event);
       const mine = event.mine === true;
+      const postType = event.postType === undefined ? 'all' : event.postType;
+      if (!['all', 'posts', 'quotes'].includes(postType) || !mine && postType !== 'all') fail('INVALID_POST', '动态分类参数不正确');
       if (mine) active(user);
-      const filter = { scope: 'square', status: 'published', ...(mine ? { authorId: user._id } : {}) };
-      const [result, count] = await Promise.all([
+      const base = { scope: 'square', status: 'published', ...(mine ? { authorId: user._id } : {}) };
+      // 普通发布不写 quotePostId；引用归属只看最终保存的关系，来源失效也不改变分类。
+      const filter = { ...base, ...(postType !== 'all' ? { quotePostId: db.command.exists(postType === 'quotes') } : {}) };
+      const [result, count, allCount] = await Promise.all([
         posts.where(filter).orderBy('sortKey', 'desc').skip(offset).limit(21).get(),
         // 总数是导航展示附加信息，读取失败不阻断原有帖子列表。
         mine && !offset ? posts.where(filter).count().catch(() => null) : Promise.resolve(null),
+        mine && !offset && postType !== 'all' ? posts.where(base).count().catch(() => null) : Promise.resolve(null),
       ]);
       const rows = result.data;
-      return { ...(mine ? { mine: true } : {}), ...(count ? { total: count.total } : {}), items: await present(rows.slice(0, 20), mine || event.personalize === true ? user : null, true), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
+      return { ...(mine ? { mine: true, postType } : {}), ...(count ? { total: count.total } : {}), ...(allCount ? { allTotal: allCount.total } : {}), items: await present(rows.slice(0, 20), mine || event.personalize === true ? user : null, true), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
     }
     if (action === 'getSquarePost') return { post: (await present([await getPost(event.postId)], event.personalize === true ? user : null))[0] };
     if (action === 'listSquareReplies' || action === 'listSquareReplyChildren') {

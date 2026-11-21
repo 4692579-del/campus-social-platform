@@ -1,2 +1,2 @@
 const secondaryTabPage = require('../../utils/secondary-tab-page');
-Page(secondaryTabPage(1));
+Page(secondaryTabPage(2));

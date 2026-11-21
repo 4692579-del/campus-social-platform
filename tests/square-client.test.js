@@ -708,3 +708,72 @@ test('获赞缓存到期后台重查，失败和异常数值不覆盖已有真�
   await assert.rejects(f.service.getOwnStats()); assert.equal(f.service.cachedOwnStats().receivedLikes, 5);
   result = 6; assert.equal((await f.service.getOwnStats()).receivedLikes, 6);
 });
+
+
+test('动态和引用缓存独立分页，发布依最终关系归类，重复确认及删除不重复扣数', async () => {
+  const normal = post({ isOwn: true }), sourceId = 'p_' + 'b'.repeat(40);
+  const quote = post({ _id: 'p_' + 'c'.repeat(40), quotePostId: sourceId, isOwn: true });
+  const plain = post({ _id: 'p_' + 'd'.repeat(40), isOwn: true });
+  const newQuote = { ...quote, _id: 'p_' + 'e'.repeat(40) };
+  const f = client(data => {
+    let square;
+    if (data.action === 'listSquarePosts') square = { mine: true, postType: data.postType, items: data.postType === 'quotes' ? [quote] : [normal], total: 1, allTotal: 2, hasMore: false, nextOffset: 1 };
+    else if (data.action === 'publishSquarePost') square = { post: data.post.quotePostId ? newQuote : plain };
+    else square = { deletedId: quote._id };
+    return { result: { success: true, square } };
+  });
+  await Promise.all([f.service.list({ mine: true, postType: 'posts' }), f.service.list({ mine: true, postType: 'quotes' })]);
+  assert.equal(f.calls.length, 2);
+  await Promise.all([f.service.list({ mine: true, postType: 'posts' }), f.service.list({ mine: true, postType: 'quotes' })]);
+  assert.equal(f.calls.length, 2);
+  await f.service.publish('移除引用之后的文字', 'profile-plain-000001');
+  await f.service.publish('移除引用之后的文字', 'profile-plain-000001');
+  assert.deepEqual(Array.from(f.service.cachedOwnFeed('posts').items, row => row._id), [plain._id, normal._id]);
+  assert.deepEqual(Array.from(f.service.cachedOwnFeed('quotes').items, row => row._id), [quote._id]);
+  assert.equal(f.service.cachedOwnFeed('posts').total, 2); assert.equal(f.service.cachedOwnFeed('quotes').allTotal, 3);
+  await f.service.publish('引用发布', 'profile-quote-000001', [], 'none', sourceId);
+  await f.service.publish('引用发布', 'profile-quote-000001', [], 'none', sourceId);
+  assert.deepEqual(Array.from(f.service.cachedOwnFeed('quotes').items, row => row._id), [newQuote._id, quote._id]);
+  assert.equal(f.service.cachedOwnFeed('quotes').total, 2); assert.equal(f.service.cachedOwnFeed('posts').allTotal, 4);
+  assert.equal(f.service.cachedOwnFeed('posts').items.length, 2);
+  await f.service.deletePost(quote._id); await f.service.deletePost(quote._id);
+  assert.equal(f.service.cachedOwnFeed('quotes').items.length, 1); assert.equal(f.service.cachedOwnFeed('quotes').total, 1);
+  assert.equal(f.service.cachedOwnFeed('posts').total, 2); assert.equal(f.service.cachedOwnFeed('posts').allTotal, 3);
+  f.users.logout(); assert.equal(f.service.cachedOwnFeed('quotes'), null); assert.equal(f.service.cachedOwnFeed('posts'), null);
+});
+
+test('分类查询拒绝旧云端混合响应，切账号后的迟到引用列表不能写入缓存', async () => {
+  const old = client(() => ({ result: { success: true, square: { mine: true, items: [], hasMore: false, nextOffset: 0 } } }));
+  await assert.rejects(old.service.list({ mine: true, postType: 'quotes' }), /重新部署 userService/);
+  let finish;
+  const f = client(() => new Promise(resolve => { finish = resolve; }));
+  const listing = f.service.list({ mine: true, postType: 'quotes' });
+  f.login({ ...user, _id: 'bob' });
+  finish({ result: { success: true, square: { mine: true, postType: 'quotes', items: [post({ quotePostId: 'source' })], hasMore: false, nextOffset: 1 } } });
+  await assert.rejects(listing, error => error.code === 'SESSION_CHANGED');
+  assert.equal(f.service.cachedOwnFeed('quotes'), null);
+});
+
+
+test('发布与删除同步引用蓝色状态，迟到列表及旧引用版本不能反弹当前颜色', async () => {
+  const source = post({ quoteCount: 0, quoteVersion: 0, quoted: false });
+  const quote = post({ _id: 'p_' + 'f'.repeat(40), quotePostId: source._id, isOwn: true });
+  let delayed = false, finish;
+  const f = client(data => {
+    const ok = square => ({ result: { success: true, square } });
+    if (data.action === 'listSquarePosts') return delayed ? new Promise(resolve => { finish = resolve; }) : ok({ items: [source], hasMore: false, nextOffset: 1 });
+    if (data.action === 'publishSquarePost') return ok({ post: quote, quotedPost: { ...source, quoted: true, quoteCount: 1, quoteVersion: 1 } });
+    return ok({ deletedId: quote._id, quotedPost: { ...source, quoted: false, quoteCount: 0, quoteVersion: 2 } });
+  });
+  await f.service.list(); delayed = true;
+  const staleRead = f.service.list({ force: true });
+  await f.service.publish('引用', 'state-quote-publish-1', [], 'none', source._id);
+  assert.equal(f.service.cachedPost(source._id).quoted, true);
+  finish({ result: { success: true, square: { items: [source], hasMore: false, nextOffset: 1 } } }); await staleRead;
+  assert.equal(f.service.cachedFeed().items.find(row => row._id === source._id).quoted, true);
+  const secondRead = f.service.list({ force: true });
+  await f.service.deletePost(quote._id); delayed = false;
+  finish({ result: { success: true, square: { items: [{ ...source, quoted: true, quoteCount: 1, quoteVersion: 1 }], hasMore: false, nextOffset: 1 } } }); await secondRead;
+  assert.equal(f.service.cachedPost(source._id).quoted, false);
+  assert.equal(f.service.cachedFeed().items.find(row => row._id === source._id).quoteCount, 0);
+});

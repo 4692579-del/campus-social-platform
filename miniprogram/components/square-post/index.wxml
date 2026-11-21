@@ -1,9 +1,10 @@
+<wxs module="actionCount" src="./action-count.wxs" />
 <template name="actions">
   <view class="post-actions">
-    <button class="post-action {{post.liked ? 'liked' : ''}}" catchtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><image src="/images/post-actions/like{{post.liked ? '-active' : ''}}.svg" mode="aspectFit" /><text>{{post.likeCount || 0}}</text></button>
-    <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/post-actions/comment.svg" mode="aspectFit" /><text>{{post.replyCount || 0}}</text></button>
-    <button class="post-action" catchtap="quote" aria-label="引用动态"><image src="/images/post-actions/quote.svg" mode="aspectFit" /><text>{{post.quoteCount || 0}}</text></button>
-    <view class="post-action" catchtap="stopEvent" aria-label="分享，0，暂未开放"><image src="/images/post-actions/share.svg" mode="aspectFit" /><text>0</text></view>
+    <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/post-actions/comment.svg" mode="aspectFit" /><text>{{actionCount.format(post.replyCount)}}</text></button>
+    <button class="post-action post-action-like {{post.liked ? 'liked' : ''}}" catchtap="like" aria-label="{{post.liked ? '取消点赞' : '点赞'}}"><view class="like-stage {{likeMotionClass}}"><view wx:if="{{likeMotion}}" class="like-burst" aria-hidden="true"><view class="like-burst-ring"></view><view wx:for="{{likeParticleRays}}" wx:key="angle" class="like-particle-ray" style="transform: rotate({{item.angle}}deg);"><view class="like-particle like-particle-main" style="background: {{item.color}};"></view><view class="like-particle like-particle-pair" style="background: {{item.accent}};"></view></view></view><image class="like-glyph" src="/images/post-actions/like{{post.liked ? (likeMotion ? '-filled' : '-active') : ''}}.svg" mode="aspectFit" /></view><text>{{actionCount.format(post.likeCount)}}</text></button>
+    <button class="post-action" catchtap="quote" aria-label="{{post.quoted ? '已引用，再次引用动态' : '引用动态'}}"><image src="/images/post-actions/quote{{post.quoted ? '-active' : ''}}.svg" mode="aspectFit" /><text>{{actionCount.format(post.quoteCount)}}</text></button>
+    <view class="post-action post-action-share" catchtap="stopEvent" aria-label="分享功能暂未开放"><image src="/images/post-actions/share.svg" mode="aspectFit" /></view>
   </view>
 </template>
 <view class="post-card {{detail ? 'is-detail' : ''}}" bindtap="open">
@@ -24,6 +25,6 @@
     <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>
     <quote-card wx:if="{{post.quotePostId}}" class="post-quote" quote="{{post.quote}}" />
     <view wx:if="{{detail && post.exactTime}}" class="post-date">{{post.exactTime}}</view>
-    <template is="actions" data="{{post: post}}" />
+    <template is="actions" data="{{post: post, likeMotion: likeMotion, likeMotionClass: likeMotionClass, likeParticleRays: likeParticleRays}}" />
   </view>
 </view>

@@ -25,11 +25,13 @@
 .post-declaration { display: flex; align-items: flex-start; gap: 8rpx; margin-top: 14rpx; color: #87919c; font-size: 23rpx; line-height: 1.5; }
 .post-declaration image { flex-shrink: 0; width: 25rpx; height: 25rpx; margin-top: 5rpx; }
 .post-declaration text { min-width: 0; word-break: break-word; }
-.post-actions { display: flex; align-items: center; gap: 36rpx; margin-top: 12rpx; }
+.post-actions { display: flex; align-items: center; gap: 40rpx; margin-top: 14rpx; }
 .post-quote { display: block; margin-top: 18rpx; }
-.post-actions .post-action { display: flex; align-items: center; justify-content: flex-start; flex: 0 0 auto; width: auto; min-width: 72rpx; gap: 8rpx; height: 58rpx; padding: 0; margin: 0; box-sizing: border-box; background: transparent; border: 0; border-radius: 0; color: #87919c; font-size: 23rpx; line-height: 1; }
+.post-actions .post-action { display: flex; align-items: center; justify-content: flex-start; flex: 0 0 auto; width: auto; min-width: 100rpx; gap: 10rpx; height: 64rpx; padding: 0; margin: 0; box-sizing: border-box; background: transparent; border: 0; border-radius: 0; color: #454745; font-size: 28rpx; font-weight: 400; line-height: 1; }
 .post-action::after { border: 0; }
-.post-action image { width: 32rpx; height: 32rpx; flex-shrink: 0; }
+.post-action image { display: block; width: 40rpx; height: 40rpx; flex-shrink: 0; }
+.post-action text { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.post-actions .post-action-share { min-width: 40rpx; }
 .post-actions .liked { color: #e34b76; }
 
 .post-date { position: relative; margin-top: 16rpx; padding: 12rpx 0; color: #8b949e; font-size: 23rpx; line-height: 1.6; }
@@ -43,3 +45,34 @@
 .is-detail .post-handle { display: block; }
 .is-detail .post-text { margin-top: 24rpx; }
 .is-detail .post-date::after { left: -16rpx; }
+
+/* 仅图标局部合成动画，固定占位使数字、图片和整张卡片不随弹跳移动。 */
+.post-actions .post-action-like { overflow: visible; }
+.like-stage { position: relative; display: block; width: 40rpx; height: 40rpx; flex-shrink: 0; overflow: visible; }
+.like-stage .like-glyph { position: relative; z-index: 2; width: 40rpx; height: 40rpx; transform-origin: center; }
+.like-burst { position: absolute; inset: 0; pointer-events: none; }
+.like-burst-ring { position: absolute; inset: 0; box-sizing: border-box; border: 0 solid #c66de0; border-radius: 50%; opacity: 0; }
+.like-particle-ray { position: absolute; inset: 0; transform-origin: center; }
+.like-particle { position: absolute; left: 50%; top: 50%; width: 5rpx; height: 5rpx; border-radius: 50%; opacity: 0; }
+.like-particle-pair { width: 4rpx; height: 4rpx; }
+.is-like-a .like-glyph, .is-like-b .like-glyph { animation: post-heart-pop-a 900ms linear both; }
+.is-like-a .like-burst-ring, .is-like-b .like-burst-ring { animation: post-heart-ring-a 900ms linear both; }
+.is-like-a .like-particle-main, .is-like-b .like-particle-main { animation: post-heart-particle-a 900ms cubic-bezier(.16,.7,.3,1) both; }
+.is-like-a .like-particle-pair, .is-like-b .like-particle-pair { animation: post-heart-pair-a 900ms cubic-bezier(.16,.7,.3,1) both; }
+.is-unlike-a .like-glyph, .is-unlike-b .like-glyph { animation: post-heart-unlike-a 400ms cubic-bezier(.22,.75,.3,1) both; }
+.is-like-b .like-glyph { animation-name: post-heart-pop-b; }
+.is-like-b .like-burst-ring { animation-name: post-heart-ring-b; }
+.is-like-b .like-particle-main { animation-name: post-heart-particle-b; }
+.is-like-b .like-particle-pair { animation-name: post-heart-pair-b; }
+.is-unlike-b .like-glyph { animation-name: post-heart-unlike-b; }
+@keyframes post-heart-pop-a { 0%, 15% { transform: scale(0); } 26% { transform: scale(.28); } 40% { transform: scale(1.18); } 54% { transform: scale(.92); } 68%, 100% { transform: scale(1); } }
+@keyframes post-heart-pop-b { 0%, 15% { transform: scale(0); } 26% { transform: scale(.28); } 40% { transform: scale(1.18); } 54% { transform: scale(.92); } 68%, 100% { transform: scale(1); } }
+@keyframes post-heart-ring-a { 0% { opacity: 1; transform: scale(0); border-width: 20rpx; border-color: #e34b76; } 16% { opacity: 1; transform: scale(1.35); border-width: 20rpx; border-color: #c66de0; } 25% { opacity: 1; transform: scale(1.7); border-width: 17rpx; } 36% { opacity: .9; transform: scale(1.95); border-width: 2rpx; } 45%, 100% { opacity: 0; transform: scale(2.1); border-width: 0; } }
+@keyframes post-heart-ring-b { 0% { opacity: 1; transform: scale(0); border-width: 20rpx; border-color: #e34b76; } 16% { opacity: 1; transform: scale(1.35); border-width: 20rpx; border-color: #c66de0; } 25% { opacity: 1; transform: scale(1.7); border-width: 17rpx; } 36% { opacity: .9; transform: scale(1.95); border-width: 2rpx; } 45%, 100% { opacity: 0; transform: scale(2.1); border-width: 0; } }
+@keyframes post-heart-particle-a { 0%, 15% { opacity: 0; transform: translate(-50%, -50%) translateY(-22rpx) scale(.9); } 28% { opacity: 1; transform: translate(-50%, -50%) translateY(-32rpx) scale(1); } 48% { opacity: .9; transform: translate(-50%, -50%) translateY(-43rpx) scale(.9); } 85%, 100% { opacity: 0; transform: translate(-50%, -50%) translateY(-50rpx) scale(.4); } }
+@keyframes post-heart-particle-b { 0%, 15% { opacity: 0; transform: translate(-50%, -50%) translateY(-22rpx) scale(.9); } 28% { opacity: 1; transform: translate(-50%, -50%) translateY(-32rpx) scale(1); } 48% { opacity: .9; transform: translate(-50%, -50%) translateY(-43rpx) scale(.9); } 85%, 100% { opacity: 0; transform: translate(-50%, -50%) translateY(-50rpx) scale(.4); } }
+@keyframes post-heart-pair-a { 0%, 15% { opacity: 0; transform: translate(-50%, -50%) translate(6rpx, -20rpx) scale(.9); } 28% { opacity: 1; transform: translate(-50%, -50%) translate(8rpx, -29rpx) scale(1); } 48% { opacity: .85; transform: translate(-50%, -50%) translate(9rpx, -37rpx) scale(.85); } 85%, 100% { opacity: 0; transform: translate(-50%, -50%) translate(10rpx, -45rpx) scale(.4); } }
+@keyframes post-heart-pair-b { 0%, 15% { opacity: 0; transform: translate(-50%, -50%) translate(6rpx, -20rpx) scale(.9); } 28% { opacity: 1; transform: translate(-50%, -50%) translate(8rpx, -29rpx) scale(1); } 48% { opacity: .85; transform: translate(-50%, -50%) translate(9rpx, -37rpx) scale(.85); } 85%, 100% { opacity: 0; transform: translate(-50%, -50%) translate(10rpx, -45rpx) scale(.4); } }
+@keyframes post-heart-unlike-a { 0% { transform: scale(1); } 25% { transform: scale(1.55); } 72% { transform: scale(.88); } 100% { transform: scale(1); } }
+@keyframes post-heart-unlike-b { 0% { transform: scale(1); } 25% { transform: scale(1.55); } 72% { transform: scale(.88); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .like-stage .like-glyph { animation: none; transform: none; } .like-burst { display: none; } }

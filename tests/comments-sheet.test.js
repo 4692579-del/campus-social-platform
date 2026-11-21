@@ -33,9 +33,10 @@ function fixture(options = {}) {
     previewImages: async (files, current) => { requests.push({ type: 'preview-images', files, current }); },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/comments-sheet/index.js'), 'utf8'), {
-    setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; }, clearTimeout,
+    setTimeout: options.setTimeout || ((fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; }), clearTimeout: options.clearTimeout || clearTimeout,
     Component: value => { definition = value; }, wx: { hideKeyboard(args) { keyboardHides++; if (options.hideKeyboard) options.hideKeyboard(args); }, showToast: value => toasts.push(value.title),
-      showActionSheet: args => { requests.push({ type: 'sheet', itemList: args.itemList }); args.success((options.choices || []).shift() || { tapIndex: 0 }); },
+      showActionSheet: args => { requests.push({ type: 'sheet', itemList: args.itemList, itemColor: args.itemColor }); if (options.actionSheet) options.actionSheet(args); else args.success((options.choices || []).shift() || { tapIndex: 0 }); },
+      setClipboardData: args => { requests.push({ type: 'clipboard', text: args.data }); if (options.copyFail) args.fail({ errMsg: 'setClipboardData:fail' }); else args.success({}); },
       showModal: args => { requests.push({ type: 'modal', title: args.title }); args.success({ confirm: options.confirm !== false }); },
       getDeviceInfo: () => ({ platform: options.platform || 'devtools' }),
       getWindowInfo: () => options.window || { windowHeight: 812, statusBarHeight: 44 },
@@ -43,7 +44,7 @@ function fixture(options = {}) {
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('services/post-images') ? media : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
   });
   const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current, focusReplyId: options.focusReplyId || '', focusReplyInput: Boolean(options.focusReplyInput) },
-    setData(value) { applyPageData(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
+    setData(value) { applyPageData(this.data, value);    }, triggerEvent(name, detail) { events.push({ name, detail }); } };
   return { component, events, requests, toasts, keyboardHides: () => keyboardHides, emitAI: result => aiListener && aiListener(result), attach: () => definition.lifetimes.attached.call(component), detach: () => definition.lifetimes.detached.call(component),
     hide: () => definition.pageLifetimes.hide.call(component), show: () => definition.pageLifetimes.show.call(component),
     logout() { current = null; version++; },
@@ -370,12 +371,12 @@ test('评论菜单区分本人删除与他人举报；删除子回复同步数�
   await c.toggleThread(commentEvent('root'));
   c.selectReply(commentEvent('child')); c.input({ detail: { value: '保留草稿' } });
   await c.manageComment(commentEvent('child'));
-  assert.equal(f.requests.find(row => row.type === 'sheet').itemList[0], '删除评论');
+  assert.equal(f.requests.find(row => row.type === 'sheet').itemList[0], '删除');
   assert.equal(c.data.items[0].visibleChildren.length, 0); assert.equal(c.data.items[0].replyCount, 0);
   assert.equal(c.data.replyTarget, null); assert.equal(c.data.text, '保留草稿');
   assert.equal(f.events.at(-1).name, 'changed');
   await c.manageComment(commentEvent('root'));
-  assert.equal(f.requests.filter(row => row.type === 'sheet').at(-2).itemList[0], '举报评论');
+  assert.equal(f.requests.filter(row => row.type === 'sheet').at(-2).itemList[0], '举报');
   assert.equal(f.requests.find(row => row.type === 'report').reason, 'spam');
   assert.equal(f.toasts.at(-1), '举报已提交');
 });
@@ -830,5 +831,132 @@ test('评论单行文字/胶囊/竖线圆环共用垂直中线，真机基线补
     const f = fixture({ platform }); await f.attach();
     assert.equal(f.component.data.nativeTextareaMetrics, ['ios', 'android', 'ohos'].includes(platform));
     f.detach();
+  }
+});
+
+
+function motionClock() {
+  let key = 0; const timers = new Map();
+  return { timers, setTimeout(fn, ms) { timers.set(++key, { fn, ms }); return key; }, clearTimeout(id) { timers.delete(id); } };
+}
+
+test('评论点赞与取消播放局部缩放，失败回退立即取消动画且不触碰输入草稿', async () => {
+  const clock = motionClock(); let root = { ...rootComment }, failed = false;
+  const f = fixture({ ...clock, cached: { ...roots(0), items: [root] }, list: () => ({ ...roots(0), items: [root] }),
+    state: async (id, kind, active) => { if (failed) throw new Error('网络失败'); root = { ...root, liked: active }; return root; } });
+  await f.attach(); const c = f.component; c.input({ detail: { value: '保留草稿' } });
+  const native = c.data.nativeInputValue;
+  await c.reactComment(commentEvent('root', 'like')); assert.match(c.data.items[0].motionLikeClass, /^comment-like-/);
+  assert.equal(c.findComment('root').motionLikeClass, undefined, '动画字段不能写入业务记录');
+  await c.reactComment(commentEvent('root', 'like')); assert.match(c.data.items[0].motionLikeClass, /^comment-unlike-/);
+  failed = true; await c.reactComment(commentEvent('root', 'like'));
+  assert.equal(c.data.items[0].liked, false); assert.equal(c.data.items[0].motionLikeClass, '');
+  assert.equal(c._commentMotions.size, 0); assert.equal(c.data.text, '保留草稿'); assert.equal(c.data.nativeInputValue, native); f.detach();
+});
+
+test('心碎时业务立即折叠，布局仍保留原图和回复节点至收拢；取消可中断，过期结束回调不能覆盖新状态', async () => {
+  const clock = motionClock(); let root = { ...rootComment, images: ['public-photo'], replyCount: 1 };
+  const f = fixture({ ...clock, cached: { ...roots(1), items: [root] }, list: () => ({ ...roots(1), items: [root] }),
+    cachedChildren: { items: [childComment], hasMore: false, nextOffset: 1 },
+    state: async (id, kind, active) => { root = { ...root, folded: active }; return root; } });
+  await f.attach(); const c = f.component; c.thread('root').open = true; c.renderComments();
+  const ids = c.data.items[0].motionVisibleChildren.map(row => row._id);
+  await c.reactComment(commentEvent('root', 'fold'));
+  assert.equal(c.data.items[0].folded, true); assert.equal(c.data.items[0].children.length, 0);
+  assert.deepEqual(c.data.items[0].motionVisibleChildren.map(row => row._id), ids);
+  assert.equal(c.data.items[0].images[0], 'public-photo'); assert.match(c.data.items[0].motionFoldClass, /^comment-break-/);
+  const stale = [...clock.timers.values()].find(timer => timer.ms === 1320).fn;
+  const writes = f.requests.length; await c.reactComment(commentEvent('child', 'like'));
+  assert.equal(f.requests.length, writes, '正在隐藏的子评论不能继续互动');
+  await c.reactComment(commentEvent('root', 'fold')); assert.equal(c.data.items[0].folded, false);
+  assert.match(c.data.items[0].motionFoldClass, /^comment-restore-/); const motion = c.data.items[0].motionFoldClass;
+  stale(); assert.equal(c.data.items[0].motionFoldClass, motion); assert.equal(c.data.items[0].folded, false);
+  assert.deepEqual(c.data.items[0].motionVisibleChildren.map(row => row._id), ids); f.detach(); assert.equal(clock.timers.size, 0);
+});
+
+test('折叠楼中回复的后续回复只在布局层保留，兄弟回复不受影响；隐藏、删除和退出隔离动画回调', async () => {
+  const clock = motionClock();
+  let child = { ...childComment }, descendant = { ...childComment, _id: 'descendant', replyToId: 'child', ancestorIds: ['root', 'child'] };
+  const sibling = { ...childComment, _id: 'sibling', ancestorIds: ['root'] };
+  const f = fixture({ ...clock, cached: roots(3), list: () => roots(3),
+    cachedChildren: { items: [child, descendant, sibling], hasMore: false, nextOffset: 3 },
+    state: async (id, kind, active) => { child = { ...child, folded: active }; return child; } });
+  await f.attach(); const c = f.component; c.thread('root').open = true; c.renderComments();
+  await c.reactComment(commentEvent('child', 'fold'));
+  assert.equal(c.data.items[0].visibleChildren.some(row => row._id === 'descendant'), false);
+  const layout = c.data.items[0].motionVisibleChildren;
+  assert.equal(layout.find(row => row._id === 'descendant').motionAncestorFolded, true);
+  assert.match(layout.find(row => row._id === 'descendant').motionAncestorClass, /^comment-break-/);
+  assert.equal(layout.find(row => row._id === 'sibling').motionAncestorFolded, false);
+  const stale = [...clock.timers.values()].find(timer => timer.ms === 1320).fn;
+  f.hide(); assert.equal(c._commentMotions.size, 0); const before = JSON.stringify(c.data.items); stale(); assert.equal(JSON.stringify(c.data.items), before);
+  f.show(); await c.reactComment(commentEvent('child', 'fold'));
+  const restored = c.data.items[0].motionVisibleChildren.find(row => row._id === 'descendant');
+  assert.equal(restored.motionAncestorFolded, false);
+  assert.match(restored.motionAncestorClass, /^comment-restore-/, '恢复期间子回复仍保持裁剪，避免内容越过正在展开的边界');
+  c.removeCommentRow({ ...child, postId: id, status: 'deleted' }); assert.equal(c._commentMotions.has('child'), false);
+  f.logout(); f.detach(); assert.equal(clock.timers.size, 0);
+});
+
+
+test('不同评论交替点击不会抢占动画重播，当前行反向点击始终获得新动画名', async () => {
+  const clock = motionClock(); let root = { ...rootComment }, child = { ...childComment };
+  const f = fixture({ ...clock, cached: { ...roots(1), items: [root] }, list: () => ({ ...roots(1), items: [root] }),
+    cachedChildren: { items: [child], hasMore: false, nextOffset: 1 },
+    state: async (id, kind, active) => id === 'root' ? (root = { ...root, liked: active }) : (child = { ...child, liked: active }) });
+  await f.attach(); const c = f.component; c.thread('root').open = true; c.renderComments();
+  await c.reactComment(commentEvent('root', 'like')); const first = c._commentMotions.get('root').variant;
+  await c.reactComment(commentEvent('child', 'like'));
+  await c.reactComment(commentEvent('root', 'like'));
+  assert.notEqual(c._commentMotions.get('root').variant, first); assert.match(c.data.items[0].motionLikeClass, /^comment-unlike-/);
+  f.detach();
+});
+
+
+test('原生评论菜单保留三个操作，复制本人原文或@他人昵称正文，不加括号且保留换行', async () => {
+  for (const own of [true, false]) {
+    const row = { ...rootComment, isOwn: own, author: { nickname: '同学A' }, content: '原文 😀\n第二行 @小萃 ', images: ['public-image'] };
+    const data = { items: [row], hasMore: false, nextOffset: 1 };
+    const f = fixture({ choices: [{ tapIndex: 2 }], cached: data, list: () => data }); await f.attach(); const c = f.component;
+    c.input({ detail: { value: '输入框草稿' } }); const native = c.data.nativeInputValue;
+    await c.manageComment(commentEvent('root'));
+    const menu = f.requests.find(row => row.type === 'sheet');
+    assert.deepEqual(Array.from(menu.itemList), [own ? '删除' : '举报', '分享', '复制']); assert.equal(menu.itemColor, '#171b20');
+    assert.equal(f.requests.find(row => row.type === 'clipboard').text, own ? row.content : `@同学A ${row.content}`);
+    assert.equal(c.data.text, '输入框草稿'); assert.equal(c.data.nativeInputValue, native);
+    assert.ok(!f.requests.some(row => ['delete', 'report', 'send'].includes(row.type))); f.detach();
+  }
+});
+
+test('楼中回复沿用原生菜单复制规则，分享不执行操作，纯图片不写空剪贴板', async () => {
+  const child = { ...childComment, isOwn: true, content: '楼中回复原文' };
+  const f = fixture({ choices: [{ tapIndex: 2 }, { tapIndex: 1 }, { tapIndex: 2 }], cached: roots(1), list: () => roots(1), cachedChildren: { items: [child], hasMore: false, nextOffset: 1 } });
+  await f.attach(); const c = f.component; c.thread('root').open = true; c.renderComments();
+  await c.manageComment(commentEvent('child')); assert.equal(f.requests.find(row => row.type === 'clipboard').text, '楼中回复原文');
+  await c.manageComment(commentEvent('child'));
+  c.applyCommentRow({ ...child, content: '', images: ['public-image'] }); await c.manageComment(commentEvent('child'));
+  assert.equal(f.requests.filter(row => row.type === 'clipboard').length, 1); assert.equal(f.toasts.length, 0); f.detach();
+});
+
+test('原生菜单取消和失效来源不复制，失败提示真实错误，独立菜单代码已移除', async () => {
+  const data = { items: [{ ...rootComment, isOwn: true }], hasMore: false, nextOffset: 1 };
+  const failed = fixture({ choices: [{ tapIndex: 2 }], copyFail: true, cached: data, list: () => data }); await failed.attach();
+  await failed.component.manageComment(commentEvent('root')); assert.equal(failed.toasts.at(-1), '复制失败，请重试'); failed.detach();
+  for (const mode of ['cancel', 'hide', 'delete', 'account', 'detach']) {
+    let menu;
+    const f = fixture({ actionSheet: args => { menu = args; }, cached: data, list: () => data }); await f.attach(); const c = f.component;
+    const selecting = c.manageComment(commentEvent('root'));
+    if (mode === 'cancel') menu.fail({ errMsg: 'showActionSheet:fail cancel' });
+    if (mode === 'hide') f.hide();
+    if (mode === 'delete') c.removeCommentRow({ ...data.items[0], postId: id, status: 'deleted' });
+    if (mode === 'account') f.logout();
+    if (mode === 'detach') f.detach();
+    if (mode !== 'cancel') menu.success({ tapIndex: 2 });
+    await selecting; assert.equal(f.requests.some(row => row.type === 'clipboard'), false, mode);
+    if (mode !== 'detach') f.detach();
+  }
+  for (const ext of ['js', 'wxml', 'wxss']) {
+    const source = fs.readFileSync(path.join(__dirname, `../miniprogram/components/comments-sheet/index.${ext}`), 'utf8');
+    assert.doesNotMatch(source, /commentMenu:|_commentMenuResolve|openCommentMenu|cancelCommentMenu|selectCommentMenuAction|comment-menu-/);
   }
 });

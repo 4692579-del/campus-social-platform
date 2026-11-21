@@ -17,8 +17,8 @@ Component({
     indicatorAnimating: false,
     items: [
       { label: '首页', path: '/pages/home/index', icon: 'home' },
-      { label: '私信', path: '/pages/messages/index', icon: 'bell' },
       { label: '消息', path: '/pages/inbox/index', icon: 'paper-plane' },
+      { label: '私信', path: '/pages/messages/index', icon: 'bell' },
       { label: '搜索', path: '/pages/search/index', icon: 'search' },
     ],
   },

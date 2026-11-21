@@ -13,7 +13,7 @@ function current(page, account) {
   return !page._unloaded && page._visible !== false && user && user._id === account.id && users.getSessionVersion() === account.version;
 }
 function find(page, id) {
-  return square.cachedPost(id) || [...(page.data.posts || []), ...(page.data.ownPosts || [])].find(post => post._id === id);
+  return square.cachedPost(id) || [...(page.data.posts || []), ...(page.data.ownPosts || []), ...(page.data.quotePosts || [])].find(post => post._id === id);
 }
 function login(page) {
   if (users.getCachedUser()) return true;
@@ -27,11 +27,11 @@ function syncCommentsTabBar(page) {
 }
 function sync(page, id, removed = false) {
   const latest = removed ? null : square.cachedPost(id), values = {};
-  for (const key of ['posts', 'ownPosts']) if (Array.isArray(page.data[key])) {
+  for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(page.data[key])) {
     const found = page.data[key].some(post => post._id === id);
     values[key] = removed ? page.data[key].filter(post => post._id !== id) : page.data[key].map(post => post._id === id && latest ? postPreview(latest) : post);
     if (removed && found) {
-      const offset = key === 'posts' ? 'feedOffset' : 'postsOffset';
+      const offset = key === 'posts' ? 'feedOffset' : key === 'quotePosts' ? 'quotesOffset' : 'postsOffset';
       values[offset] = Math.max(0, (page.data[offset] || 0) - 1);
     }
   }
@@ -45,13 +45,14 @@ function sync(page, id, removed = false) {
 function paintLike(page, id, post) {
   if (!post) return;
   const values = {}, liked = Boolean(post.liked), count = Math.max(0, Number(post.likeCount) || 0);
-  for (const key of ['posts', 'ownPosts']) if (Array.isArray(page.data[key])) {
+  for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(page.data[key])) {
     const index = page.data[key].findIndex(row => row._id === id);
     if (index < 0) continue;
     const row = page.data[key][index];
     if (Boolean(row.liked) !== liked) values[`${key}[${index}].liked`] = liked;
     if ((Number(row.likeCount) || 0) !== count) values[`${key}[${index}].likeCount`] = count;
     if (Number.isSafeInteger(post.quoteCount) && row.quoteCount !== post.quoteCount) values[`${key}[${index}].quoteCount`] = post.quoteCount;
+    if (typeof post.quoted === 'boolean' && row.quoted !== post.quoted) values[`${key}[${index}].quoted`] = post.quoted;
     if (post.quote && JSON.stringify(row.quote) !== JSON.stringify(post.quote)) values[`${key}[${index}].quote`] = post.quote;
   }
   if (Object.keys(values).length) page.setData(values);
@@ -86,7 +87,7 @@ module.exports = {
     if (typeof square.subscribeAI === 'function') this._stopAIUpdates = square.subscribeAI(result => {
       if (!current(this, snapshot()) || !this.data.user || this.data.user._id !== users.getCachedUser()._id || !result.post || !Number.isSafeInteger(result.post.replyCount)) return;
       const values = {};
-      for (const key of ['posts', 'ownPosts']) if (Array.isArray(this.data[key])) {
+      for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(this.data[key])) {
         const index = this.data[key].findIndex(row => row._id === result.postId);
         if (index >= 0) values[`${key}[${index}].replyCount`] = result.post.replyCount;
       }
@@ -100,7 +101,7 @@ module.exports = {
     if (kind !== 'like' || !login(this)) return;
     const account = snapshot();
     if (!this.data.user || this.data.user._id !== account.id) return;
-    const post = [...(this.data.posts || []), ...(this.data.ownPosts || [])].find(row => row._id === id);
+    const post = [...(this.data.posts || []), ...(this.data.ownPosts || []), ...(this.data.quotePosts || [])].find(row => row._id === id);
     if (!post) return;
     this._likeClicks = this._likeClicks || new Map();
     let operation = this._likeClicks.get(id);

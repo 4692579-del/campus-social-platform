@@ -92,3 +92,59 @@ test('并发重复发布只计一次，事务失败不会只保存引用或只�
   assert.equal(result.success, false); assert.equal(f.squarePosts.size, 2);
   assert.equal(f.squarePosts.get(source._id).quoteCount, 1);
 });
+
+
+test('个人动态与引用按最终引用关系在云端互斥分页，旧普通记录和失效来源保持正确分类', async () => {
+  const { f, source, send, alice, bob } = await setup();
+  const ordinary = await send('已移除引用，普通发布', '', 'profile-ordinary-0001');
+  const quoted = await send('保留引用', source._id, 'profile-quote-000001');
+  const normalRow = f.squarePosts.get(ordinary.square.post._id), quoteRow = f.squarePosts.get(quoted.square.post._id);
+  assert.equal(Object.hasOwn(normalRow, 'quotePostId'), false);
+  f.squarePosts.delete(normalRow._id); f.squarePosts.delete(quoteRow._id);
+  const expected = { posts: [], quotes: [] };
+  for (let n = 0; n < 45; n++) {
+    const kind = n % 2 ? 'quotes' : 'posts';
+    const row = { ...(kind === 'quotes' ? quoteRow : normalRow), _id: 'p_' + n.toString(16).padStart(40, '0'), sortKey: String(n).padStart(8, '0') };
+    f.squarePosts.set(row._id, row); expected[kind].unshift(row._id);
+  }
+  f.squarePosts.set('p_' + 'e'.repeat(40), { ...quoteRow, _id: 'p_' + 'e'.repeat(40), authorId: bob._id });
+  f.squarePosts.set('p_' + 'f'.repeat(40), { ...normalRow, _id: 'p_' + 'f'.repeat(40), status: 'deleted' });
+  f.squarePosts.get(source._id).status = 'deleted';
+  for (const postType of ['posts', 'quotes']) {
+    const first = await f.handle({ action: 'listSquarePosts', mine: true, postType, authorId: bob._id }, f.alice);
+    assert.equal(first.success, true, first.message); assert.equal(first.square.postType, postType);
+    assert.equal(first.square.total, expected[postType].length); assert.equal(first.square.allTotal, 45);
+    assert.equal(first.square.items.length, 20); assert.equal(first.square.hasMore, true);
+    const second = await f.handle({ action: 'listSquarePosts', mine: true, postType, offset: first.square.nextOffset }, f.alice);
+    assert.equal(second.success, true, second.message); assert.equal(second.square.hasMore, false);
+    assert.deepEqual([...first.square.items, ...second.square.items].map(row => row._id), expected[postType]);
+    assert.ok(first.square.items.every(row => row.isOwn && Boolean(row.quotePostId) === (postType === 'quotes')));
+    if (postType === 'quotes') assert.ok(first.square.items.every(row => row.quote.unavailable));
+  }
+  assert.equal((await f.handle({ action: 'listSquarePosts', postType: 'quotes' }, f.alice)).code, 'INVALID_POST');
+  assert.equal((await f.handle({ action: 'listSquarePosts', mine: true, postType: 'invalid' }, f.alice)).code, 'INVALID_POST');
+});
+
+
+test('引用状态仅属于当前账号，成功后变蓝，多次引用删到最后一条才恢复且他人引用不误点亮', async () => {
+  const { f, source, send } = await setup();
+  const read = identity => f.handle({ action: 'getSquarePost', postId: source._id, personalize: true }, identity);
+  assert.equal((await read(f.alice)).square.post.quoted, false);
+  const first = await send('我的第一次引用', source._id, 'state-alice-first-001');
+  assert.equal(first.square.quotedPost.quoted, true);
+  const second = await send('我的第二次引用', source._id, 'state-alice-second-01');
+  const other = await send('其他人的引用', source._id, 'state-bob-first-0001', {}, f.bob);
+  assert.equal(other.square.quotedPost.quoted, true);
+  const feed = await f.handle({ action: 'listSquarePosts', personalize: true }, f.alice);
+  assert.equal(feed.square.items.find(row => row._id === source._id).quoted, true);
+  const anonymous = await f.handle({ action: 'getSquarePost', postId: source._id }, f.alice);
+  assert.equal(anonymous.square.post.quoted, false);
+  const removedFirst = await f.handle({ action: 'deleteSquarePost', postId: first.square.post._id }, f.alice);
+  assert.equal(removedFirst.square.quotedPost.quoted, true);
+  const removedLast = await f.handle({ action: 'deleteSquarePost', postId: second.square.post._id }, f.alice);
+  assert.equal(removedLast.square.quotedPost.quoted, false); assert.equal(removedLast.square.quotedPost.quoteCount, 1);
+  assert.equal((await read(f.alice)).square.post.quoted, false);
+  assert.equal((await read(f.bob)).square.post.quoted, true);
+  const plain = await send('没有保留引用的普通发布', '', 'state-plain-post-001');
+  assert.equal(plain.success, true); assert.equal((await read(f.alice)).square.post.quoted, false);
+});

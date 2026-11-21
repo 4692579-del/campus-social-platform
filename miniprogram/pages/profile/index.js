@@ -27,13 +27,14 @@ Page({
     likeCount: 0, followingCount: 0, followerCount: 0, selectedContent: 'posts', contentIndex: 0,
     contentTabs: [
       { key: 'posts', label: '动态', icon: 'posts', empty: '还没有发布动态' },
-      { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/interface/message-square', iconExtension: 'svg', empty: '还没有回复' },
-      { key: 'reposts', label: '转发', icon: 'reposts', empty: '还没有转发的动态' },
+      { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/profile-tabs/replies', iconExtension: 'svg', empty: '还没有回复' },
+      { key: 'reposts', label: '引用', icon: 'reposts', iconSource: '/images/profile-tabs/quotes', iconExtension: 'svg', empty: '还没有发布引用' },
       { key: 'album', label: '相册', icon: 'album', iconSource: '/images/interface/album', iconExtension: 'svg', empty: '还没有上传照片' },
     ],
     emptyText: '还没有发布动态', commentPostId: '', historyCommentPostId: '', historyReplyId: '', historyReplyInput: false,
     postsMenuOpen: false, postScope: 'square', ownPosts: [], postsLoading: false, postsMoreLoading: false,
     postsError: '', postsHasMore: false, postsOffset: 0,
+    quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0,
     albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '',
   },
   onLoad() {
@@ -78,6 +79,7 @@ Page({
     this.closeMenu();
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     this._postsRequest = null;
+    this._quotesRequest = null;
     this.setData({ confirmingLogout: false, loading: false, authChecking: false, loginSheetOpen: false, postsMenuOpen: false });
     this.setAuthBlocked(false);
   },
@@ -262,7 +264,7 @@ Page({
     if (this.data.profileRefreshing || this.interactionBlocked() || !this.data.user || this._unloaded || this._visible === false) return;
     const request = this._profilePullRequest = {};
     this.setData({ profileRefreshing: true });
-    try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadAlbum(true); else await this.loadOwnPosts(true); }
+    try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadAlbum(true); else if (this.data.selectedContent === 'reposts') await this.loadOwnQuotes(true); else await this.loadOwnPosts(true); }
     finally {
       if (this._profilePullRequest === request) { this._profilePullRequest = null; this.setData({ profileRefreshing: false }); }
     }
@@ -313,8 +315,10 @@ Page({
       this._accountVersion = (this._accountVersion || 0) + 1;
       this._pendingCover = null;
       this._postsRequest = null;
+      this._quotesRequest = null;
       this._albumRequest = null;
       this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '' });
+      this.setData({ quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0 });
       this.setData({ ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, postsMenuOpen: false, composerOpen: false });
     }
     if (user && this._pendingCover && user.coverFileID === this._pendingCover.fileID) this._pendingCover = null;
@@ -332,8 +336,11 @@ Page({
     this.setAuthBlocked(!user);
     this.measureProfileNavigation();
     if (user) {
-      const cachedPosts = square.cachedOwnFeed();
+      const cachedPosts = square.cachedOwnFeed('posts');
       if (cachedPosts) this.showOwnPosts(cachedPosts);
+      const cachedQuotes = square.cachedOwnFeed('quotes');
+      if (cachedQuotes) this.showOwnQuotes(cachedQuotes);
+      if (this._visible === true && this.data.selectedContent === 'reposts') this.loadOwnQuotes();
       if (this._visible === true && this.data.selectedContent === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
       if (this._visible === true && this.data.selectedContent === 'album') this.loadAlbum();
     }
@@ -482,6 +489,7 @@ Page({
     }
     this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false });
     if (tab.key === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
+    if (tab.key === 'reposts') return this.loadOwnQuotes();
     if (tab.key === 'album') return this.loadAlbum();
   },
   closePostsMenu() { this.setData({ postsMenuOpen: false }); },
@@ -517,42 +525,52 @@ Page({
     this.setData({ postScope: scope, postsMenuOpen: false });
     if (scope === 'square') this.loadOwnPosts();
   },
-  showOwnPosts(result) {
-    this.setData({ ownPosts: result.items.map(postPreview), postsHasMore: result.hasMore, postsOffset: result.nextOffset });
+  showOwnPosts(result) { this.showProfilePosts(result, 'posts'); },
+  showOwnQuotes(result) { this.showProfilePosts(result, 'quotes'); },
+  showProfilePosts(result, postType) {
+    const quote = postType === 'quotes', prefix = quote ? 'quotes' : 'posts';
+    this.setData({ [quote ? 'quotePosts' : 'ownPosts']: result.items.filter(post => Boolean(post.quotePostId) === quote).map(postPreview),
+      [prefix + 'HasMore']: result.hasMore, [prefix + 'Offset']: result.nextOffset });
     this.updatePostCount(result);
   },
-  updatePostCount(result = square.cachedOwnFeed()) {
+  updatePostCount(result = square.cachedOwnFeed('posts') || square.cachedOwnFeed('quotes') || square.cachedOwnFeed()) {
     if (!result) return;
-    const total = Number.isSafeInteger(result.total) && result.total >= 0 ? result.total :
-      !result.hasMore && result.nextOffset === result.items.length ? result.items.length : null;
-    this.setData({ postCountText: total === null ? '帖子' : `${total} 条帖子` });
+    const count = Number.isSafeInteger(result.allTotal) ? result.allTotal : result.postType && result.postType !== 'all' ? null : result.total;
+    const total = Number.isSafeInteger(count) && count >= 0 ? count :
+      !result.postType && !result.hasMore && result.nextOffset === result.items.length ? result.items.length : null;
+    if (total !== null) this.setData({ postCountText: `${total} 条帖子` });
   },
-  async loadOwnPosts(force = false, append = false) {
-    if (!this.data.user || this.interactionBlocked()) return;
-    if (this._postsRequest) return this._postsRequest.promise;
-    const cached = square.cachedOwnFeed();
-    if (cached) this.showOwnPosts(cached);
+  loadOwnPosts(force = false, append = false) { return this.loadProfilePosts('posts', force, append); },
+  loadOwnQuotes(force = false, append = false) { return this.loadProfilePosts('quotes', force, append); },
+  async loadProfilePosts(postType, force = false, append = false) {
+    if (!this.data.user || this.interactionBlocked() || this._unloaded || this._visible === false) return;
+    const prefix = postType === 'quotes' ? 'quotes' : 'posts', requestKey = '_' + prefix + 'Request';
+    if (this[requestKey]) return this[requestKey].promise;
+    const cached = square.cachedOwnFeed(postType);
+    if (cached) this.showProfilePosts(cached, postType);
     const request = { version: this._viewVersion || 0, account: this.data.user._id };
-    this._postsRequest = request;
-    const current = () => this._postsRequest === request && this.currentView(request.version) &&
+    this[requestKey] = request;
+    const current = () => this[requestKey] === request && this.currentView(request.version) &&
       this.data.user && this.data.user._id === request.account;
-    this.setData({ postsLoading: !cached && !this.data.ownPosts.length, postsMoreLoading: append, postsError: '' });
+    this.setData({ [prefix + 'Loading']: !cached && !this.data[postType === 'quotes' ? 'quotePosts' : 'ownPosts'].length,
+      [prefix + 'MoreLoading']: append, [prefix + 'Error']: '' });
     request.promise = (async () => {
       try {
-        const result = await square.list({ mine: true, force, offset: append ? this.data.postsOffset : 0 });
-        if (current()) this.showOwnPosts(result);
+        const result = await square.list({ mine: true, postType, force, offset: append ? this.data[prefix + 'Offset'] : 0 });
+        if (current()) this.showProfilePosts(result, postType);
       } catch (error) {
-        if (current() && error.code !== 'SESSION_CHANGED') this.setData({ postsError: error.message || '动态读取失败，请稍后重试' });
+        if (current() && error.code !== 'SESSION_CHANGED') this.setData({ [prefix + 'Error']: error.message || '动态读取失败，请稍后重试' });
       } finally {
         if (current()) {
-          this._postsRequest = null;
-          this.setData({ postsLoading: false, postsMoreLoading: false });
+          this[requestKey] = null;
+          this.setData({ [prefix + 'Loading']: false, [prefix + 'MoreLoading']: false });
         }
       }
     })();
     return request.promise;
   },
   retryOwnPosts() { return this.loadOwnPosts(true); },
+  retryOwnQuotes() { return this.loadOwnQuotes(true); },
   showAlbum(result) { this.setData({ albumImages: result.items, albumHasMore: result.hasMore, albumOffset: result.nextOffset }); },
   async loadAlbum(force = false, append = false) {
     if (!this.data.user || this.interactionBlocked() || this._unloaded || this._visible === false) return;
@@ -584,6 +602,7 @@ Page({
   loadMoreOwnPosts() {
     if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history && !this.data.commentPostId) return history.loadMore(); return; }
     if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen) return;
+    if (this.data.selectedContent === 'reposts') { if (this.data.quotesHasMore) return this.loadOwnQuotes(false, true); return; }
     if (this.data.selectedContent === 'album') { if (this.data.albumHasMore) return this.loadAlbum(false, true); return; }
     if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' && this.data.postsHasMore) return this.loadOwnPosts(false, true);
   },
@@ -599,9 +618,12 @@ Page({
     const user = userService.getCachedUser();
     if ((user && user._id) !== (this.data.user && this.data.user._id)) this.applyUser(user);
     if (event.detail.published) {
-      const cached = square.cachedOwnFeed();
+      const cached = square.cachedOwnFeed('posts');
       if (cached) this.showOwnPosts(cached);
-      this.loadOwnPosts(false);
+      const quotes = square.cachedOwnFeed('quotes');
+      if (quotes) this.showOwnQuotes(quotes);
+      if (this.data.selectedContent === 'reposts') this.loadOwnQuotes(false);
+      else this.loadOwnPosts(false);
       const album = square.cachedAlbum();
       if (album) this.showAlbum(album);
       if (this.data.selectedContent === 'album') this.loadAlbum(false);

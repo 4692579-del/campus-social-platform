@@ -127,3 +127,94 @@ button::after { border: 0; }
 .comment-image-remove image { width: 24rpx; height: 24rpx; }
 .composer-tool-icons .composer-image-trigger { flex: 0 0 52rpx; width: 52rpx; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; line-height: 1; }
 .composer-image-trigger[disabled] { opacity: .5; }
+
+/* 评论正文/回复组保留节点，以自然内容高度收拢；不触碰底部原生输入框。 */
+.comment-content-grid, .comment-folded-grid, .comment-thread-grid, .comment-nested-grid { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 320ms cubic-bezier(.22,.75,.3,1), opacity 240ms ease; }
+.comment-content-inner, .comment-folded-inner { min-height: 0; overflow: hidden; }
+/* 展开后的回复不裁剪浮起的红心；只有收拢/恢复期间才约束内容边界。 */
+.comment-thread-clip, .comment-nested-clip { min-height: 0; overflow: visible; }
+.comment-thread-grid.is-folded > .comment-thread-clip,
+.comment-nested-grid.is-hidden > .comment-nested-clip,
+.comment-thread-grid.comment-restore-a > .comment-thread-clip,
+.comment-thread-grid.comment-restore-b > .comment-thread-clip,
+.comment-nested-grid.comment-restore-a > .comment-nested-clip,
+.comment-nested-grid.comment-restore-b > .comment-nested-clip { overflow: hidden; }
+.comment-content-grid.is-folded, .comment-thread-grid.is-folded, .comment-nested-grid.is-hidden { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
+.comment-folded-grid { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
+.comment-folded-grid.is-folded { grid-template-rows: 1fr; opacity: 1; }
+.comment-folded { padding-right: 145rpx; }
+.comment-meta { height: 48rpx; box-sizing: border-box; padding-right: 140rpx; transition: height 320ms cubic-bezier(.22,.75,.3,1), min-height 320ms cubic-bezier(.22,.75,.3,1), margin-top 320ms ease, top 320ms ease; }
+.comment-actions { position: absolute; right: 0; top: 0; margin-left: 0; transition: transform 320ms cubic-bezier(.22,.75,.3,1); }
+.comment-time, .comment-reply-label { transition: opacity 200ms ease; }
+.is-personally-folded .comment-meta { min-height: 0; height: 0; margin-top: 0; top: 0; }
+.is-personally-folded .comment-time, .is-personally-folded .comment-reply-label { opacity: 0; pointer-events: none; }
+.is-personally-folded .comment-actions { transform: translateY(-48rpx); }
+.comment-actions .comment-action { overflow: visible; }
+.comment-like-stage, .comment-break-stage { position: relative; display: block; width: 30rpx; height: 30rpx; flex-shrink: 0; overflow: visible; }
+.comment-like-glyph, .comment-break-glyph { position: absolute; inset: 0; transform-origin: center; }
+.comment-like-solid, .comment-break-solid { opacity: 0; }
+.is-liked .comment-like-outline, .is-personally-folded .comment-break-outline { opacity: 0; }
+.is-liked .comment-like-solid, .is-personally-folded .comment-break-solid { opacity: 1; }
+.comment-break-float { position: absolute; z-index: 3; bottom: 34rpx; left: 50%; width: 68rpx; height: 68rpx; margin-left: -34rpx; pointer-events: none; opacity: 0; transform-origin: 50% 100%; }
+.comment-break-float .comment-break-half { position: absolute; inset: 0; width: 68rpx; height: 68rpx; transform-origin: 50% 65%; }
+.comment-break-shard { position: absolute; top: 58rpx; left: 32rpx; width: 5rpx; height: 4rpx; border-radius: 1rpx; background: #d52c50; box-shadow: inset 0 1rpx 0 #ff8da3; opacity: 0; }
+.shard-1 { --shard-x: -21rpx; --shard-turn: -65deg; }
+.shard-2 { --shard-x: -12rpx; --shard-turn: 35deg; }
+.shard-3 { --shard-x: 0rpx; --shard-turn: -25deg; }
+.shard-4 { --shard-x: 13rpx; --shard-turn: 80deg; }
+.shard-5 { --shard-x: 23rpx; --shard-turn: 125deg; }
+.comment-like-a .comment-like-stage { animation: comment-heart-a 400ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-unlike-a .comment-like-stage, .comment-restore-a .comment-break-stage { animation: comment-heart-a 400ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-row.comment-break-a .comment-break-float { animation: comment-break-float-a 1280ms linear both; }
+.comment-row.comment-break-a .comment-break-left { animation: comment-break-left-a 1280ms ease-in-out both; }
+.comment-row.comment-break-a .comment-break-right { animation: comment-break-right-a 1280ms ease-in-out both; }
+.comment-row.comment-break-a .comment-break-shard { animation: comment-break-shard-a 1280ms ease-out both; }
+.comment-row.comment-break-a > .comment-main > .comment-content-grid.is-folded, .comment-thread-grid.comment-break-a.is-folded, .comment-nested-grid.comment-break-a.is-hidden { animation: comment-close-a 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-row.comment-break-a > .comment-main > .comment-folded-grid.is-folded { animation: comment-notice-a 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-a.is-personally-folded .comment-meta { animation: comment-meta-close-a 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-a.is-personally-folded .comment-actions { animation: comment-actions-rise-a 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-a.is-personally-folded .comment-time, .comment-break-a.is-personally-folded .comment-reply-label { animation: comment-meta-fade-a 1280ms ease both; }
+@keyframes comment-heart-a { 0% { transform: scale(1); } 32% { transform: scale(.08); } 74% { transform: scale(1.16); } 100% { transform: scale(1); } }
+@keyframes comment-break-float-a { 0% { opacity: 0; transform: translateY(10rpx) scale(.05); } 12% { opacity: 1; transform: translateY(0) scale(1.1); } 22% { transform: translateY(0) scale(.96); } 33%, 73% { opacity: 1; transform: translateY(0) scale(1); } 91%, 100% { opacity: 0; transform: translateY(8rpx) scale(.94); } }
+@keyframes comment-break-left-a { 0%, 18% { transform: translate(0, 0) rotate(0deg); } 30% { transform: translate(-4rpx, 1rpx) rotate(-10deg); } 42%, 100% { transform: translate(-7rpx, 3rpx) rotate(-15deg); } }
+@keyframes comment-break-right-a { 0%, 18% { transform: translate(0, 0) rotate(0deg); } 30% { transform: translate(4rpx, -1rpx) rotate(9deg); } 42%, 100% { transform: translate(7rpx, 2rpx) rotate(15deg); } }
+@keyframes comment-break-shard-a { 0%, 24% { opacity: 0; transform: translate(0, 0) scale(0); } 42%, 65% { opacity: 1; transform: translate(var(--shard-x), 4rpx) rotate(var(--shard-turn)) scale(1); } 94%, 100% { opacity: 0; transform: translate(var(--shard-x), 14rpx) rotate(var(--shard-turn)) scale(.45); } }
+@keyframes comment-close-a { 0%, 75% { grid-template-rows: 1fr; opacity: 1; } 100% { grid-template-rows: 0fr; opacity: 0; } }
+@keyframes comment-notice-a { 0%, 75% { grid-template-rows: 0fr; opacity: 0; } 100% { grid-template-rows: 1fr; opacity: 1; } }
+@keyframes comment-meta-close-a { 0%, 75% { height: 48rpx; min-height: 48rpx; margin-top: 4rpx; top: -8rpx; } 100% { height: 0; min-height: 0; margin-top: 0; top: 0; } }
+@keyframes comment-actions-rise-a { 0%, 75% { transform: translateY(0); } 100% { transform: translateY(-48rpx); } }
+@keyframes comment-meta-fade-a { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+.comment-like-b .comment-like-stage { animation: comment-heart-b 400ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-unlike-b .comment-like-stage, .comment-restore-b .comment-break-stage { animation: comment-heart-b 400ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-row.comment-break-b .comment-break-float { animation: comment-break-float-b 1280ms linear both; }
+.comment-row.comment-break-b .comment-break-left { animation: comment-break-left-b 1280ms ease-in-out both; }
+.comment-row.comment-break-b .comment-break-right { animation: comment-break-right-b 1280ms ease-in-out both; }
+.comment-row.comment-break-b .comment-break-shard { animation: comment-break-shard-b 1280ms ease-out both; }
+.comment-row.comment-break-b > .comment-main > .comment-content-grid.is-folded, .comment-thread-grid.comment-break-b.is-folded, .comment-nested-grid.comment-break-b.is-hidden { animation: comment-close-b 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-row.comment-break-b > .comment-main > .comment-folded-grid.is-folded { animation: comment-notice-b 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-b.is-personally-folded .comment-meta { animation: comment-meta-close-b 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-b.is-personally-folded .comment-actions { animation: comment-actions-rise-b 1280ms cubic-bezier(.22,.75,.3,1) both; }
+.comment-break-b.is-personally-folded .comment-time, .comment-break-b.is-personally-folded .comment-reply-label { animation: comment-meta-fade-b 1280ms ease both; }
+@keyframes comment-heart-b { 0% { transform: scale(1); } 32% { transform: scale(.08); } 74% { transform: scale(1.16); } 100% { transform: scale(1); } }
+@keyframes comment-break-float-b { 0% { opacity: 0; transform: translateY(10rpx) scale(.05); } 12% { opacity: 1; transform: translateY(0) scale(1.1); } 22% { transform: translateY(0) scale(.96); } 33%, 73% { opacity: 1; transform: translateY(0) scale(1); } 91%, 100% { opacity: 0; transform: translateY(8rpx) scale(.94); } }
+@keyframes comment-break-left-b { 0%, 18% { transform: translate(0, 0) rotate(0deg); } 30% { transform: translate(-4rpx, 1rpx) rotate(-10deg); } 42%, 100% { transform: translate(-7rpx, 3rpx) rotate(-15deg); } }
+@keyframes comment-break-right-b { 0%, 18% { transform: translate(0, 0) rotate(0deg); } 30% { transform: translate(4rpx, -1rpx) rotate(9deg); } 42%, 100% { transform: translate(7rpx, 2rpx) rotate(15deg); } }
+@keyframes comment-break-shard-b { 0%, 24% { opacity: 0; transform: translate(0, 0) scale(0); } 42%, 65% { opacity: 1; transform: translate(var(--shard-x), 4rpx) rotate(var(--shard-turn)) scale(1); } 94%, 100% { opacity: 0; transform: translate(var(--shard-x), 14rpx) rotate(var(--shard-turn)) scale(.45); } }
+@keyframes comment-close-b { 0%, 75% { grid-template-rows: 1fr; opacity: 1; } 100% { grid-template-rows: 0fr; opacity: 0; } }
+@keyframes comment-notice-b { 0%, 75% { grid-template-rows: 0fr; opacity: 0; } 100% { grid-template-rows: 1fr; opacity: 1; } }
+@keyframes comment-meta-close-b { 0%, 75% { height: 48rpx; min-height: 48rpx; margin-top: 4rpx; top: -8rpx; } 100% { height: 0; min-height: 0; margin-top: 0; top: 0; } }
+@keyframes comment-actions-rise-b { 0%, 75% { transform: translateY(0); } 100% { transform: translateY(-48rpx); } }
+@keyframes comment-meta-fade-b { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+
+.comment-like-a .comment-like-solid, .comment-unlike-a .comment-like-outline, .comment-restore-a .comment-break-outline { animation: comment-icon-in-a 400ms linear both; }
+.comment-like-a .comment-like-outline, .comment-unlike-a .comment-like-solid, .comment-restore-a .comment-break-solid { animation: comment-icon-out-a 400ms linear both; }
+@keyframes comment-icon-in-a { 0%, 32% { opacity: 0; } 38%, 100% { opacity: 1; } }
+@keyframes comment-icon-out-a { 0%, 32% { opacity: 1; } 38%, 100% { opacity: 0; } }
+.comment-like-b .comment-like-solid, .comment-unlike-b .comment-like-outline, .comment-restore-b .comment-break-outline { animation: comment-icon-in-b 400ms linear both; }
+.comment-like-b .comment-like-outline, .comment-unlike-b .comment-like-solid, .comment-restore-b .comment-break-solid { animation: comment-icon-out-b 400ms linear both; }
+@keyframes comment-icon-in-b { 0%, 32% { opacity: 0; } 38%, 100% { opacity: 1; } }
+@keyframes comment-icon-out-b { 0%, 32% { opacity: 1; } 38%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .comment-row .comment-like-stage, .comment-row .comment-break-stage, .comment-row .comment-like-glyph, .comment-row .comment-break-glyph, .comment-row .comment-content-grid, .comment-row .comment-folded-grid, .comment-row .comment-meta, .comment-row .comment-actions, .comment-row .comment-time, .comment-row .comment-reply-label, .comment-thread-grid, .comment-nested-grid { animation: none; transition: none; }
+  .comment-break-float { display: none; }
+}

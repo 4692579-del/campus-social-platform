@@ -125,7 +125,7 @@ test('切到其他页面后底栏不沿用发布页的遮挡状态', () => {
 test('四个导航入口、注册路由及资源完整对应，集市和任务页面不再存在', () => {
   const f = fixture(), root = path.join(__dirname, '../miniprogram');
   const config = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'));
-  const expected = ['pages/home/index', 'pages/messages/index', 'pages/inbox/index', 'pages/search/index'];
+  const expected = ['pages/home/index', 'pages/inbox/index', 'pages/messages/index', 'pages/search/index'];
   assert.deepEqual(config.tabBar.list.map(tab => tab.pagePath), expected);
   assert.deepEqual([...f.bar.data.items].map(item => item.path.slice(1)), expected);
   for (const [index, item] of [...f.bar.data.items].entries()) {
@@ -141,14 +141,14 @@ test('四个导航入口、注册路由及资源完整对应，集市和任务�
     assert.ok(!config.pages.includes(`pages/${name}/index`));
     assert.ok(!fs.existsSync(path.join(root, 'pages', name)));
   }
-  assert.equal(f.bar.data.items[2].label, '消息');
-  assert.equal(f.bar.data.items[2].icon, 'paper-plane');
+  assert.equal(f.bar.data.items[1].label, '消息');
+  assert.equal(f.bar.data.items[1].icon, 'paper-plane');
   f.bar.switchTab({ currentTarget: { dataset: { index: 4 } } });
   assert.equal(f.routes.length, 4, '已删除位置不能再触发页面跳转');
 });
 
 test('私信、消息、搜索页面在进入和就绪时恢复正确选中索引，消息页不请求业务', () => {
-  for (const [name, selected] of [['messages', 1], ['inbox', 2], ['search', 3]]) {
+  for (const [name, selected] of [['inbox', 1], ['messages', 2], ['search', 3]]) {
     let definition;
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../miniprogram/pages/${name}/index.js`), 'utf8'), {
       Page: value => { definition = value; },
@@ -176,7 +176,7 @@ test('右侧发布按钮复用首页面板，登录、评论、发布及菜单�
 
 test('其他底部页点击发布只切回首页一次，页面已覆盖后才打开原有发布面板', () => {
   const ticks = [], f = fixture({ switchTab() {}, nextTick: callback => ticks.push(callback) });
-  f.pages.push({ route: 'pages/inbox/index', data: {} });
+  f.pages.push({ route: 'pages/messages/index', data: {} });
   f.bar.openComposer(); f.bar.openComposer();
   assert.deepEqual(f.routes, ['/pages/home/index']);
   let opened = 0;
@@ -232,7 +232,7 @@ test('快速反向切换从当前滑动坐标继续，旧帧与旧结束回调�
   ticks.shift()(); assert.equal(f.bar.data.indicatorTo, 100);
   staleFinish(); assert.equal(f.bar.data.indicatorTo, 100); assert.equal(f.bar.data.indicatorAnimating, true);
   const interrupted = fixture({ selection, nextTick: callback => ticks.push(callback) });
-  interrupted.pages.push({ route: 'pages/messages/index', data: {} }); interrupted.attach();
+  interrupted.pages.push({ route: 'pages/inbox/index', data: {} }); interrupted.attach();
   const oldFrame = ticks.shift(); interrupted.hide(); oldFrame();
   assert.equal(interrupted.bar.data.indicatorAnimating, false); assert.equal(interrupted.timers.size, 0);
 });
@@ -240,11 +240,11 @@ test('快速反向切换从当前滑动坐标继续，旧帧与旧结束回调�
 test('直接进入标签页不从首页虚假滑动，过期动画也只呈现正确终点', () => {
   let now = 1000;
   const selection = createTabSelection(() => now), f = fixture({ selection });
-  f.pages.push({ route: 'pages/inbox/index', data: {} }); f.attach(); f.ready(); f.show();
+  f.pages.push({ route: 'pages/messages/index', data: {} }); f.attach(); f.ready(); f.show();
   assert.equal(f.bar.data.selected, 2); assert.equal(f.bar.data.indicatorPosition, 200);
   assert.equal(f.bar.data.indicatorAnimating, false); assert.equal(f.timers.size, 0);
   selection.begin(0, 2); now += 500;
-  const late = fixture({ selection }); late.pages.push({ route: 'pages/inbox/index', data: {} }); late.attach();
+  const late = fixture({ selection }); late.pages.push({ route: 'pages/messages/index', data: {} }); late.attach();
   assert.equal(late.bar.data.indicatorPosition, 200); assert.equal(late.bar.data.indicatorAnimating, false);
 });
 
@@ -258,7 +258,7 @@ test('隐藏、遮挡和销毁取消本地动画，返回时只接续尚未结�
   assert.equal(f.timers.size, 0); assert.equal(f.bar.data.indicatorAnimating, false);
   delete f.pages[0].data.commentPostId; now += 250; f.bar.syncPageState();
   assert.equal(f.bar.data.indicatorPosition, 300); assert.equal(f.bar.data.indicatorAnimating, false);
-  selection.begin(3, 2); f.pages[0].route = 'pages/inbox/index'; f.bar.syncPageState();
+  selection.begin(3, 2); f.pages[0].route = 'pages/messages/index'; f.bar.syncPageState();
   const staleFinish = [...f.timers.values()][0].callback;
   f.detach(); assert.equal(f.timers.size, 0); const state = JSON.stringify(f.bar.data);
   staleFinish(); assert.equal(JSON.stringify(f.bar.data), state);
@@ -380,14 +380,14 @@ test('缩小的首页底栏切到其他标签恢复原尺寸，失败则保留�
   f.navigation[0].fail(); f.navigation[0].complete();
   assert.equal(f.bar.data.compact, true); assert.equal(f.bar.data.selected, 0);
   f.bar.switchTab({ currentTarget: { dataset: { index: 1 } } });
-  f.pages[0] = { route: 'pages/messages/index', data: { chromeCompact: true } };
+  f.pages[0] = { route: 'pages/inbox/index', data: { chromeCompact: true } };
   f.navigation[1].complete(); f.show(); assert.equal(f.bar.data.compact, false);
 });
 
 test('首页滚动时底栏晚初始化能恢复紧凑状态，其他原生标签页始终显示正常大小', () => {
   const f = fixture(); f.pages.push({ route: 'pages/home/index', data: { chromeCompact: true } });
   f.attach(); f.ready(); f.show(); assert.equal(f.bar.data.compact, true);
-  for (const route of ['pages/messages/index', 'pages/inbox/index', 'pages/search/index']) {
+  for (const route of ['pages/inbox/index', 'pages/messages/index', 'pages/search/index']) {
     f.pages[0] = { route, data: { chromeCompact: true } }; f.show(); assert.equal(f.bar.data.compact, false);
   }
 });

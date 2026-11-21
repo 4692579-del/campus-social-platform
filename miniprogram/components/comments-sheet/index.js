@@ -30,7 +30,13 @@ Component({
   options: { multipleSlots: true },
   properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean },
   observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); },
-    focusReplyId() { if (this._roots) this.locateReply(); } },
+    focusReplyId() { if (this._roots) this.locateReply(); },
+    'postId, viewer._id': function (id, account) {
+      const owner = `${id || ''}:${account || ''}`;
+      if (owner === this._commentMotionOwner) return;
+      this._commentMotionOwner = owner;
+      this.clearCommentMotions();
+    } },
   data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0,
     selectedImages: [], choosingImages: false,
     text: '', inputValue: '', nativeInputValue: '', inputCursor: -1, askAI: false, count: 0, remainingCount: COMMENT_MAX, countWarning: false, countProgress: 0, limitHintVisible: false, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
@@ -44,6 +50,7 @@ Component({
       } catch (error) { /* 不支持设备API时保留WebView标准行盒。 */ }
       try { this._inputDebug = wx.getAccountInfoSync().miniProgram.envVersion === 'develop'; } catch (error) { this._inputDebug = false; }
       this._epoch = 0;
+      this._commentMotions = new Map();
       this._roots = []; this._threads = new Map(); this._commentClicks = new Map();
       this._removedComments = new Set();
       this._aiPending = new Set(); this._aiTimers = new Map();
@@ -65,11 +72,12 @@ Component({
       if (cached) this.showReplies(cached);
       return this.load().then(() => this.locateReply());
     },
-    detached() { this.discardCommentUploads(); clearTimeout(this._limitHintTimer); this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
+    detached() { this.clearCommentMotions('', false); this.discardCommentUploads(); clearTimeout(this._limitHintTimer); this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
   },
-  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this.hideLimitHint(); this._pageHidden = true; this.clearAITimers(); }, show() {
+  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this.hideLimitHint(); this._pageHidden = true; this.clearCommentMotions(); this.clearAITimers(); }, show() {
     this._pageHidden = false;
     if (this._mediaVersion !== users.getSessionVersion()) {
+      this.clearCommentMotions('', false);
       this.discardCommentUploads(); this._epoch++; this._pendingReply = null;
       this.setData({ selectedImages: [], choosingImages: false, replyTarget: null }); this.setReplyInput('', false); this.triggerEvent('close'); return;
     }
@@ -78,6 +86,43 @@ Component({
   } },
   methods: {
     stopEvent() {},
+    clearCommentMotions(id = '', render = true) {
+      if (!this._commentMotions) return;
+      const ids = id ? [id] : [...this._commentMotions.keys()];
+      let changed = false;
+      for (const key of ids) {
+        const motion = this._commentMotions.get(key);
+        if (!motion) continue;
+        clearTimeout(motion.timer); this._commentMotions.delete(key); changed = true;
+      }
+      if (changed && render && !this._dead && this._roots) this.renderComments();
+    },
+    startCommentMotion(id, kind, active) {
+      if (this._dead || this._pageHidden) return;
+      const previous = this._commentMotions.get(id);
+      this.clearCommentMotions(id, false);
+      const variant = previous && previous.variant === 'a' ? 'b' : 'a', epoch = this._epoch, version = users.getSessionVersion();
+      const motion = { variant, likeClass: kind === 'like' ? `comment-${active ? 'like' : 'unlike'}-${variant}` : '',
+        foldClass: kind === 'fold' ? `comment-${active ? 'break' : 'restore'}-${variant}` : '' };
+      this._commentMotions.set(id, motion);
+      motion.timer = setTimeout(() => {
+        if (!this.valid(epoch, version) || this._pageHidden || this._commentMotions.get(id) !== motion) return;
+        this._commentMotions.delete(id); this.renderComments();
+      }, kind === 'fold' && active ? 1320 : 440);
+    },
+    commentMotionView(row, lookup) {
+      const motion = this._commentMotions && this._commentMotions.get(row._id);
+      // 只投影到当前组件视图，不把动画状态或额外保留的节点写入共享评论缓存。
+      const ancestors = (row.ancestorIds || []).filter(id => id !== row.rootId);
+      const foldedAncestor = ancestors.find(id => { const parent = lookup ? lookup.get(id) : this.findComment(id); return parent && parent.folded; });
+      const restoringAncestor = !foldedAncestor && ancestors.find(id => {
+        const state = this._commentMotions && this._commentMotions.get(id);
+        return state && state.foldClass.startsWith('comment-restore-');
+      });
+      const parentMotion = this._commentMotions && this._commentMotions.get(foldedAncestor || restoringAncestor);
+      return { ...row, motionManaged: true, motionLikeClass: motion ? motion.likeClass : '', motionFoldClass: motion ? motion.foldClass : '',
+        motionAncestorFolded: Boolean(foldedAncestor), motionAncestorClass: parentMotion ? parentMotion.foldClass : '' };
+    },
     isNativeMediaActive() { return Boolean(this._nativeMediaActive); },
     discardCommentUploads(files = [...(this._knownUploads || [])]) {
       if (typeof media.discardUploads === 'function') Promise.resolve().then(() => media.discardUploads(files)).catch(() => {});
@@ -258,11 +303,18 @@ Component({
           threads.set(pending.rootId, { ...thread, items: [...thread.items, pending], fresh: new Set([...thread.fresh, pending._id]) });
         }
       }
+      const lookup = new Map([...roots, ...[...threads.values()].flatMap(thread => thread.items)].map(row => [row._id, row]));
       const items = commentGroups(roots, threads), values = {};
+      const layout = new Map(commentGroups(roots, threads, { retainFolded: true }).map(row => [row._id, row]));
       for (const root of items) {
         root.highlighted = root._id === this._highlightReply;
         const thread = threads.get(root._id);
         root.threadEarlier = Boolean(thread && thread.focusStart > 0);
+        const retained = layout.get(root._id);
+        Object.assign(root, this.commentMotionView(root, lookup));
+        root.motionVisibleChildren = retained.visibleChildren.map(row => this.commentMotionView({ ...row, highlighted: row._id === this._highlightReply }, lookup));
+        root.motionFreshChildren = retained.freshChildren.map(row => this.commentMotionView({ ...row, highlighted: row._id === this._highlightReply }, lookup));
+        root.motionShowExpand = retained.showExpand; root.motionShowCollapse = retained.showCollapse;
         for (const row of [...root.visibleChildren, ...root.freshChildren]) row.highlighted = row._id === this._highlightReply;
       }
       if (items.length !== this.data.items.length || items.some((row, index) => row._id !== this.data.items[index]._id)) values.items = items;
@@ -287,6 +339,7 @@ Component({
       this._roots = this._roots.filter(item => !gone(item));
       const affectedIds = !row.rootId && this._threads.has(row._id) ? this._threads.get(row._id).items.map(item => item._id) : [];
       for (const id of [row._id, ...affectedIds]) {
+        this.clearCommentMotions(id, false);
         this._commentClicks.delete(id);
         if (this._aiTimers.has(id)) { clearTimeout(this._aiTimers.get(id)); this._aiTimers.delete(id); }
       }
@@ -315,9 +368,20 @@ Component({
       this._commentMenuBusy = true;
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       try {
-        const choice = await popup('showActionSheet', { itemList: [own ? '删除评论' : '举报评论'], itemColor: own ? '#d84a4a' : '#171b20' });
-        if (!valid() || choice.tapIndex !== 0) return;
-        if (own) {
+        const choice = await popup('showActionSheet', { itemList: [own ? '删除' : '举报', '分享', '复制'], itemColor: '#171b20' });
+        if (!valid()) return;
+        const action = [own ? 'delete' : 'report', 'share', 'copy'][choice.tapIndex];
+        if (!action || action === 'share') return;
+        if (action === 'copy') {
+          // 读取当前仍有效的正式记录，仅复制正文，不拼入图片、时间或界面提示。
+          const latest = this.findComment(id);
+          if (!latest || latest.hiddenByAncestor || !latest.content) return;
+          const text = own ? latest.content : `@${latest.author.nickname} ${latest.content}`;
+          await new Promise((resolve, reject) => wx.setClipboardData({ data: text, success: resolve,
+            fail: () => reject(new Error('复制失败，请重试')) }));
+          return;
+        }
+        if (action === 'delete' && own) {
           const confirm = await popup('showModal', { title: '删除评论', content: row.rootId ? '确定删除这条回复吗？' : '确定删除这条评论吗？该评论及其下的回复将不再展示。', confirmText: '删除', confirmColor: '#d84a4a' });
           if (!confirm.confirm || !valid()) return;
           const result = await square.deleteReply(this.data.postId, id);
@@ -326,7 +390,7 @@ Component({
             if (result.root) this.applyCommentRow(result.root);
             this.removeCommentRow({ _id: id, postId: this.data.postId, rootId: result.rootId || '' });
           }
-        } else {
+        } else if (action === 'report' && !own) {
           const selection = await popup('showActionSheet', { itemList: reportReasons.map(reason => reason.label) });
           const reason = reportReasons[selection.tapIndex];
           if (!reason || !valid()) return;
@@ -407,7 +471,7 @@ Component({
       if (this.data.sending) return;
       if (!users.getCachedUser()) { this.login(); return; }
       const row = this.findComment(event.currentTarget.dataset.id);
-      if (!row || row.folded) return;
+      if (!row || row.folded || row.rootId && this.findComment(row.rootId)?.folded) return;
       const thread = row.rootId && this._threads.get(row.rootId);
       if (thread && thread.items.some(item => item.folded && (row.ancestorIds || []).includes(item._id))) return;
       this._requestId = token();
@@ -467,16 +531,19 @@ Component({
       }
     },
     async reactComment(event) {
+      if (this._dead || this._pageHidden) return;
       if (!users.getCachedUser()) { this.login(); return; }
       const { id, kind } = event.currentTarget.dataset;
       const row = this.findComment(id);
-      if (!row || row.hiddenByAncestor || !['like', 'fold'].includes(kind)) return;
+      if (!row || row.pending || row.hiddenByAncestor || !['like', 'fold'].includes(kind)) return;
+      if ([row.rootId, ...(row.ancestorIds || [])].filter(Boolean).some(key => { const parent = this.findComment(key); return parent && parent.folded; })) return;
       const epoch = this._epoch, version = users.getSessionVersion();
       let operation = this._commentClicks.get(id);
       if (!operation) { operation = { confirmed: row, sequence: 0 }; this._commentClicks.set(id, operation); }
       const sequence = ++operation.sequence;
       const latestClick = () => this._commentClicks.get(id) === operation && operation.sequence === sequence;
       const active = kind === 'like' ? Boolean(row.folded || !row.liked) : !row.folded;
+      this.startCommentMotion(id, kind, active);
       this.applyCommentRow(optimisticReaction(row, kind, active));
       try {
         const result = await square.commentState(this.data.postId, id, kind, active, row);
@@ -500,6 +567,7 @@ Component({
         if (!latestClick()) return;
         if (this.valid(epoch, version)) {
           const confirmed = typeof square.cachedComment === 'function' ? square.cachedComment(id) || operation.confirmed : operation.confirmed;
+          this.clearCommentMotions(id, false);
           this.applyCommentRow(confirmed);
           wx.showToast({ title: error.message || '操作失败，请重试', icon: 'none' });
         }

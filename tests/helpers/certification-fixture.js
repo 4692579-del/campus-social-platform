@@ -23,13 +23,22 @@ function fixture(options = {}) {
           async end() {
             if (options.readError && options.readError.collection === name) throw new Error('aggregate read failed');
             queries.push({ name, condition, aggregate: true });
-            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) => row[key] === value));
-            const total = { _id: grouping._id };
-            for (const [key, value] of Object.entries(grouping)) if (key !== '_id') {
-              assert.equal(value.operation, 'sum');
-              total[key] = rows.reduce((sum, row) => sum + (typeof row[value.field.slice(1)] === 'number' ? row[value.field.slice(1)] : 0), 0);
+            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
+              value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
+            const groups = new Map();
+            for (const row of rows) {
+              const id = typeof grouping._id === 'string' && grouping._id.startsWith('$') ? row[grouping._id.slice(1)] : grouping._id;
+              if (!groups.has(id)) groups.set(id, []);
+              groups.get(id).push(row);
             }
-            return { list: rows.length ? [total] : [] };
+            return { list: [...groups].map(([id, members]) => {
+              const total = { _id: id };
+              for (const [key, value] of Object.entries(grouping)) if (key !== '_id') {
+                assert.equal(value.operation, 'sum');
+                total[key] = members.reduce((sum, row) => sum + (typeof row[value.field.slice(1)] === 'number' ? row[value.field.slice(1)] : 0), 0);
+              }
+              return total;
+            }) };
           },
         };
         return pipeline;
@@ -39,7 +48,7 @@ function fixture(options = {}) {
         let offset = 0, limit = Infinity;
         const query = {
           count: async () => ({ total: [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-            value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
+            value && value.operation === 'exists' ? Object.hasOwn(row, key) === value.value : value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
           orderBy: (field, direction) => { ordering.push([field, direction]); return query; },
           skip: value => { offset = value; return query; },
           limit: value => { limit = value; return query; },
@@ -47,7 +56,7 @@ function fixture(options = {}) {
             if (options.readError && options.readError.collection === name) throw Object.assign(new Error(options.readError.message || 'read failed'), { code: options.readError.code });
             queries.push({ name, condition, ordering, offset, limit });
             const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-              value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
+              value && value.operation === 'exists' ? Object.hasOwn(row, key) === value.value : value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
             rows.sort((a, b) => {
               for (const [field, direction] of ordering) {
                 const difference = a[field] === b[field] ? 0 : a[field] < b[field] ? -1 : 1;
@@ -98,7 +107,7 @@ function fixture(options = {}) {
     };
   }
   const db = {
-    command: { lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
+    command: { exists: value => ({ operation: 'exists', value }), lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
       aggregate: { sum: field => ({ operation: 'sum', field }) } },
     collection: name => collection(name, tables),
     serverDate: () => options.serverTime || '2026-11-14T10:00:00.000Z',
