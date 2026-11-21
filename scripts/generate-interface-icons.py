@@ -54,10 +54,6 @@ SHAPES = {
         '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5M3 21h18"/>',
     ],
     'menu': ['<path d="M4 6h16M4 12h16M4 18h16"/>'],
-    'user-plus': [
-        '<circle cx="9" cy="7" r="4"/>',
-        '<path d="M2 21v-2a7 7 0 0 1 14 0v2m3-14v6m-3-3h6"/>',
-    ],
     'history': [
         '<path d="M3 11a9 9 0 1 1 2.6 7.4M3 4v7h7m2-4v5l3 2"/>',
     ],

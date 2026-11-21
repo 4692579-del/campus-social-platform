@@ -1,0 +1,2 @@
+/* 边框计入原尺寸，不让头像或相邻布局变大。组件隔离作用域也显式引入。 */
+.avatar-outline, .cs-avatar { box-sizing: border-box; border: 1rpx solid #d3d8df; border-radius: 50%; }

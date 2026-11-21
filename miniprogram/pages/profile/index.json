@@ -6,9 +6,12 @@
   "enablePullDownRefresh": false,
   "disableScroll": true,
   "usingComponents": {
+    "cui-refresh": "/components/cui-refresh/index",
     "profile-replies": "../../components/profile-replies/index",
     "square-post": "../../components/square-post/index",
     "comments-sheet": "../../components/comments-sheet/index",
-    "square-composer": "/components/square-composer/index"
+    "square-composer": "/components/square-composer/index",
+    "media-image": "/components/media-image/index",
+    "unfollow-confirm": "/components/unfollow-confirm/index"
   }
 }

@@ -4,6 +4,53 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+test('个人主页搜索条件只交给同会话的下一次搜索页，失败票据不清除更新入口，退出不串号',async()=>{
+  const f=clientFixture(async()=>({result:{success:true,user:{_id:'alice',accountId:'12345678'}}}));await f.service.login();
+  const first=f.service.stageProfileSearch('87654321'),second=f.service.stageProfileSearch('23456789');f.service.cancelSearchEntry(first);assert.equal(f.service.consumeSearchEntry().accountId,second.accountId);assert.equal(f.service.consumeSearchEntry(),null);
+  f.service.stageProfileSearch('87654321');f.service.logout();assert.equal(f.service.consumeSearchEntry(),null);assert.equal(f.service.stageProfileSearch('87654321'),null);
+});
+
+test('公开账号信息缓存按目标隔离并合并请求，不写入本人资料，退出后迟到结果无效',async()=>{
+  const own={_id:'alice',accountId:'12345678',nickname:'本人'},target='87654321',pending=[];
+  const f=clientFixture(({data})=>data.action==='login'?Promise.resolve({result:{success:true,user:own}}):new Promise(resolve=>pending.push(resolve)));
+  await f.service.login();const first=f.service.getPublicAccountInfo(target),second=f.service.getPublicAccountInfo(target);assert.equal(first,second);assert.equal(pending.length,1);
+  const info={user:{accountId:target,nickname:'对方',isVerified:true,schoolName:'公开学校'},nicknameHistory:{changeCount:2,lastChangedAt:null}};
+  pending.shift()({result:{success:true,square:{accountInfo:info}}});await first;assert.equal(f.service.getCachedUser()._id,'alice');assert.equal(f.service.getCachedPublicAccountInfo(target).user.nickname,'对方');assert.equal(f.service.getCachedAccountInfo(),null);
+  await f.service.getPublicAccountInfo(target);assert.equal(pending.length,0);
+  const late=f.service.getPublicAccountInfo(target,{force:true});f.service.logout();pending.shift()({result:{success:true,square:{accountInfo:info}}});await assert.rejects(late);assert.equal(f.service.getCachedPublicAccountInfo(target),null);
+});
+
+test('公开账号目标失效清理资料而不登出浏览者，也不把错误统计保存到缓存',async()=>{
+  const f=clientFixture(async({data})=>({result:data.action==='login'?{success:true,user:{_id:'alice'}}:{success:false,code:'PROFILE_NOT_FOUND',message:'不可查看'}}));
+  await f.service.login();await assert.rejects(f.service.getPublicAccountInfo('87654321'),error=>error.code==='PROFILE_NOT_FOUND');assert.ok(f.service.getCachedUser());assert.equal(f.service.getCachedPublicAccountInfo('87654321'),null);
+});
+
+test('公开主页缓存独立于当前登录用户，合并读取、资料变更及退出会清理并隔离迟到响应', async () => {
+  const own = { _id: 'alice', accountId: '12345678', nickname: '本人' }, targetId = '87654321';
+  const pending = [];
+  const f = clientFixture(({ data }) => data.action === 'login' ? Promise.resolve({ result: { success: true, user: own } }) : new Promise(resolve => pending.push(resolve)));
+  await f.service.login(); f.service.seedPublicProfile({ accountId: targetId, nickname: '对方', avatarFileID: 'public-avatar', birthDate: 'private' });
+  assert.equal(f.service.getCachedPublicProfile(targetId).birthDate, undefined);
+  const first = f.service.getPublicProfile(targetId), second = f.service.getPublicProfile(targetId);
+  assert.equal(first, second); assert.equal(pending.length, 1);
+  pending.shift()({ result: { success: true, square: { profile: { accountId: targetId, nickname: '真实对方', bio: '简介' } } } });
+  await first; assert.equal(f.service.getCachedPublicProfile(targetId).nickname, '真实对方'); assert.equal(f.service.getCachedUser()._id, own._id);
+  await f.service.getPublicProfile(targetId); assert.equal(pending.length, 0);
+  const late = f.service.getPublicProfile(targetId, { force: true }); f.service.logout();
+  pending.shift()({ result: { success: true, square: { profile: { accountId: targetId, nickname: '旧响应' } } } });
+  await assert.rejects(late, error => error.code === 'SESSION_CHANGED'); assert.equal(f.service.getCachedPublicProfile(targetId), null);
+});
+
+test('目标不可查看只失效该公开资料，不登出浏览者', async () => {
+  const f = clientFixture(async ({ data }) => ({ result: data.action === 'login' ? { success: true, user: { _id: 'alice' } } :
+    { success: false, code: 'PROFILE_NOT_FOUND', message: '不可查看' } }));
+  await f.service.login(); f.service.seedPublicProfile({ accountId: '87654321', nickname: '旧资料' });
+  await assert.rejects(f.service.getPublicProfile('87654321'), error => error.code === 'PROFILE_NOT_FOUND');
+  assert.equal(f.service.getCachedPublicProfile('87654321'), null); assert.equal(f.service.getCachedUser()._id, 'alice');
+  f.service.seedPublicProfile({ accountId: '87654321', nickname: '旧帖子里的资料' });
+  assert.equal(f.service.getCachedPublicProfile('87654321'), null);
+});
+
 test('AI额度复用会话缓存并合并查询，生成完成后失效，旧查询不能覆盖新用量', async () => {
   const pending = [];
   const f = clientFixture(({ data }) => data.action === 'login' ? Promise.resolve({ result: { success: true, user: { _id: 'alice' } } }) : new Promise(resolve => pending.push(resolve)));

@@ -45,8 +45,8 @@ function fixture(options = {}) {
   const square = { cachedOwnFeed: () => options.feed || null };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
     Page: value => { definition = value; }, Date: class extends Date { static now() { return now; } },
-    setTimeout: (fn, delay) => { const id = ++timerSequence; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id),
-    require: name => name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, {}) :
+    setTimeout: (fn, delay) => { const id = ++timerSequence; timers.set(id, { fn, delay, at: now + delay }); return id; }, clearTimeout: id => timers.delete(id),
+    require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, {}) :
       name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : users,
     wx: { getWindowInfo: () => info, getMenuButtonBoundingClientRect: () => capsule },
   });
@@ -64,6 +64,16 @@ function fixture(options = {}) {
     tick(value) { now = value; },
     flush() { for (const [id, timer] of [...timers]) if (timer.delay <= 16) { timers.delete(id); timer.fn(); } },
     settle() { for (const [id, timer] of [...timers]) if (timer.delay === 80) { timers.delete(id); timer.fn(); } },
+    async advance(ms) {
+      const flush = async () => { for (let n = 0; n < 12; n++) await Promise.resolve(); };
+      await flush(); const target = now + ms;
+      while (true) {
+        const entry = [...timers].sort((a, b) => a[1].at - b[1].at).find(([, timer]) => timer.at <= target);
+        if (!entry) break;
+        timers.delete(entry[0]); now = Math.max(now, entry[1].at); entry[1].fn(); await flush();
+      }
+      now = target; await flush();
+    },
   };
 }
 
@@ -123,13 +133,13 @@ function readyPullPage() {
   return f;
 }
 
-test('只有顶部纵向下拉移动白色区域，封面与固定导航不变，旋转角随拉动距离增加', () => {
+test('只有顶部纵向下拉移动白色区域，封面与固定导航不变，Cui褪色进度随拉动距离增加', () => {
   const f = readyPullPage(), page = f.page;
   page.startProfilePull(touch(100, 300)); page.moveProfilePull(touch(100, 330));
-  assert.equal(page.data.profilePullOffset, 13); assert.ok(page.data.pullRotation > 0);
-  const rotation = page.data.pullRotation;
+  assert.equal(page.data.profilePullOffset, 13); assert.ok(page._profileCuiVisual.progress > 0);
+  const progress = page._profileCuiVisual.progress;
   f.tick(1020); page.moveProfilePull(touch(100, 390));
-  assert.ok(page.data.pullRotation > rotation); assert.equal(page.data.navCoverOffset, 0);
+  assert.ok(page._profileCuiVisual.progress > progress); assert.equal(page.data.navCoverOffset, 0);
   assert.equal(page.data.navBlurOpacity, 0); assert.equal(page.data.coverHeight, 222);
   for (const width of [320, 360, 375, 430]) {
     const layout = navigationLayout({ windowWidth: width }, capsule);
@@ -158,7 +168,38 @@ test('松手立即复位，短拉不联网，超过阈值只发一次刷新且�
   assert.equal(page.data.profilePullOffset, 0); assert.equal(page.data.pullDragging, false);
   assert.equal(page.data.profileRefreshing, true); assert.equal(page.data.ownPosts, posts);
   await page.finishProfilePull(); await page.refreshProfilePosts(); assert.equal(calls, 1);
-  resolve(); await pending; assert.equal(page.data.profileRefreshing, false);
+  resolve(); await pending; assert.equal(page.data.profileRefreshing, true);
+  await f.advance(1720); assert.equal(page.data.profileRefreshing, false);
+});
+
+test('Cui先随资料区域回位，再至少完整起伏一轮，依次补色后隐藏，保留旧图片引用', async () => {
+  const f = readyPullPage(), page = f.page, states = [];
+  const posts = [{ _id:'existing', images:['public-image'] }]; page.data.ownPosts = posts;
+  page.selectComponent = id => id === '#profile-cui' ? { setState: value => states.push(value) } : null;
+  page.loadOwnPosts = async () => {};
+  await page.refreshProfilePosts(); assert.equal(page.data.profileRefreshPhase, 'settling');
+  await f.advance(219); assert.equal(page.data.profileRefreshPhase, 'settling');
+  await f.advance(1); assert.equal(page.data.profileRefreshPhase, 'loading');
+  await f.advance(899); assert.equal(page.data.profileRefreshPhase, 'loading');
+  await f.advance(1); assert.equal(page.data.profileRefreshPhase, 'refill');
+  assert.equal(states.at(-1).duration, 600);
+  await f.advance(599); assert.equal(page.data.profileRefreshing, true);
+  await f.advance(1); assert.equal(page.data.profileRefreshPhase, 'idle'); assert.equal(page.data.profileRefreshing, false);
+  assert.deepEqual(states.map(value => value.phase), ['settling','loading','refill','idle']);
+  assert.equal(page.data.ownPosts, posts); assert.equal(page.data.ownPosts[0].images, posts[0].images);
+});
+
+test('慢请求和失败都等当前Cui整轮结束，切换内容标签取消动画及迟到回填', async () => {
+  const f = readyPullPage(), page = f.page; let fail;
+  page.loadOwnPosts = () => new Promise((resolve, reject) => { fail = reject; });
+  const pending = page.refreshProfilePosts();
+  await f.advance(1220); assert.equal(page.data.profileRefreshPhase, 'loading');
+  fail(new Error('网络失败')); await assert.rejects(pending, /网络失败/);
+  await f.advance(799); assert.equal(page.data.profileRefreshPhase, 'loading');
+  await f.advance(1); assert.equal(page.data.profileRefreshPhase, 'refill');
+  page.selectContent({ currentTarget:{ dataset:{ key:'replies' } } });
+  assert.equal(page.data.profileRefreshPhase, 'idle'); assert.equal(page.data.profileRefreshing, false);
+  await f.advance(2000); assert.equal(page.data.profileRefreshPhase, 'idle');
 });
 
 test('取消、离开页面及账号更换清理下拉状态，迟到刷新不覆盖新一轮指示器', async () => {
@@ -174,7 +215,8 @@ test('取消、离开页面及账号更换清理下拉状态，迟到刷新不�
   page.loadOwnPosts = () => new Promise(resolve => { finishNew = resolve; });
   const newRequest = page.refreshProfilePosts();
   finishOld(); await oldRequest; assert.equal(page.data.profileRefreshing, true);
-  finishNew(); await newRequest; assert.equal(page.data.profileRefreshing, false);
+  finishNew(); await newRequest; assert.equal(page.data.profileRefreshing, true);
+  await f.advance(1720); assert.equal(page.data.profileRefreshing, false);
   page.startProfilePull(touch(100, 300)); page.moveProfilePull(touch(100, 400));
   page.applyUser(null); assert.equal(page.data.profilePullOffset, 0); assert.equal(page.data.profileRefreshing, false);
 });
@@ -203,6 +245,7 @@ test('漏掉回顶滚动事件时以实际封面位置恢复导航，随后仍�
   page.startProfilePull(touch(100, 300)); page.moveProfilePull(touch(100, 420));
   assert.ok(page.data.profilePullOffset > 0);
   await page.finishProfilePull(); assert.equal(refreshed, 1);
+  await f.advance(1720);
   assert.equal(page.data.profilePullOffset, 0); assert.equal(page.data.profileRefreshing, false);
 });
 

@@ -7,7 +7,7 @@ const { declarations, declarationKey } = require('../../utils/content-declaratio
 
 Component({
   properties: { initialQuote: Object, quoteOwnerId: String },
-  data: { user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
+  data: { editorReady: false, user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
     optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], optimizeHelpUsed: false, optimizeHelpVisible: false,
     viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, closing: false,
     panel: '', exitConfirmVisible: false, replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none',
@@ -20,6 +20,7 @@ Component({
     attached() { this.measure(); return this.initialize(); },
     detached() {
       this.cancelOptimization();
+      this._editorFocusUntil = 0;
       this._unloaded = true;
       this._authVersion = (this._authVersion || 0) + 1;
       clearTimeout(this._closeTimer);
@@ -29,6 +30,7 @@ Component({
   pageLifetimes: {
     resize() { this.measure(); },
     hide() {
+      this._editorFocusUntil = 0;
       this.cancelOptimization();
       this.hideLimitHint();
       this.closeOptimizeHelp();
@@ -42,7 +44,7 @@ Component({
         if (!current) { this._savedQuoteId = ''; this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' }); }
         this.hideLimitHint();
         if (current) this.onLoggedIn(current);
-        else { this.cancelOptimization(); this._editorOwnerId = null; this._savedContent = ''; this._savedImages = []; this._savedDeclaration = 'none'; this._optimizedOriginal = null; this.setData({ user: null, content: '', images: [], declaration: 'none', count: 0, remainingCount: 150, countWarning: false, countProgress: 0, canPublish: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], exitConfirmVisible: false }); this.requestLogin(); }
+        else { this.cancelOptimization(); this._editorOwnerId = null; this._savedContent = ''; this._savedImages = []; this._savedDeclaration = 'none'; this._optimizedOriginal = null; this.setData({ editorReady: false, user: null, content: '', images: [], declaration: 'none', count: 0, remainingCount: 150, countWarning: false, countProgress: 0, canPublish: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], exitConfirmVisible: false }); this.requestLogin(); }
       }
     },
   },
@@ -54,18 +56,21 @@ Component({
       gate.requestLogin.call(this);
     },
     measure() {
+      if (this._unloaded || this._closing) return;
       try {
         const info = wx.getWindowInfo(), capsule = wx.getMenuButtonBoundingClientRect();
         const top = capsule && capsule.height > 0 ? capsule.top + capsule.height + 18 : (info.statusBarHeight || 0) + 66;
         const width = info.windowWidth || 375;
         // Android 可能先缩小窗口再通知键盘高度，保留完整高度，避免重复扣除键盘。
-        const keyboardResize = this._layoutWidth === width && (this.data.editorFocused || this.data.keyboardHeight);
+        const keyboardResize = this._layoutWidth === width && (this.data.editorFocused || this.data.editorFocusRequested || this.data.keyboardHeight || Date.now() < (this._editorFocusUntil || 0));
         const height = keyboardResize ? Math.max(info.windowHeight || 812, this.data.viewportHeight) : info.windowHeight || 812;
         this._layoutWidth = width;
         const settingsMaxHeight = Math.max(0, height - top - 16);
         // 按内容撑高；短屏缩紧选项行，为标题、两组小标题、完成按钮及安全区留足空间。
         const settingsRowHeight = Math.min(92, Math.max(52, Math.floor((settingsMaxHeight * 750 / width - 440) / 8)));
-        this.setData({ viewportHeight: height, sheetTop: top, settingsMaxHeight, settingsRowHeight });
+        const next = { viewportHeight: height, sheetTop: top, settingsMaxHeight, settingsRowHeight };
+        const patch = Object.fromEntries(Object.entries(next).filter(([key, value]) => this.data[key] !== value));
+        if (Object.keys(patch).length) this.setData(patch);
       } catch (error) { /* 旧设备保留默认安全位置。 */ }
     },
     async initialize() {
@@ -84,7 +89,7 @@ Component({
       if (changed) {
         this._quoteSequence = (this._quoteSequence || 0) + 1;
         this._savedQuoteId = '';
-        this.setData({ quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' });
+        this.setData({ editorReady: false, quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' });
         this.cancelOptimization(); this._optimizedOriginal = null;
         this.hideLimitHint();
         this._savedContent = '';
@@ -117,6 +122,7 @@ Component({
         if (id !== this._savedQuoteId) this._requestId = token();
       }
       if (id) return this.attachQuote(id, preview);
+      if (!this.data.editorReady) this.setData({ editorReady: true });
     },
     refreshQuotePublish() {
       this.setData({ canPublish: Boolean(this.data.content.trim() || this.data.images.length || this.data.quotePostId) && this.data.count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
@@ -125,7 +131,8 @@ Component({
       const version = users.getSessionVersion(), owner = this._editorOwnerId, sequence = this._quoteSequence = (this._quoteSequence || 0) + 1;
       const cached = typeof square.cachedPost === 'function' && square.cachedPost(id) || preview;
       const current = () => !this._unloaded && !this._closing && sequence === this._quoteSequence && version === users.getSessionVersion() && owner === this._editorOwnerId;
-      this.setData({ quotePostId: id, quote: cached ? { ...cached, content: cached.fullContent || cached.content } : { _id: id, loading: true }, quoteReady: Boolean(cached && !cached.unavailable), quoteLoading: true, quoteError: '' });
+      // 同一次渲染确定引用模式并首次挂载输入框，避免先创建满高编辑器再切成auto-height。
+      this.setData({ editorReady: true, quotePostId: id, quote: cached ? { ...cached, content: cached.fullContent || cached.content } : { _id: id, loading: true }, quoteReady: Boolean(cached && !cached.unavailable), quoteLoading: true, quoteError: '' });
       this.refreshQuotePublish();
       try {
         const post = await square.detail(id);
@@ -337,16 +344,37 @@ Component({
     },
     focusEditor() {
       if (!this.data.user || this.busy() || this.data.panel || this.data.exitConfirmVisible) return;
-      if (!this.data.editorFocused) this.setData({ editorFocused: true, editorFocusRequested: true });
+      this._editorFocusUntil = Date.now() + 1000;
+      if (!this.data.editorFocused && !this.data.editorFocusRequested) this.setData({ editorFocusRequested: true });
     },
-    // 原生focus只更新观测状态，绝不反写focus属性再次请求键盘。
-    editorDidFocus() { if (!this.data.editorFocused) this.setData({ editorFocused: true }); },
-    blurEditor() { this.setData({ editorFocused: false, editorFocusRequested: false }); },
+    editorTouchStart() {
+      if (this._unloaded || this._closing || !this.data.user || this.busy() || this.data.panel || this.data.exitConfirmVisible) return;
+      // 系统可能先 resize 再发 focus；只记录这次真实触摸，不向原生控件下发聚焦。
+      this._editorFocusUntil = Date.now() + 1000;
+    },
+    // 原生focus/临时blur只更新观测状态，不重新请求焦点或在键盘仍打开时主动取消。
+    editorDidFocus() {
+      if (this._unloaded || this._closing) return;
+      this._editorFocusUntil = Date.now() + 1000;
+      if (!this.data.editorFocused) this.setData({ editorFocused: true });
+    },
+    blurEditor() {
+      if (this._unloaded || this._closing) return;
+      const patch = {};
+      if (this.data.editorFocused) patch.editorFocused = false;
+      if (!this.data.keyboardHeight && this.data.editorFocusRequested) patch.editorFocusRequested = false;
+      if (Object.keys(patch).length) this.setData(patch);
+    },
     keyboard(event) {
       if (this._unloaded || this._closing || this.data.panel || this.data.exitConfirmVisible) return;
       const keyboardHeight = Math.max(0, Number(event.detail.height) || 0);
       if (keyboardHeight === this.data.keyboardHeight) return;
-      this.setData({ keyboardHeight });
+      const patch = { keyboardHeight };
+      if (!keyboardHeight) {
+        this._editorFocusUntil = 0;
+        if (this.data.editorFocusRequested) patch.editorFocusRequested = false;
+      }
+      this.setData(patch);
     },
     openPanel(event) {
       if (this.busy() || this.data.loginSheetOpen || this.data.exitConfirmVisible) return;
@@ -354,6 +382,7 @@ Component({
       if (!['options', 'declaration'].includes(panel)) return;
       this.closeOptimizeHelp();
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
+      this._editorFocusUntil = 0;
       this.setData({ panel, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false });
     },
     closePanel() { this.setData({ panel: '' }); },

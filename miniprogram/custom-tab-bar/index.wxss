@@ -1,3 +1,4 @@
+@import "./nav-glass.wxss";
 :host { display: block; }
 .tab-bar-viewport { position: fixed; z-index: 100; left: 0; right: 0; bottom: 0; height: calc(144rpx + constant(safe-area-inset-bottom)); height: calc(144rpx + env(safe-area-inset-bottom)); overflow: hidden; pointer-events: none; }
 .tab-dock {
@@ -14,35 +15,11 @@
 .tab-dock-scale { display: flex; align-items: center; gap: 16rpx; width: 100%; height: 100%; transform: scale(1); transform-origin: center bottom; transition: transform 280ms cubic-bezier(.22,.75,.3,1); pointer-events: none; }
 .tab-dock-scale.is-compact { transform: scale(.8); }
 @media (prefers-reduced-motion: reduce) { .tab-dock-scale { transition: none; } }
-.nav-glass {
-  position: relative;
-  box-sizing: border-box;
-  border: 1rpx solid rgba(88, 99, 115, .32);
-  border-top-color: rgba(105, 114, 128, .22);
-  border-left-color: rgba(79, 91, 108, .36);
-  border-right-color: rgba(79, 91, 108, .36);
-  border-bottom-color: rgba(88, 99, 115, .30);
-  border-radius: 999rpx;
-  /* 仅在边缘叠加暗轮廓、白色反光和窄内暗边；保留原有玻璃表面与透明度。 */
-  background: linear-gradient(180deg, rgba(255, 255, 255, .84) 0%, rgba(250, 252, 254, .82) 52%, rgba(255, 255, 255, .83) 100%);
-  background-clip: padding-box;
-  box-shadow: inset 0 1rpx 0 rgba(255, 255, 255, .98), inset 1rpx 0 1rpx rgba(255, 255, 255, .78), inset -1rpx 0 1rpx rgba(255, 255, 255, .74), inset 0 -1rpx 0 rgba(76, 90, 111, .12), inset 0 0 4rpx rgba(91, 105, 125, .065);
-  overflow: hidden;
-  pointer-events: auto;
-}
-/* 与外轮廓相邻的内亮线形成双层折射边，仅描边，不给中间表面叠加色带。 */
-.nav-glass::before { content: ''; position: absolute; z-index: 0; inset: 1rpx; box-sizing: border-box; border: 1rpx solid rgba(255, 255, 255, .78); border-top-color: rgba(255, 255, 255, .98); border-bottom-color: rgba(255, 255, 255, .52); border-radius: inherit; pointer-events: none; }
 .tab-bar { position: relative; flex: 1; min-width: 0; height: 100%; padding: 10rpx; }
-.tab-compose-button { display: flex; align-items: center; justify-content: center; flex: 0 0 104rpx; width: 104rpx; min-width: 0; height: 104rpx; margin: 0; padding: 0; border-radius: 50%; line-height: 1; }
-.tab-compose-button::after { border: 0; }
+.tab-compose-glass { flex: 0 0 104rpx; width: 104rpx; height: 104rpx; border-radius: 50%; }
+.tab-compose-glass .tab-compose-button { position: absolute; z-index: 1; inset: 0; display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 100%; margin: 0; padding: 0; box-sizing: border-box; border: 0; border-radius: 50%; background: transparent; box-shadow: none; line-height: 1; }
+.tab-compose-button::before, .tab-compose-button::after { content: none; display: none; border: 0; }
 .compose-icon { position: relative; z-index: 1; display: block; width: 44rpx; height: 44rpx; }
-@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .nav-glass {
-    background: linear-gradient(180deg, rgba(255, 255, 255, .52) 0%, rgba(252, 253, 255, .49) 28%, rgba(248, 250, 253, .47) 64%, rgba(255, 255, 255, .50) 100%);
-    -webkit-backdrop-filter: blur(18px) saturate(145%);
-    backdrop-filter: blur(18px) saturate(145%);
-  }
-}
 .menu-open .tab-dock { transform: translateX(66.666667vw); }
 .menu-instant .tab-dock, .menu-instant .tab-menu-shade { transition: none; }
 .tab-menu-shade { position: absolute; z-index: 2; inset: 0; background: transparent; opacity: 0; pointer-events: none; transition: opacity 0.26s ease; }

@@ -3,8 +3,11 @@
     <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">搜索</view>
   </view>
 <view class="search-page has-tab-bar">
-  <view class="search-field"><image src="/images/interface/search.svg" mode="aspectFit" /><input value="{{keyword}}" bindinput="onInput" bindconfirm="search" confirm-type="search" maxlength="100" placeholder="搜索" placeholder-class="search-placeholder" /></view>
-  <view class="search-notice">搜索功能即将开放</view>
+  <view class="search-toolbar">
+    <view class="search-toolbar-field"><search-box value="{{keyword}}" account-id="{{accountId}}" bind:input="onInput" bind:submit="search" bind:removeauthor="removeAuthor" /></view>
+    <view class="search-toolbar-action search-toolbar-submit" bindtap="search" aria-role="button" aria-label="搜索"><text class="search-toolbar-label">搜索</text></view>
+  </view>
+  <view class="search-notice">{{accountId ? '输入关键词搜索该用户的动态，或直接搜索此账号' : '搜索动态或用户'}}</view>
 </view>
 </view>
 

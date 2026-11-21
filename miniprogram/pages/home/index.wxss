@@ -11,7 +11,7 @@ page { background: #fff; }
 .home-shell.menu-open .home-page { left: 66.666667vw; }
 .home-shell.menu-instant .home-page, .home-shell.menu-instant .profile-menu-layer, .home-shell.menu-instant .menu-panel, .home-shell.menu-instant .menu-backdrop { transition: none; }
 .home-shell .home-avatar-button { position: absolute; z-index: 150; left: 24rpx; display: block; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: #f1f3f5; line-height: 1; transition: transform 0.26s ease; }
-.home-avatar-button::after { border: 0; }
+.home-avatar-button::after { position: absolute; z-index: 1; inset: 0; width: auto; height: auto; border: 1rpx solid #d3d8df; border-radius: inherit; box-sizing: border-box; transform: none; pointer-events: none; }
 .home-avatar-button image { display: block; width: 100%; height: 100%; }
 .home-avatar-button .home-avatar-image { position: absolute; inset: 0; opacity: 0; }
 .home-avatar-button .home-avatar-image.is-ready { opacity: 1; }
@@ -60,4 +60,15 @@ page { background: #fff; }
 .home-tab-group .tab-dropdown { width: 150rpx; }
 .home-tabs.dropdown-open { z-index: 180; }
 .home-dropdown-backdrop { position: fixed; z-index: 170; inset: 0; background: transparent; }
+.home-author-layer { position: fixed; z-index: 190; inset: 0; }
+.home-author-backdrop { position: absolute; inset: 0; background: transparent; }
+.home-author-menu { position: absolute; padding: 8rpx; box-sizing: border-box; background: #fff; border: 1rpx solid #edf0f2; border-radius: 20rpx; box-shadow: 0 10rpx 36rpx rgba(25, 36, 56, .14); }
+.home-author-menu .home-author-option { display: flex; align-items: center; gap: 16rpx; width: 100%; min-width: 0; height: 72rpx; margin: 0; padding: 0 20rpx; box-sizing: border-box; border: 0; border-radius: 12rpx; background: #fff; color: #30373e; font-size: 28rpx; font-weight: 500; line-height: 1; white-space: nowrap; }
+.home-author-option::after { border: 0; }
+.home-author-option image { width: 30rpx; height: 30rpx; flex-shrink: 0; }
+.home-author-menu .home-author-pressed { background: #f4f6f9; }
+
 .home-tab-arrow { display: flex; align-items: center; justify-content: center; align-self: stretch; width: 48rpx; margin-right: -12rpx; }
+
+.following-more { margin:18rpx auto 28rpx; padding:12rpx 28rpx; background:transparent; color:#687580; font-size:25rpx; line-height:1.5; }
+.following-more::after { border:0; }

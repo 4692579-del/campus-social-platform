@@ -2,7 +2,7 @@
   <view class="account-header" style="height: {{navHeight}}px;">
     <view class="header-row" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">
       <button size="mini" class="back-button" bindtap="back" aria-label="返回个人主页"><image class="back-icon" src="/images/interface/chevron-left.svg" mode="aspectFit" /></button>
-      <view class="header-title">关于你的账号</view>
+      <view class="header-title">关于此账号</view>
     </view>
   </view>
   <view wx:if="{{loading}}" class="page-notice">正在读取账号信息…</view>
@@ -11,8 +11,9 @@
     <button size="mini" class="retry-button" bindtap="refresh">重新读取</button>
   </view>
   <block wx:elif="{{user}}">
+    <view wx:if="{{error}}" class="account-inline-error"><text>{{error}}</text><button class="retry-button" size="mini" bindtap="refresh">重新读取</button></view>
     <view class="account-hero">
-      <image class="account-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
+      <image class="account-avatar avatar-outline" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
       <view class="account-nickname">{{user.nickname}}</view>
     </view>
     <view class="account-details">

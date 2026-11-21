@@ -2,7 +2,6 @@ const menuItems = [
   { key: 'profile', label: '个人资料', icon: 'user' },
   { key: 'membership', label: '荟萃计划', icon: 'crown' },
   { key: 'certification', label: '认证' },
-  { key: 'add', label: '添加', icon: 'user-plus' },
   { key: 'friends', label: '萃友', icon: 'users' },
   { key: 'history', label: '历史', icon: 'history' },
   { key: 'creator', label: '创作者空间', icon: 'pen-square' },

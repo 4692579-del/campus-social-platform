@@ -24,3 +24,5 @@ page { background: #fff; }
 .verified-badge image { display: block; width: 21rpx; height: 21rpx; flex-shrink: 0; }
 .page-notice { padding: 80rpx 36rpx; color: #687580; font-size: 28rpx; text-align: center; line-height: 1.7; }
 .account-page .retry-button { width: auto; min-width: 0; margin-top: 24rpx; padding: 0 32rpx; border-radius: 40rpx; background: #4775fa; color: #fff; font-size: 27rpx; line-height: 2.5; }
+
+.account-inline-error { margin: 24rpx 36rpx 0; color: #a44127; font-size: 25rpx; line-height: 1.6; }

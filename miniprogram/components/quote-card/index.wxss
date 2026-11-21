@@ -1,3 +1,4 @@
+@import "../../styles/avatar.wxss";
 :host { display: block; min-width: 0; }
 .quote-frame { position: relative; padding: 24rpx; color: #171b20; }
 .quote-border { position: absolute; top: 0; right: 0; bottom: 0; left: 0; box-sizing: border-box; border: 2rpx dashed #c7cdd6; border-radius: 22rpx; pointer-events: none; }

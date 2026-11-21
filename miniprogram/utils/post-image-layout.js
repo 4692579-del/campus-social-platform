@@ -20,4 +20,6 @@ function imageLayout(files = [], detail = false, contentWidth) {
   const frameWidth = available - 44 - 12;
   return { galleryWidth: 100, galleryHeight: round(Math.max(360, Math.min(640, frameWidth / ratio))) };
 }
-module.exports = { rememberSize, imageLayout };
+// 仅作已解码提示；新节点仍须收到自身load事件才能显示图片。
+function hasDecodedSize(file) { return sizes.has(file); }
+module.exports = { rememberSize, imageLayout, hasDecodedSize };

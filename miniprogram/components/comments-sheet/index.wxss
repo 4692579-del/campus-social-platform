@@ -1,3 +1,4 @@
+@import "../../styles/avatar.wxss";
 @import "../../styles/xiaocui-icon.wxss";
 :host { display: block; }
 .comments-layer { position: fixed; z-index: 2400; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
@@ -22,7 +23,7 @@ button::after { border: 0; }
 .comment-row.is-located { border-radius: 14rpx; animation: located-reply 1.8s ease-out both; }
 @keyframes located-reply { from { background-color: rgba(71,117,250,.13); } to { background-color: transparent; } }
 .comment-avatar { width: 64rpx; height: 64rpx; flex-shrink: 0; border-radius: 50%; background: #f0f2f4; }
-.comment-avatar.is-ai { box-sizing: border-box; border: 1rpx solid #d3d8df; background: #fff; }
+.comment-avatar.is-ai { background: #fff; }
 .comment-main { flex: 1; min-width: 0; }
 .comment-heading { display: flex; align-items: center; gap: 8rpx; color: #8d949d; font-size: 25rpx; line-height: 1.5; }
 .comment-heading > text:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -67,7 +67,7 @@ function pageFixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
     Page: value => { definition = value; },
     getCurrentPages: () => [...(options.previousPages || []), page],
-    require: name => name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(service, {}, { showToast: args => toasts.push(args) }) : name.includes('services/square') ? { cachedOwnFeed: () => null, cachedAlbum: () => null, album: async () => ({ items: [], hasMore: false, nextOffset: 0 }), list: async () => ({ items: [], hasMore: false, nextOffset: 0 }) } :
+    require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(service, {}, { showToast: args => toasts.push(args) }) : name.includes('services/square') ? { cachedOwnFeed: () => null, cachedAlbum: () => null, album: async () => ({ items: [], hasMore: false, nextOffset: 0 }), list: async () => ({ items: [], hasMore: false, nextOffset: 0 }) } :
       name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('user-role') ? { describeUser } : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : service,
     wx: {
       getWindowInfo: () => ({ statusBarHeight: 44, windowWidth: 375 }),
@@ -138,7 +138,8 @@ test('尚未开发的侧栏菜单只提示，不导航、不退出；未知菜�
   for (const key of ['add', 'friends', 'history', 'creator', 'settings', 'help', 'unknown']) {
     f.page.selectMenuItem({ currentTarget: { dataset: { key } } });
   }
-  assert.equal(f.toasts.length, 6);
+  // “添加”已删除，与未知菜单一样忽略；其余五个未开放入口保留提示。
+  assert.equal(f.toasts.length, 5);
   assert.ok(f.toasts.every(item => /后续开放/.test(item.title)));
   assert.equal(f.routes.length, 0);
   assert.equal(f.requests.length, 0);
@@ -251,8 +252,8 @@ test('主页使用真实身份与日期，不编造关注粉丝，只有认证�
   assert.equal(page.data.searchLeft, 68);
   page.applyUser({ ...ordinary, createdAt: '2026-11-17T00:00:00Z' });
   assert.equal(page.data.joinedText, '2026年11月 加入');
-  assert.equal(page.data.followingCount, 0);
-  assert.equal(page.data.followerCount, 0);
+  assert.equal(page.data.followingCount, '—');
+  assert.equal(page.data.followerCount, '—');
   assert.equal(page.data.certificationAction, '去认证');
   assert.equal(page.data.isVerified, false);
   page.applyUser({ ...ordinary, role: 'student', certificationStatus: 'approved', schoolId: 'school' });

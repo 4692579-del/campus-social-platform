@@ -3,6 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('miniprogram/components/square-post/index.js', 'utf8');
+
+test('头像菜单事件仅首页启用，详情及其他列表不改变头像点击行为', () => {
+  const f = fixture(); f.c.avatarMenu(); assert.equal(f.events.length, 0);
+  f.c.data.homeFeed = true; f.c.avatarMenu(); assert.equal(f.events.at(-1).name, 'avatar');
+  f.c.data.post.isOwn = true; f.c.avatarMenu(); assert.equal(f.events.length, 1);
+  f.c.data.post.isOwn = false;
+  f.c.data.detail = true; f.c.avatarMenu(); assert.equal(f.events.length, 1);
+  f.c.data.detail = false; f.c._pageHidden = true; f.c.avatarMenu(); assert.equal(f.events.length, 1);
+});
 function fixture(options = {}) {
   let definition, now = 1000, timerId = 0;
   const timers = new Map(), writes = [], events = [];

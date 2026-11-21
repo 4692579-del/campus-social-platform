@@ -1,0 +1,5 @@
+<view class="media-frame {{ready ? 'is-ready' : failed ? 'is-error' : 'is-loading'}} {{active ? '' : 'is-paused'}} {{known ? 'is-known' : ''}}" aria-busy="{{!ready && !failed}}">
+  <image wx:for="{{nodes}}" wx:key="key" class="media-photo" src="{{item.src}}" mode="{{mode}}" lazy-load="{{lazyLoad}}" data-key="{{item.key}}" bindload="loaded" binderror="loadFailed" />
+  <view class="media-shimmer" aria-hidden="true"></view>
+  <view wx:if="{{failed}}" class="media-failed" aria-label="图片暂时无法加载"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /></view>
+</view>

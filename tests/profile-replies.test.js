@@ -11,6 +11,7 @@ function fixture(options = {}) {
   const calls = [], events = [], patches = [], toasts = [];
   const square = {
     cachedOwnReplies: () => cached,
+    cachedProfileReplies: () => cached,
     subscribeHistory: fn => { listener = fn; return () => { listener = null; }; },
     listOwnReplies: async args => { calls.push({ type: 'read', ...args });
       cached = options.read ? await options.read(args) : cached || { items: [], hasMore: false, nextCursor: '' }; return cached; },
@@ -26,13 +27,20 @@ function fixture(options = {}) {
       : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
     wx: { showToast: args => toasts.push(args.title), showActionSheet: args => args.success({ tapIndex: 0 }), showModal: args => args.success({ confirm: true }) },
   });
-  const c = { ...definition.methods, data: { ...structuredClone(definition.data), active: options.active !== false, viewer: current },
+  const c = { ...definition.methods, data: { ...structuredClone(definition.data), active: options.active !== false, viewer: current, accountId: options.accountId || '' },
     setData(value) { patches.push(value); applyPageData(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
   return { c, calls, events, patches, toasts, attach: () => definition.lifetimes.attached.call(c),
     detach: () => definition.lifetimes.detached.call(c), logout() { current = null; version++; cached = null; },
     setCache(value) { cached = value; listener({}); } };
 }
 const click = (item, extra = {}) => ({ currentTarget: { dataset: { id: item._id, ...extra } } });
+test('访客回复按目标ID读取，只读历史不提供删除，头像入口指向真正作者', async () => {
+  const item = row(); item.reply.author.accountId = '87654321';
+  const f = fixture({ accountId: '87654321', cached: { items: [item], hasMore: false, nextCursor: '' } });
+  await f.attach(); assert.equal(f.calls[0].profileAccountId, '87654321');
+  await f.c.manageComment(click(item)); assert.ok(!f.calls.some(call => call.type === 'delete'));
+  f.c.viewCommentAuthor(click(item)); assert.equal(f.events.at(-1).name, 'author'); assert.equal(f.events.at(-1).detail.author.accountId, '87654321');
+});
 test('回复标签同步预填真实缓存，未选中不请求；不因点赞重设图片源', async () => {
   const item = row(), f = fixture({ active: false, cached: { items: [item], hasMore: true, nextCursor: 'cursor' } });
   await f.attach(); assert.equal(f.c.data.items[0].reply.content, '我的回复'); assert.equal(f.calls.length, 0);

@@ -4,5 +4,8 @@
   "navigationBarTextStyle": "black",
   "backgroundColor": "#FFFFFF",
   "navigationStyle": "custom",
-  "disableScroll": true
+  "disableScroll": true,
+  "usingComponents": {
+    "search-box": "/components/search-box/index"
+  }
 }

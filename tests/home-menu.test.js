@@ -9,6 +9,106 @@ const menuConfig = require('../miniprogram/utils/account-menu');
 
 const user = { _id: 'alice', nickname: '真实昵称', avatarFileID: 'cloud://real/avatar.png', accountId: '12345678', role: 'user', certificationStatus: 'unverified', schoolId: '' };
 
+test('广场关注与推荐来源独立，切换后旧分页不覆盖新来源，未登录不泄露关注列表', async () => {
+  const row = suffix => ({ _id:'p_'+suffix.repeat(40),content:suffix,author:{accountId:'87654321'} });
+  const recommended={items:[row('a')],hasMore:false,nextOffset:1};let finish;
+  const f=fixture({cachedUser:user,cachedFeed:recommended,list:async()=>recommended,following:()=>new Promise(resolve=>{finish=resolve;})});
+  f.page.onLoad();f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});
+  f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'following'}}});
+  const pending=f.page._feedPromise;assert.equal(f.page.data.posts.length,0);assert.equal(f.page.data.feedLoading,true);
+  f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'square'}}});
+  await f.page._feedPromise;finish({items:[row('b')],hasMore:false,nextCursor:''});await pending;
+  assert.equal(f.page.data.posts[0]._id,row('a')._id);
+  const guest=fixture();guest.page.onLoad();guest.page.data.tabFilters.square='following';await guest.page.loadFeed();
+  assert.equal(guest.page.data.posts.length,0);assert.equal(guest.page.data.feedLoading,false);
+});
+
+test('关注页使用真实游标继续空页，加载完成不重设图片数据',async()=>{
+  const row={_id:'p_'+'e'.repeat(40),content:'图片',images:['cloud://test/photo'],author:{accountId:'87654321'}};
+  const cursors=[],f=fixture({cachedUser:user,following:args=>{cursors.push(args.cursor);return Promise.resolve(args.cursor ? {items:[row],hasMore:false,nextCursor:''}:{items:[],hasMore:true,nextCursor:'cursor-1'});}});
+  f.page.onLoad();f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'following'}}});await f.page._feedPromise;
+  assert.equal(f.page.data.feedHasMore,true);assert.equal(f.page.data.feedCursor,'cursor-1');await f.page.loadMoreFeed();
+  assert.deepEqual(cursors,['','cursor-1']);assert.equal(f.page.data.posts[0]._id,row._id);
+  const posts=f.page.data.posts;f.page.showFeed({items:[row],hasMore:false,nextCursor:''});assert.equal(f.page.data.posts,posts);
+});
+
+test('首页头像菜单按真实头像定位，点击立即更新关注并播放动画，不改帖子图片', async () => {
+  const id = 'p_' + 'a'.repeat(40), feed = { items: [{ _id: id, content: '动态', images: ['cloud://real/photo.jpg'], author: { nickname: '同学', accountId: '87654321' } }], hasMore: false, nextOffset: 1 };
+  const f = fixture({ cachedUser: user, cachedFeed: feed }); f.page.onLoad();
+  const posts = f.page.data.posts;
+  f.page.selectComponent = selector => selector === '#home-post-' + id ? { getAvatarRect: callback => callback({ left: 8, bottom: 200 }) } : null;
+  f.page.openAuthorMenu({ detail: { id } });
+  assert.equal(f.page.data.authorMenu.left, 12); assert.equal(f.page.data.authorMenu.top, 206);
+  assert.equal(f.page.data.authorMenu.isOwn, false);
+  const saving=f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } });
+  assert.equal(f.page.data.followPreviews[id].followed,true);
+  assert.equal(f.page.data.followPreviews[id].phase,'following');
+  await saving;
+  assert.equal(f.page.data.authorMenu, null); assert.equal(f.page.data.followPreviews[id].followed, true); assert.equal(f.toasts.length, 0);
+  f.page.openAuthorMenu({ detail: { id } });
+  f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'profile' } } });
+  assert.equal(f.requests.length, 0); assert.equal(f.toasts.length, 0);
+  assert.equal(f.routes[0], '/pages/profile/index?accountId=87654321'); assert.equal(f.page.data.posts, posts);
+});
+
+test('不同作者、关闭或换账号后的迟到头像测量不重开旧菜单', () => {
+  const first = 'p_' + 'a'.repeat(40), second = 'p_' + 'b'.repeat(40);
+  const options = { cachedUser: user, cachedFeed: { items: [first, second].map(_id => ({ _id, content: '动态', author: { accountId: '87654321' }, isOwn: false })), hasMore: false, nextOffset: 2 } };
+  const f = fixture(options); f.page.onLoad(); const callbacks = [];
+  f.page.selectComponent = () => ({ getAvatarRect: callback => callbacks.push(callback) });
+  f.page.openAuthorMenu({ detail: { id: first } }); f.page.openAuthorMenu({ detail: { id: second } });
+  callbacks[1]({ left: 10, bottom: 160 }); callbacks[0]({ left: 10, bottom: 260 });
+  assert.equal(f.page.data.authorMenu.id, second); assert.equal(f.page.data.authorMenu.isOwn, false);
+  f.page.openAuthorMenu({ detail: { id: first } }); f.page.closeAuthorMenu(); callbacks[2]({ left: 10, bottom: 200 });
+  assert.equal(f.page.data.authorMenu, null);
+  f.page.openAuthorMenu({ detail: { id: first } }); options.cachedUser = { ...user, _id: 'bob' }; options.sessionVersion = 1;
+  f.page.applyUser(options.cachedUser); callbacks[3]({ left: 10, bottom: 200 }); assert.equal(f.page.data.authorMenu, null);
+});
+
+test('点击本人动态头像不测量、不弹菜单、不显示未开放提示', () => {
+  const id = 'p_' + 'c'.repeat(40);
+  const f = fixture({ cachedUser: user, cachedFeed: { items: [{ _id: id, author: { accountId: user.accountId }, isOwn: true }], hasMore: false, nextOffset: 1 } });
+  f.page.onLoad(); f.page.selectComponent = () => { throw new Error('本人头像不应测量菜单位置'); };
+  f.page.openAuthorMenu({ detail: { id } });
+  assert.equal(f.page.data.authorMenu, null); assert.equal(f.toasts.length, 0); assert.equal(f.routes.length, 0);
+});
+
+test('真实关注后两阶段动画；同作者同步，取关取消不写入，确认后恢复加号', async () => {
+  const id = 'p_' + 'd'.repeat(40), second = 'p_' + 'e'.repeat(40);
+  const feed = { items: [id, second].map(_id => ({ _id, content: '动态', images: ['cloud://real/image.jpg'], author: { accountId: '87654321', nickname: '同学', avatarFileID: 'cloud://real/avatar.jpg' } })), hasMore: false, nextOffset: 2 };
+  const f = fixture({ cachedUser: user, cachedFeed: feed, manualRefreshTimers: true }); f.page.onLoad();
+  const posts = f.page.data.posts;
+  f.page.selectComponent = () => ({ getAvatarRect: callback => callback({ left: 8, bottom: 200 }) });
+  const open = () => f.page.openAuthorMenu({ detail: { id } });
+  const follow = () => f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } });
+  open(); await follow(); assert.equal(f.page.data.authorMenu, null);
+  assert.equal(f.page.data.followPreviews[id].phase, 'following');
+  assert.equal(f.page.data.followPreviews[second].followed, true);
+  f.runTimer(1250); assert.equal(f.page.data.followPreviews[id].phase, 'followed');
+  open(); assert.equal(f.page.data.authorMenu.following, true); await follow();
+  assert.equal(f.page.data.unfollowTarget.nickname, '同学'); assert.equal(f.bar.authBlocked, true);
+  f.page.cancelUnfollow(); assert.equal(f.page.data.unfollowClosing, true); f.runTimer(200);
+  assert.equal(f.page.data.followPreviews[id].followed, true); assert.equal(f.page.data.unfollowTarget, null);
+  open(); await follow(); await f.page.confirmUnfollow();
+  assert.equal(f.page.data.followPreviews[id].followed, false); assert.equal(f.page.data.followPreviews[second].followed, false);
+  f.runTimer(200); assert.equal(f.page.data.unfollowTarget, null); assert.equal(f.bar.authBlocked, false);
+  assert.equal(f.page.data.posts, posts); assert.equal(f.requests.length, 0); assert.equal(f.feedRequests.length, 0); assert.equal(f.routes.length, 0);
+});
+
+test('隐藏时结束关注动画并关闭确认，换账号清空显示，旧计时不能串号或重开面板', async () => {
+  const id = 'p_' + 'f'.repeat(40), row = { _id: id, content: '动态', author: { accountId: '87654321', nickname: '同学' } };
+  const options = { cachedUser: user, cachedFeed: { items: [row], hasMore: false, nextOffset: 1 }, manualRefreshTimers: true };
+  const f = fixture(options); f.page.onLoad(); await f.square.setFollow(row.author.accountId, true); f.page.playFollowAnimation(f.page.data.posts[0]);
+  f.page.onHide(); assert.equal(f.page.data.followPreviews[id].phase, 'followed');
+  assert.equal([...f.delays.values()].includes(1250), false);
+  f.page._visible = true; f.page.selectComponent = () => ({ getAvatarRect: callback => callback({ left: 8, bottom: 200 }) });
+  f.page.openAuthorMenu({ detail: { id } }); await f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } });
+  assert.ok(f.page.data.unfollowTarget);
+  options.cachedUser = { ...user, _id: 'bob' }; options.sessionVersion = 1; f.page.applyUser(options.cachedUser);
+  assert.equal(f.page.data.unfollowTarget, null); assert.equal(f.page.data.followPreviews[id].followed, false);
+  assert.equal(f.page._followPreviewState.size, 0); await f.page.confirmUnfollow(); assert.equal(f.toasts.length, 0);
+});
+
 test('关于小萃AI排在设置前，进入额度页保留菜单直到新页面覆盖', async () => {
   const f = fixture({ cachedUser: user }); f.page.onLoad(); await f.page.onShow(); f.page.openMenu();
   const keys = menuConfig.utilityMenuItems.map(item => item.key); assert.equal(keys.indexOf('xiaocui') + 1, keys.indexOf('settings'));
@@ -39,7 +139,13 @@ function fixture(options = {}) {
     login: async () => { requests.push('login'); return options.login ? options.login() : { ...user }; },
     logout: () => requests.push('logout'),
   };
-  const square = { cachedOwnStats: () => options.cachedOwnStats || null,
+  const relations = new Map(); let relationSession;
+  const relation = id => { const key = String(options.sessionVersion || 0); if (relationSession !== key) { relations.clear(); relationSession = key; } return relations.get(id) || { accountId:id, following:false, version:0 }; };
+  const square = { cachedFollowState: relation,
+    getFollowStates: async ids => ids.map(relation),
+    setFollow: async (id, following) => { const old=relation(id); const next={accountId:id,following,version:old.version+1}; relations.set(id,next); return next; },
+    cachedFollowingFeed: () => null, listFollowing: async args => options.following ? options.following(args) : {items:[],hasMore:false,nextCursor:''},
+    cachedOwnStats: () => options.cachedOwnStats || null,
     getOwnStats: () => options.getOwnStats ? options.getOwnStats() : Promise.resolve({ receivedLikes: 0 }),
     cachedFeed: () => options.cachedFeed || null, consumePublication: () => false, list: async args => {
     feedRequests.push(args); return options.list ? options.list(args) : { items: [], hasMore: false, nextOffset: 0 };
@@ -47,7 +153,7 @@ function fixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
     setTimeout: setTimer, clearTimeout: clearTimer,
-    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-motion') ? require('../miniprogram/utils/tab-page-motion') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-motion') ? require('../miniprogram/utils/tab-page-motion') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title), navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       ...(options.nextTick ? { nextTick: options.nextTick } : {}),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),
@@ -55,8 +161,8 @@ function fixture(options = {}) {
   });
   const page = { ...definition, data: structuredClone(definition.data),
     selectComponent: () => ({ setState: state => brandStates.push(state) }),
-    setData(value, callback) { Object.assign(this.data, value); if (callback) callback(); }, getTabBar: () => ({ setData: value => Object.assign(bar, value) }) };
-  return { page, routes, navigation, toasts, modals, requests, feedRequests, bar, timers, delays, brandStates,
+    setData(value, callback) { applyPageData(this.data, value); if (callback) callback(); }, getTabBar: () => ({ setData: value => Object.assign(bar, value) }) };
+  return { page, square, routes, navigation, toasts, modals, requests, feedRequests, bar, timers, delays, brandStates,
     runTimer(delay) { const entry = [...delays].find(([, ms]) => ms === delay); assert.ok(entry, '缺少指定时长计时器：' + delay); const fn = timers.get(entry[0]); clearTimer(entry[0]); fn(); },
   };
 }
@@ -208,7 +314,7 @@ test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动
   assert.equal(f.page.data.user.accountId, user.accountId);
   assert.equal(f.bar.selected, 0);
   assert.equal(f.bar.authBlocked, false);
-  assert.equal(f.page.data.followerCount, 0);
+  assert.equal(f.page.data.followerCount, '—');
   assert.deepEqual(f.page.data.menuItems, menuConfig.menuItems);
   f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
   f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'following' } } });

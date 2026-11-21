@@ -1,3 +1,4 @@
+@import "./styles/avatar.wxss";
 /**app.wxss**/
 .container {
   display: flex;

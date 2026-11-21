@@ -1,0 +1,5 @@
+<view class="search-field">
+  <image class="search-icon" src="/images/interface/search.svg" mode="aspectFit" />
+  <view wx:if="{{accountId}}" class="search-author-chip"><text class="search-author-id">@{{accountId}}</text><view class="chip-remove" catchtap="removeAuthor" aria-role="button" aria-label="移除用户搜索条件"><image class="chip-remove-icon" src="/images/interface/x.svg" mode="aspectFit" /></view></view>
+  <input class="search-input" value="{{value}}" bindinput="input" bindconfirm="submit" confirm-type="search" maxlength="100" placeholder="{{accountId ? '搜索动态' : '搜索'}}" placeholder-class="search-placeholder" />
+</view>

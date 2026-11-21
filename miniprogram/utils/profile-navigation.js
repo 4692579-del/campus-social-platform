@@ -34,6 +34,6 @@ function navigationState(scrollTop, navHeight, geometry) {
 }
 function pullState(distance, max, threshold) {
   const offset = Math.round(Math.min(max, Math.max(0, distance) * .42));
-  return { profilePullOffset: offset, pullRotation: Math.round(offset / threshold * 360), pullOpacity: Math.min(1, offset / 16) };
+  return { profilePullOffset: offset, pullOpacity: Math.min(1, offset / 16) };
 }
 module.exports = { navigationLayout, defaultGeometry, navigationState, pullState };

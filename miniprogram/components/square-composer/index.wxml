@@ -13,15 +13,15 @@
       </view>
     </view>
     <view class="compose-body {{quotePostId ? 'is-quoted' : ''}}"><view class="compose-body-inner {{quotePostId ? 'has-quote' : ''}}">
-      <view class="compose-author"><image class="compose-avatar" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="compose-destination"><text class="compose-nickname">{{user.nickname || '未登录'}}</text><image src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /><text class="compose-scope">动态广场</text></view></view>
+      <view class="compose-author"><image class="compose-avatar avatar-outline" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="compose-destination"><text class="compose-nickname">{{user.nickname || '未登录'}}</text><image src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /><text class="compose-scope">动态广场</text></view></view>
       <view class="compose-editor">
-        <text wx:if="{{quotePostId}}" class="compose-editor-measure" aria-hidden="true">{{(content || '有什么新鲜事想和大家分享？') + '\u200b'}}</text>
-        <textarea class="compose-textarea" wx:if="{{!panel && !exitConfirmVisible}}" value="{{content}}" fixed hold-keyboard disable-default-padding="{{!!quotePostId}}" focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
-        <text wx:else class="compose-editor-preview {{!content ? 'compose-placeholder' : ''}}">{{content || '有什么新鲜事想和大家分享？'}}</text>
+        <textarea class="compose-textarea" wx:if="{{editorReady}}" value="{{content}}" fixed hold-keyboard auto-height="{{!!quotePostId}}" bindtouchstart="editorTouchStart" disable-default-padding="{{!!quotePostId}}" focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing || !!panel || exitConfirmVisible}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
       </view>
+      <scroll-view class="compose-attachments {{quotePostId ? 'has-quote' : ''}}" scroll-y="{{!!quotePostId}}" enhanced show-scrollbar="{{false}}">
       <view wx:if="{{quotePostId}}" class="compose-inline-quote"><quote-card quote="{{quote}}" removable disabled="{{publishing || savingDraft || choosingImages}}" bind:remove="removeQuote" /><view wx:if="{{quoteError}}" class="compose-quote-error">{{quoteError}}<button bindtap="retryQuote">重试</button></view></view>
       <scroll-view wx:if="{{images.length}}" class="compose-selected-images" scroll-x enhanced show-scrollbar="{{false}}">
         <view class="selected-image-strip"><view wx:for="{{images}}" wx:key="key" class="selected-image"><image src="{{item.fileID || item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewSelectedImage" /><button class="remove-image" data-index="{{index}}" bindtap="removeImage" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="移除第{{index + 1}}张图片"><image src="/images/interface/x.svg" /></button></view></view>
+      </scroll-view>
       </scroll-view>
     </view></view>
     <view class="compose-footer" catchtouchmove="stopMenuEvent">

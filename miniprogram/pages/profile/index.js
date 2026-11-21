@@ -5,7 +5,9 @@ const square = require('../../services/square');
 const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
 const postImages = require('../../services/post-images');
+const publicProfile = require('../../utils/public-profile');
 const { navigationLayout, defaultGeometry, navigationState, pullState } = require('../../utils/profile-navigation');
+const { CYCLE, REFILL, clamp } = require('../../utils/cui-refresh-drawing');
 
 function wxCall(name, options) {
   return new Promise((resolve, reject) => wx[name]({ ...options, success: resolve, fail: reject }));
@@ -13,18 +15,21 @@ function wxCall(name, options) {
 
 Page({
   ...postActions,
+  ...publicProfile.methods,
   data: {
-    user: null, loading: false, error: '', identity: describeUser(null),
+    unfollowTarget: null, unfollowClosing: false, unfollowBusy: false,
+    followKnown: false, profileFollowing: false, followBusy: false, followError: '',
+    isVisitor: false, profileUser: null, profileAccountId: '', profileUnavailable: false, user: null, loading: false, error: '', identity: describeUser(null),
     coverBusy: false, coverRetry: false, coverFailed: false, coverFileID: '',
     joinedText: '', isVerified: false, certificationAction: '去认证',
     navTop: 28, navButtonHeight: 32, navHeight: 72, searchLeft: 68, navTitleInset: 116,
     coverHeight: 202, navCoverOffset: 0, navBlurOpacity: 0, navShadeOpacity: 0, navTitleOpacity: 0, postCountText: '帖子',
     coverArtHeight: 250, pullMax: 48, pullThreshold: 30,
-    profilePullOffset: 0, pullRotation: 0, pullOpacity: 0, pullDragging: false, profileRefreshing: false,
+    profilePullOffset: 0, pullOpacity: 0, pullDragging: false, profileRefreshing: false, profileRefreshPhase: 'idle',
     menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: true, loginSheetOpen: false,
     menuItems, utilityMenuItems,
-    likeCount: 0, followingCount: 0, followerCount: 0, selectedContent: 'posts', contentIndex: 0,
+    likeCount: 0, followingCount: '—', followerCount: '—', selectedContent: 'posts', contentIndex: 0,
     contentTabs: [
       { key: 'posts', label: '动态', icon: 'posts', empty: '还没有发布动态' },
       { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/profile-tabs/replies', iconExtension: 'svg', empty: '还没有回复' },
@@ -32,19 +37,21 @@ Page({
       { key: 'album', label: '相册', icon: 'album', iconSource: '/images/interface/album', iconExtension: 'svg', empty: '还没有上传照片' },
     ],
     emptyText: '还没有发布动态', commentPostId: '', historyCommentPostId: '', historyReplyId: '', historyReplyInput: false,
-    postsMenuOpen: false, postScope: 'square', ownPosts: [], postsLoading: false, postsMoreLoading: false,
+    postsMenuOpen: false, postScope: 'square', pinnedPostId: '', ownPosts: [], postsLoading: false, postsMoreLoading: false,
     postsError: '', postsHasMore: false, postsOffset: 0,
     quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0,
     albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '',
   },
-  onLoad() {
+  onLoad(options = {}) {
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
     this._homePage = pages.find(page => page.route === 'pages/home/index');
     this.updateNavigationLayout();
     const cached = userService.getCachedUser();
+    if (options.accountId !== undefined && (!cached || cached.accountId !== options.accountId)) { this.initializePublicProfile(options.accountId); return; }
     if (cached) this.applyUser(cached);
   },
   onUnload() {
+    if (this.data.isVisitor) this.cancelPublicReads();
     this._visible = false;
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
@@ -64,6 +71,7 @@ Page({
     this._accountVersion = (this._accountVersion || 0) + 1;
   },
   onHide() {
+    if (this.data.isVisitor) this.cancelPublicReads();
     this._albumRequest = null;
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
@@ -84,6 +92,9 @@ Page({
     this.setAuthBlocked(false);
   },
   onShow() {
+    this._openingSearch = false;
+    this._openingAccountAbout = false;
+    this._openingAuthor = false;
     this._openingPost = false;
     this._visible = true;
     this.startPostUpdates();
@@ -222,6 +233,7 @@ Page({
         return;
       }
       gesture.active = true;
+      this.clearProfileReturn();
       this.setData({ pullDragging: true });
     }
     this._pullDistance = dy;
@@ -238,7 +250,9 @@ Page({
     this._pullFrameAt = Date.now();
     const state = pullState(this._pullDistance, this.data.pullMax, this.data.pullThreshold);
     const changed = Object.fromEntries(Object.entries(state).filter(([key, value]) => this.data[key] !== value));
+    if (this.data.profileRefreshPhase !== 'pulling') changed.profileRefreshPhase = 'pulling';
     if (Object.keys(changed).length) this.setData(changed);
+    this.paintProfileCui({ phase: 'pulling', progress: clamp(state.profilePullOffset / this.data.pullThreshold) });
   },
   finishProfilePull() {
     const active = this._pullGesture && this._pullGesture.active;
@@ -249,24 +263,90 @@ Page({
     this._pullGesture = null;
     this.setData({ profilePullOffset: 0, pullDragging: false, pullOpacity: 0 });
     if (state.profilePullOffset >= this.data.pullThreshold) return this.refreshProfilePosts();
+    this.returnProfileCui();
   },
   cancelProfilePull() {
     this._pullGesture = null; this.clearPullFrame();
     this.setData({ profilePullOffset: 0, pullDragging: false, pullOpacity: 0 });
+    if (!this.data.profileRefreshing) this.returnProfileCui();
     this.scheduleProfileScrollSync();
   },
+  paintProfileCui(state) {
+    this._profileCuiVisual = state;
+    const component = typeof this.selectComponent === 'function' && this.selectComponent('#profile-cui');
+    if (component && typeof component.setState === 'function') component.setState(state);
+  },
+  onProfileCuiReady() { this.paintProfileCui(this._profileCuiVisual || { phase: 'idle' }); },
+  clearProfileReturn() {
+    if (this._profileReturnTimer) clearTimeout(this._profileReturnTimer);
+    this._profileReturnTimer = null;
+  },
+  returnProfileCui() {
+    if (this.data.profileRefreshPhase !== 'pulling') return;
+    this.clearProfileReturn();
+    const visual = this._profileCuiVisual || {}, duration = Math.max(160, Math.round((visual.progress || 0) * 440));
+    this.setData({ profileRefreshPhase: 'returning' });
+    this.paintProfileCui({ phase: 'returning', duration, startedAt: Date.now() });
+    this._profileReturnTimer = setTimeout(() => {
+      this._profileReturnTimer = null;
+      if (this._unloaded || this._visible === false || this.data.profileRefreshPhase !== 'returning') return;
+      this.setData({ profileRefreshPhase: 'idle' }); this.paintProfileCui({ phase: 'idle' });
+    }, duration);
+  },
   resetProfilePull() {
+    const request = this._profilePullRequest;
     this._profilePullRequest = null;
-    this.cancelProfilePull();
-    if (this.data.profileRefreshing) this.setData({ profileRefreshing: false });
+    if (request) for (const timer of request.timers) clearTimeout(timer);
+    this.clearProfileReturn(); this._pullGesture = null; this.clearPullFrame();
+    this.setData({ profilePullOffset: 0, pullDragging: false, pullOpacity: 0, profileRefreshing: false, profileRefreshPhase: 'idle' });
+    this.paintProfileCui({ phase: 'idle' });
+  },
+  profileRefreshCurrent(request) {
+    return this._profilePullRequest === request && !this._unloaded && this._visible !== false &&
+      this.data.user && this.data.user._id === request.account && this.data.selectedContent === request.tab &&
+      (typeof userService.getSessionVersion !== 'function' || userService.getSessionVersion() === request.session) &&
+      this.data.profileAccountId === request.target && !this.interactionBlocked() && !this.data.commentPostId && !this.data.postsMenuOpen;
+  },
+  scheduleProfileRefresh(request, delay, action) {
+    const timer = setTimeout(() => {
+      request.timers.delete(timer);
+      if (this.profileRefreshCurrent(request)) action();
+      else if (this._profilePullRequest === request) this.resetProfilePull();
+    }, delay);
+    request.timers.add(timer);
+  },
+  completeProfileRefresh(request) {
+    if (!this.profileRefreshCurrent(request) || request.startedAt === null || request.finishing) return;
+    request.finishing = true;
+    const elapsed = Math.max(0, Date.now() - request.startedAt);
+    const finishAt = Math.max(CYCLE, Math.ceil(elapsed / CYCLE) * CYCLE);
+    this.scheduleProfileRefresh(request, Math.max(0, finishAt - elapsed), () => {
+      this.setData({ profileRefreshPhase: 'refill' });
+      this.paintProfileCui({ phase: 'refill', duration: REFILL, startedAt: Date.now() });
+      this.scheduleProfileRefresh(request, REFILL, () => this.resetProfilePull());
+    });
   },
   async refreshProfilePosts() {
     if (this.data.profileRefreshing || this.interactionBlocked() || !this.data.user || this._unloaded || this._visible === false) return;
-    const request = this._profilePullRequest = {};
-    this.setData({ profileRefreshing: true });
+    this.clearProfileReturn();
+    const request = this._profilePullRequest = { account: this.data.user._id, session: typeof userService.getSessionVersion === 'function' ? userService.getSessionVersion() : 0,
+      target: this.data.profileAccountId, tab: this.data.selectedContent, timers: new Set(), startedAt: null, done: false };
+    this.setData({ profilePullOffset: 0, pullDragging: false, profileRefreshing: true, profileRefreshPhase: 'settling' });
+    this.paintProfileCui({ phase: 'settling', progress: 1 });
+    // 先让原有白色资料区域完成回位，再播放与首页同一时间轴的字母起伏。
+    this.scheduleProfileRefresh(request, 220, () => {
+      request.startedAt = Date.now();
+      this.setData({ profileRefreshPhase: 'loading' });
+      this.paintProfileCui({ phase: 'loading', startedAt: request.startedAt });
+      if (request.done) this.completeProfileRefresh(request);
+    });
     try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadAlbum(true); else if (this.data.selectedContent === 'reposts') await this.loadOwnQuotes(true); else await this.loadOwnPosts(true); }
     finally {
-      if (this._profilePullRequest === request) { this._profilePullRequest = null; this.setData({ profileRefreshing: false }); }
+      request.done = true;
+      if (this._profilePullRequest === request) {
+        if (this.profileRefreshCurrent(request)) this.completeProfileRefresh(request);
+        else this.resetProfilePull();
+      }
     }
   },
   syncNavigation() {
@@ -282,11 +362,12 @@ Page({
     const tabBar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (tabBar) tabBar.setData({ authBlocked: Boolean(blocked), composerOpen: Boolean(this.data.composerOpen && this._visible !== false && !this._unloaded) });
   },
-  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen); },
+  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen || this.data.unfollowTarget); },
   currentView(version) {
     return !this._unloaded && this._visible !== false && version === (this._viewVersion || 0);
   },
   async refresh(force = true) {
+    if (this.data.isVisitor) return this.refreshPublicProfile(force);
     if (this._refreshing || this.data.loading || this.data.coverBusy) return;
     this._refreshing = true;
     const version = this._viewVersion || 0;
@@ -308,7 +389,9 @@ Page({
     finally { if (this.currentView(version)) { this._refreshing = false; this.setData({ loading: false }); } }
   },
   applyUser(user) {
+    if (this.data.isVisitor) return this.applyPublicViewer(user);
     if ((this.data.user && this.data.user._id) !== (user && user._id)) {
+      this.closeUnfollowPrompt(true);
       this.resetProfilePull();
       this.closeComments();
       this.closeMenu();
@@ -319,7 +402,7 @@ Page({
       this._albumRequest = null;
       this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '' });
       this.setData({ quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0 });
-      this.setData({ ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, postsMenuOpen: false, composerOpen: false });
+      this.setData({ pinnedPostId: '', ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, postsMenuOpen: false, composerOpen: false });
     }
     if (user && this._pendingCover && user.coverFileID === this._pendingCover.fileID) this._pendingCover = null;
     const isVerified = Boolean(user && user.role === 'student' && user.certificationStatus === 'approved' && user.schoolId);
@@ -327,14 +410,15 @@ Page({
     const date = raw ? new Date(raw && typeof raw === 'object' && '$date' in raw ? raw.$date : raw) : null;
     const joinedText = date && !Number.isNaN(date.getTime()) ? `${date.getFullYear()}年${date.getMonth() + 1}月 加入` : '';
     this.setData({
-      user, identity: describeUser(user), isVerified, joinedText, authChecking: false, loginSheetOpen: !user,
+      user, profileUser: user, identity: describeUser(user), isVerified, joinedText, authChecking: false, loginSheetOpen: !user,
       coverFileID: user ? user.coverFileID || '' : '', coverFailed: false, coverRetry: Boolean(this._pendingCover),
-      likeCount: 0, followingCount: 0, followerCount: 0,
+      likeCount: 0, followingCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followingCount ?? '—' : '—', followerCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followerCount ?? '—' : '—',
       certificationAction: user && user.certificationStatus === 'pending' ? '查看审核' :
         user && user.certificationStatus === 'rejected' ? '重新认证' : '去认证',
     });
     this.setAuthBlocked(!user);
     this.measureProfileNavigation();
+    this.refreshFollowPresentation();
     if (user) {
       const cachedPosts = square.cachedOwnFeed('posts');
       if (cachedPosts) this.showOwnPosts(cachedPosts);
@@ -354,6 +438,7 @@ Page({
       if (!this.currentView(version)) return;
       if (!user || !user._id) throw new Error('登录信息读取失败，请重试');
       this.applyUser(user);
+      if (this.data.isVisitor) await this.refreshPublicProfile(false);
       wx.showToast({ title: '登录成功' });
     } catch (error) { if (this.currentView(version)) this.setData({ error: error.message || '登录失败，请重试', loginSheetOpen: true }); }
     finally { if (this.currentView(version)) this.setData({ loading: false }); }
@@ -374,6 +459,7 @@ Page({
     });
   },
   async chooseCover() {
+    if (this.data.isVisitor) return;
     if (this.interactionBlocked() || this.data.coverBusy || this.data.loading) return;
     if (!this.data.user) { wx.showToast({ title: '请先登录后设置封面', icon: 'none' }); return; }
     const userId = this.data.user._id;
@@ -416,7 +502,9 @@ Page({
   },
   onCoverError() { this.setData({ coverFailed: true }); },
   openMenu() {
+    if (this.data.isVisitor) return;
     if (this.interactionBlocked() || this._unloaded || this.data.menuOpen) return;
+    this.resetProfilePull();
     this.setData({ menuOpen: true });
     this.setMenuTabBarOpen(true);
     this.setMenuNavigationColor(true);
@@ -434,6 +522,7 @@ Page({
   },
   stopMenuEvent() {},
   prepareHomeReturn() {
+    if (this.data.isVisitor) return false;
     if (this._homeReturnPrepared) return true;
     const home = this._homePage;
     if (!home || typeof home.prepareMenuReturn !== 'function') return false;
@@ -442,6 +531,7 @@ Page({
     return true;
   },
   backToHome() {
+    if (this.data.isVisitor) return this.backFromPublicProfile();
     if (this._returningHome || this._unloaded) return;
     this._returningHome = true;
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
@@ -465,7 +555,18 @@ Page({
     if (prepared && typeof wx.nextTick === 'function') wx.nextTick(navigate);
     else navigate();
   },
-  openSearch() { if (!this.interactionBlocked()) wx.switchTab({ url: '/pages/search/index' }); },
+  openSearch() {
+    if (this.interactionBlocked() || this._openingSearch || this._unloaded || this._visible === false) return;
+    const id = this.data.isVisitor ? this.data.profileAccountId : this.data.user && this.data.user.accountId;
+    if (this.data.isVisitor && !/^[1-9][0-9]{7}$/.test(id || '')) return;
+    const ticket = typeof userService.stageProfileSearch === 'function' ? userService.stageProfileSearch(id) : null;
+    this._openingSearch = true;
+    wx.switchTab({ url: '/pages/search/index', fail: () => {
+      if (typeof userService.cancelSearchEntry === 'function') userService.cancelSearchEntry(ticket);
+      this._openingSearch = false;
+      if (!this._unloaded && this._visible !== false) wx.showToast({ title: '搜索页打开失败，请重试', icon: 'none' });
+    } });
+  },
   selectMenuItem(event) {
     if (this.interactionBlocked()) return;
     const item = [...this.data.menuItems, ...this.data.utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
@@ -483,7 +584,8 @@ Page({
     if (this.interactionBlocked()) return;
     const tab = this.data.contentTabs.find(item => item.key === event.currentTarget.dataset.key);
     if (!tab) return;
-    if (tab.key === 'posts' && this.data.selectedContent === 'posts') {
+    this.resetProfilePull();
+    if (!this.data.isVisitor && tab.key === 'posts' && this.data.selectedContent === 'posts') {
       this.setData({ postsMenuOpen: !this.data.postsMenuOpen });
       return;
     }
@@ -494,6 +596,7 @@ Page({
   },
   closePostsMenu() { this.setData({ postsMenuOpen: false }); },
   openComments(event) {
+    this.resetProfilePull();
     this.setData({ historyCommentPostId: '', historyReplyId: '', historyReplyInput: false });
     return postActions.openComments.call(this, event);
   },
@@ -511,6 +614,7 @@ Page({
     if (this.interactionBlocked() || !this.data.user || this._visible === false) return;
     const { id, replyId } = event.detail;
     if (!/^p_[a-f0-9]{40}$/.test(id || '') || !/^[rc]_[a-f0-9]{40}$/.test(replyId || '')) return;
+    this.resetProfilePull();
     this.setData({ historyCommentPostId: id, historyReplyId: replyId, historyReplyInput: true, commentPostId: id });
     this.syncNavigation();
   },
@@ -522,6 +626,7 @@ Page({
     if (this.interactionBlocked()) return;
     const scope = event.currentTarget.dataset.scope;
     if (!['square', 'campus'].includes(scope)) return;
+    this.resetProfilePull();
     this.setData({ postScope: scope, postsMenuOpen: false });
     if (scope === 'square') this.loadOwnPosts();
   },
@@ -530,10 +635,11 @@ Page({
   showProfilePosts(result, postType) {
     const quote = postType === 'quotes', prefix = quote ? 'quotes' : 'posts';
     this.setData({ [quote ? 'quotePosts' : 'ownPosts']: result.items.filter(post => Boolean(post.quotePostId) === quote).map(postPreview),
-      [prefix + 'HasMore']: result.hasMore, [prefix + 'Offset']: result.nextOffset });
+      ...(!quote ? { pinnedPostId: result.pinnedPostId || '' } : {}), [prefix + 'HasMore']: result.hasMore, [prefix + 'Offset']: result.nextOffset });
     this.updatePostCount(result);
   },
   updatePostCount(result = square.cachedOwnFeed('posts') || square.cachedOwnFeed('quotes') || square.cachedOwnFeed()) {
+    if (this.data.isVisitor) { const total = result && result.allTotal; if (Number.isSafeInteger(total)) this.setData({ postCountText: `${total} 条帖子` }); return; }
     if (!result) return;
     const count = Number.isSafeInteger(result.allTotal) ? result.allTotal : result.postType && result.postType !== 'all' ? null : result.total;
     const total = Number.isSafeInteger(count) && count >= 0 ? count :
@@ -543,6 +649,7 @@ Page({
   loadOwnPosts(force = false, append = false) { return this.loadProfilePosts('posts', force, append); },
   loadOwnQuotes(force = false, append = false) { return this.loadProfilePosts('quotes', force, append); },
   async loadProfilePosts(postType, force = false, append = false) {
+    if (this.data.isVisitor) return this.loadPublicContent(postType, force, append);
     if (!this.data.user || this.interactionBlocked() || this._unloaded || this._visible === false) return;
     const prefix = postType === 'quotes' ? 'quotes' : 'posts', requestKey = '_' + prefix + 'Request';
     if (this[requestKey]) return this[requestKey].promise;
@@ -559,7 +666,8 @@ Page({
         const result = await square.list({ mine: true, postType, force, offset: append ? this.data[prefix + 'Offset'] : 0 });
         if (current()) this.showProfilePosts(result, postType);
       } catch (error) {
-        if (current() && error.code !== 'SESSION_CHANGED') this.setData({ [prefix + 'Error']: error.message || '动态读取失败，请稍后重试' });
+        if (current() && error.code === 'PIN_CHANGED' && postType === 'posts' && square.cachedOwnFeed('posts')) this.showOwnPosts(square.cachedOwnFeed('posts'));
+        else if (current() && error.code !== 'SESSION_CHANGED') this.setData({ [prefix + 'Error']: error.message || '动态读取失败，请稍后重试' });
       } finally {
         if (current()) {
           this[requestKey] = null;
@@ -573,6 +681,7 @@ Page({
   retryOwnQuotes() { return this.loadOwnQuotes(true); },
   showAlbum(result) { this.setData({ albumImages: result.items, albumHasMore: result.hasMore, albumOffset: result.nextOffset }); },
   async loadAlbum(force = false, append = false) {
+    if (this.data.isVisitor) return this.loadPublicContent('album', force, append);
     if (!this.data.user || this.interactionBlocked() || this._unloaded || this._visible === false) return;
     if (this._albumRequest) return this._albumRequest.promise;
     const cached = square.cachedAlbum();
@@ -630,15 +739,27 @@ Page({
     }
     this.syncNavigation();
   },
-  editProfile() { if (!this.interactionBlocked() && this.data.user) wx.navigateTo({ url: '/pages/edit-profile/index' }); },
-  openAccountAbout() { if (!this.interactionBlocked() && this.data.user) wx.navigateTo({ url: '/pages/account-about/index' }); },
+  editProfile() { if (this.data.isVisitor) return; if (!this.interactionBlocked() && this.data.user) wx.navigateTo({ url: '/pages/edit-profile/index' }); },
+  openAccountAbout() {
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || !this.data.user || this.data.profileUnavailable || this._openingAccountAbout) return;
+    const accountId = this.data.isVisitor ? this.data.profileAccountId : '';
+    if (this.data.isVisitor && !/^[1-9][0-9]{7}$/.test(accountId || '')) return;
+    this._openingAccountAbout = true;
+    wx.navigateTo({ url: '/pages/account-about/index' + (accountId ? '?accountId=' + accountId : ''), fail: () => {
+      this._openingAccountAbout = false;
+      if (!this._unloaded && this._visible !== false) wx.showToast({ title: '账号信息页打开失败，请重试', icon: 'none' });
+    } });
+  },
   openCertification() {
+    if (this.data.isVisitor) return;
     if (!this.interactionBlocked() && this.data.user && !this.data.identity.isAdmin) wx.navigateTo({ url: '/pages/certification/index' });
   },
   openAdmin() {
+    if (this.data.isVisitor) return;
     if (!this.interactionBlocked() && this.data.identity.isAdmin) wx.navigateTo({ url: '/pages/admin/index' });
   },
   logout() {
+    if (this.data.isVisitor) return;
     if (this.interactionBlocked() || !this.data.user || this._unloaded || this.data.loading || this.data.coverBusy || this.data.confirmingLogout) return;
     const userId = this.data.user._id;
     const accountVersion = this._accountVersion;

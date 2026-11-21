@@ -1,1 +1,7 @@
-{ "component": true, "usingComponents": { "quote-card": "../quote-card/index" } }
+{
+  "component": true,
+  "usingComponents": {
+    "quote-card": "../quote-card/index",
+    "media-image": "/components/media-image/index"
+  }
+}

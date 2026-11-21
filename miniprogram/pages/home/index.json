@@ -11,6 +11,7 @@
     "cui-refresh": "/components/cui-refresh/index",
     "square-post": "/components/square-post/index",
     "comments-sheet": "/components/comments-sheet/index",
-    "square-composer": "/components/square-composer/index"
+    "square-composer": "/components/square-composer/index",
+    "unfollow-confirm": "/components/unfollow-confirm/index"
   }
 }

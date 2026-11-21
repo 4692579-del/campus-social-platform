@@ -7,10 +7,21 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
   proofBase64, requestId: 'test-request-00000001', ...extra });
 
 function fixture(options = {}) {
-  const tables = new Map(['users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states', 'square_ai_jobs'].map(name => [name, new Map()]));
+  const tables = new Map(['user_follows', 'users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states', 'square_ai_jobs'].map(name => [name, new Map()]));
   const uploads = [], proofRequests = [], queries = [], docReads = [];
   const hooks = { beforeTransaction: options.beforeTransaction };
   let tail = Promise.resolve(), transactionReads = 0;
+  function matches(row, condition) {
+    return Object.entries(condition).every(([key, value]) => {
+      if (!value || !value.operation) return row[key] === value;
+      if (value.operation === 'regex') return typeof row[key] === 'string' && new RegExp(value.regexp, value.options).test(row[key]);
+      if (value.operation === 'exists') return Object.hasOwn(row, key) === value.value;
+      if (value.operation === 'lt') return row[key] < value.value;
+      if (value.operation === 'gt') return row[key] > value.value;
+      if (value.operation === 'in') return value.value.includes(row[key]);
+      throw new Error('未实现的查询条件');
+    });
+  }
   function collection(name, source, inTransaction = false) {
     assert.ok(source.has(name), '集合必须由部署者创建');
     const records = source.get(name);
@@ -23,8 +34,7 @@ function fixture(options = {}) {
           async end() {
             if (options.readError && options.readError.collection === name) throw new Error('aggregate read failed');
             queries.push({ name, condition, aggregate: true });
-            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-              value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
+            const rows = [...records.values()].filter(row => matches(row, condition));
             const groups = new Map();
             for (const row of rows) {
               const id = typeof grouping._id === 'string' && grouping._id.startsWith('$') ? row[grouping._id.slice(1)] : grouping._id;
@@ -47,16 +57,14 @@ function fixture(options = {}) {
         const ordering = [];
         let offset = 0, limit = Infinity;
         const query = {
-          count: async () => ({ total: [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-            value && value.operation === 'exists' ? Object.hasOwn(row, key) === value.value : value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value)).length }),
+          count: async () => ({ total: [...records.values()].filter(row => matches(row, condition)).length }),
           orderBy: (field, direction) => { ordering.push([field, direction]); return query; },
           skip: value => { offset = value; return query; },
           limit: value => { limit = value; return query; },
           get: async () => {
             if (options.readError && options.readError.collection === name) throw Object.assign(new Error(options.readError.message || 'read failed'), { code: options.readError.code });
             queries.push({ name, condition, ordering, offset, limit });
-            const rows = [...records.values()].filter(row => Object.entries(condition).every(([key, value]) =>
-              value && value.operation === 'exists' ? Object.hasOwn(row, key) === value.value : value && value.operation === 'lt' ? row[key] < value.value : value && value.operation === 'gt' ? row[key] > value.value : value && value.operation === 'in' ? value.value.includes(row[key]) : row[key] === value));
+            const rows = [...records.values()].filter(row => matches(row, condition));
             rows.sort((a, b) => {
               for (const [field, direction] of ordering) {
                 const difference = a[field] === b[field] ? 0 : a[field] < b[field] ? -1 : 1;
@@ -107,6 +115,7 @@ function fixture(options = {}) {
     };
   }
   const db = {
+    RegExp: options => ({ operation: 'regex', ...options }),
     command: { exists: value => ({ operation: 'exists', value }), lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
       aggregate: { sum: field => ({ operation: 'sum', field }) } },
     collection: name => collection(name, tables),
@@ -148,6 +157,7 @@ function fixture(options = {}) {
   });
   const alice = { openid: 'alice', env: 'test' }, bob = { openid: 'bob', env: 'test' }, admin = { openid: 'admin', env: 'test' };
   const f = { db, handle, alice, bob, admin, uploads, proofRequests, queries, docReads, hooks,
+    follows: tables.get('user_follows'),
     accountIds: tables.get('account_ids'),
     users: tables.get('users'), applications: tables.get('certification_applications'), reviews: tables.get('certification_reviews'),
     squarePosts: tables.get('square_posts'), squareReplies: tables.get('square_replies'), squareInteractions: tables.get('square_interactions'), squareReports: tables.get('square_reports'),

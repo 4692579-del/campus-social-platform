@@ -1,0 +1,7 @@
+<view class="unfollow-layer {{closing ? 'is-closing' : ''}}" catchtouchmove="stopEvent">
+  <view class="unfollow-backdrop" catchtap="cancel"></view>
+  <view class="unfollow-sheet" role="dialog" aria-modal="true" aria-label="取关确认" catchtap="stopEvent">
+    <view class="unfollow-card"><view class="unfollow-person"><image class="unfollow-avatar avatar-outline" src="{{target.avatar || '/images/avatar.png'}}" mode="aspectFill" /><view class="unfollow-title">取关 <text>{{target.nickname}}</text>？</view></view><button class="unfollow-confirm" disabled="{{busy}}" bindtap="confirm">取关</button></view>
+    <button class="unfollow-cancel" disabled="{{busy}}" bindtap="cancel">取消</button>
+  </view>
+</view>

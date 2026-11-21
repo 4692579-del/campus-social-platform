@@ -10,6 +10,26 @@ const profile = nickname => ({ nickname, avatarFileID: '' });
 const accountInfo = (f, identity = f.alice, extra = {}) => f.handle({ action: 'getAccountInfo', ...extra }, identity);
 const rename = (f, nickname) => f.handle({ action: 'updateProfile', profile: profile(nickname) }, f.alice);
 
+test('公开账号信息仅返回指定账号的公开学校、日期和改名摘要，不返回本人私有资料或敏感字段',async()=>{
+  const f=fixture();await f.login();const bob=await f.login(f.bob);
+  await f.handle({action:'updateProfile',profile:profile('Bob改名')},f.bob);
+  Object.assign(f.users.get(bob._id),{role:'student',certificationStatus:'approved',schoolId:'private-school-id',schoolName:'公开认证学校',realName:'private-name',studentNumber:'private-number',birthDate:'2001-01-01',certificationProof:'private-proof'});
+  const read=who=>f.handle({action:'getSquarePublicAccountInfo',accountId:bob.accountId,userId:'forged',openid:'bob'},who);
+  const result=await read(f.alice);assert.equal(result.success,true);const about=result.square.accountInfo;
+  assert.deepEqual(Object.keys(about.user).sort(),['accountId','nickname','avatarFileID','createdAt','isVerified','schoolName'].sort());
+  assert.equal(about.user.accountId,bob.accountId);assert.equal(about.user.schoolName,'公开认证学校');assert.equal(about.user.isVerified,true);assert.equal(about.nicknameHistory.changeCount,1);
+  assert.ok(!JSON.stringify(about).includes('private-'));assert.equal((await read({openid:'unknown',env:'test'})).code,'NOT_REGISTERED');
+  f.users.get(bob._id).status='disabled';assert.equal((await read(f.alice)).code,'PROFILE_NOT_FOUND');
+});
+
+test('公开读取不初始化他人的老账号历史，也不展示未通过认证的旧学校',async()=>{
+  const f=fixture();await f.login();const bob=await f.login(f.bob),record=f.users.get(bob._id);
+  for(const key of ['nicknameChangeCount','nicknameTrackingStartedAt','nicknameHistoryComplete','nicknameLastChangedAt'])delete record[key];
+  record.schoolName='不应公开的旧学校';const before=JSON.stringify(record);
+  const about=(await f.handle({action:'getSquarePublicAccountInfo',accountId:bob.accountId},f.alice)).square.accountInfo;
+  assert.equal(about.user.schoolName,'');assert.equal(about.user.isVerified,false);assert.equal(about.nicknameHistory.changeCount,null);assert.equal(about.nicknameHistory.lastChangedAt,null);assert.equal(JSON.stringify(record),before);
+});
+
 test('新账号从零开始，改名与最后修改时间真实持久化，重登录不重置', async () => {
   const clock = { serverTime: '2026-11-17T06:00:00.000Z' };
   const f = fixture(clock);
@@ -104,7 +124,12 @@ function pageFixture(result, options = {}) {
   let definition;
   const routes = [];
   const copies = [], toasts = [];
-  const service = { getCachedUser: () => options.cachedUser || null, getCachedAccountInfo: () => options.cachedInfo || null, getAccountInfo: async () => typeof result === 'function' ? result() : result };
+  const calls=[];
+  const service = { getCachedUser: () => options.cachedUser || null, getSessionVersion:()=>options.sessionVersion||0,
+    getCachedAccountInfo: () => options.cachedInfo || null, getAccountInfo: async () => {calls.push({own:true});return typeof result === 'function' ? result() : result;},
+    getCachedPublicAccountInfo:()=>options.publicInfo||null,getCachedPublicProfile:()=>options.publicProfile||null,
+    getPublicAccountInfo:async(accountId,args)=>{calls.push({accountId,...args});return typeof result==='function'?result():result;},
+  };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/account-about/index.js'), 'utf8'), {
     require: () => service, Page: page => { definition = page; },
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
@@ -119,11 +144,34 @@ function pageFixture(result, options = {}) {
       navigateBack: () => routes.push('back'), switchTab: value => routes.push(value.url) },
   });
   const page = { ...definition, data: structuredClone(definition.data), setData(value) { Object.assign(this.data, value); } };
-  return { page, routes, copies, toasts };
+  return { page, routes, copies, toasts, calls };
 }
 const info = { user: { _id: 'alice', accountId: '12345678', nickname: '真实昵称', avatarFileID: 'real-avatar', role: 'user',
   certificationStatus: 'unverified', schoolId: '', schoolName: '不应展示的旧学校', createdAt: '2026-11-16T16:00:00.000Z' },
 nicknameHistory: { changeCount: 2, lastChangedAt: '2026-11-17T03:04:05.000Z', trackingStartedAt: '2026-11-17T01:00:00.000Z', historyComplete: false } };
+
+const publicInfo={user:{accountId:'87654321',nickname:'对方昵称',avatarFileID:'public-avatar',createdAt:'2026-11-16T16:00:00.000Z',isVerified:true,schoolName:'公开学校'},nicknameHistory:{changeCount:3,lastChangedAt:'2026-11-17T03:04:05.000Z',historyComplete:true}};
+
+test('访客关于此账号优先预填公开缓存并读取目标信息，能复制目标ID，不混用本人账号接口',async()=>{
+  let finish;const f=pageFixture(()=>new Promise(resolve=>{finish=resolve;}),{cachedUser:info.user,cachedInfo:info,publicProfile:publicInfo.user});
+  f.page.onLoad({accountId:publicInfo.user.accountId});assert.equal(f.page.data.user.nickname,'对方昵称');assert.equal(f.page.data.changeCount,null);
+  const pending=f.page.onShow();assert.equal(f.page.data.loading,false);assert.equal(f.calls[0].accountId,'87654321');assert.ok(!f.calls.some(call=>call.own));
+  finish(publicInfo);await pending;assert.equal(f.page.data.schoolText,'公开学校');assert.equal(f.page.data.changeCount,3);assert.equal(f.page.data.joinedText,'2026年11月17日');
+  f.page.copyAccountId();assert.equal(f.copies[0].data,'87654321');
+});
+
+test('公开账号页刷新失败保留缓存，账号失效清空，未记录的历史不编造为0',async()=>{
+  const f=pageFixture(()=>Promise.reject(new Error('offline')),{cachedUser:info.user,publicInfo});f.page.onLoad({accountId:'87654321'});await f.page.onShow();assert.equal(f.page.data.changeCount,3);assert.equal(f.page.data.error,'offline');
+  const gone=pageFixture(()=>Promise.reject(Object.assign(new Error('不存在'),{code:'PROFILE_NOT_FOUND'})),{cachedUser:info.user,publicInfo});gone.page.onLoad({accountId:'87654321'});await gone.page.onShow();assert.equal(gone.page.data.user,null);
+  const legacy=pageFixture({...publicInfo,nicknameHistory:{changeCount:null,lastChangedAt:null}},{cachedUser:info.user});legacy.page.onLoad({accountId:'87654321'});await legacy.page.onShow();assert.equal(legacy.page.data.changeCount,null);assert.equal(legacy.page.data.lastChangedText,'暂无用户名更改记录');
+});
+
+test('公开账号页离开和切账号忽略迟到信息，未登录及非法目标不会读取本人的资料',async()=>{
+  let finish;const options={cachedUser:info.user,publicInfo};const f=pageFixture(()=>new Promise(resolve=>{finish=resolve;}),options);f.page.onLoad({accountId:'87654321'});const pending=f.page.onShow();options.cachedUser={...info.user,_id:'new-viewer'};options.sessionVersion=1;finish(publicInfo);await pending;assert.equal(f.page.data.user,null);
+  let late;const hidden=pageFixture(()=>new Promise(resolve=>{late=resolve;}),{cachedUser:info.user});hidden.page.onLoad({accountId:'87654321'});const load=hidden.page.onShow();hidden.page.onHide();late(publicInfo);await load;assert.equal(hidden.page.data.user,null);
+  const guest=pageFixture(publicInfo);guest.page.onLoad({accountId:'87654321'});await guest.page.onShow();assert.equal(guest.calls.length,0);assert.equal(guest.page.data.user,null);
+  const invalid=pageFixture(publicInfo,{cachedUser:info.user});invalid.page.onLoad({accountId:'bad'});await invalid.page.onShow();assert.equal(invalid.calls.length,0);assert.equal(invalid.page.data.user,null);
+});
 
 test('关于账号直接展示已有资料，未知改名记录不编造，后台完成后补全真实统计', async () => {
   let resolve;

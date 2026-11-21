@@ -2,8 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadPostActions(users, square, wx = {}) {
-  const context = { module: { exports: {} }, wx,
+function loadPostActions(users, square, wx = {}, getCurrentPages = () => []) {
+  const context = { module: { exports: {} }, wx, getCurrentPages, setTimeout, clearTimeout,
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : require('../../miniprogram/utils/post-view') };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../miniprogram/utils/post-actions.js'), 'utf8'), context);
   return context.module.exports;

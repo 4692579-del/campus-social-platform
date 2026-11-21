@@ -3,16 +3,16 @@
   <view wx:if="{{error}}" class="history-message">{{error}}<button class="history-link" bindtap="retry">重试</button></view>
   <view wx:for="{{items}}" wx:key="_id" class="history-entry">
     <view class="history-context" data-id="{{item._id}}" bindtap="openComment" aria-role="button" aria-label="查看原动态和回复">
-      <image class="history-context-avatar" src="{{item.context.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
+      <image class="history-context-avatar avatar-outline" data-id="{{item._id}}" catchtap="viewContextAuthor" src="{{item.context.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
       <view class="history-context-main">
         <view class="history-context-heading"><text>{{item.context.author.nickname || '上文'}}</text><image wx:if="{{item.context.author.verified}}" class="comment-badge" src="/images/verification/verified.png" /><text class="history-context-time">{{item.context.timeText}}</text><text class="history-context-link">原动态 ›</text></view>
         <view class="history-context-text">{{item.context.unavailable ? '这条上文已删除或不可见' : item.context.folded ? '上文已为你折叠' : item.context.content || (item.context.imageCount ? '图片动态' : '')}}<text wx:if="{{item.context.imageCount}}" class="history-image-count"> [{{item.context.imageCount}}张图片]</text></view>
       </view>
     </view>
-    <view class="history-own-reply"><template is="comment" data="{{row: item.reply, child: false, history: true}}" /></view>
+    <view class="history-own-reply"><template is="comment" data="{{row: item.reply, child: false, history: true, historyReadOnly: !!accountId}}" /></view>
   </view>
   <view wx:if="{{loading && !items.length}}" class="history-message">正在读取回复…</view>
-  <view wx:elif="{{!items.length && !error && !hasMore}}" class="history-empty"><view>你的回复会出现在这里</view><text>在动态下参与讨论后，随时回来查看。</text></view>
+  <view wx:elif="{{!items.length && !error && !hasMore}}" class="history-empty"><view>{{accountId ? '还没有公开回复' : '你的回复会出现在这里'}}</view><text>{{accountId ? '该用户参与广场讨论后会显示在这里。' : '在动态下参与讨论后，随时回来查看。'}}</text></view>
   <view wx:if="{{loading && items.length}}" class="history-message">正在加载…</view>
   <button wx:elif="{{hasMore}}" class="history-link history-more" bindtap="loadMore">查看更多回复</button>
   <view wx:elif="{{items.length}}" class="history-message">已经看到这里了</view>

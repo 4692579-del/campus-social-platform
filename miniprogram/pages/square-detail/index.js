@@ -8,6 +8,8 @@ Page({
   ...gate,
   ...postActions,
   data: {
+    unfollowTarget: null, unfollowClosing: false, unfollowBusy: false,
+    followByAccount: {}, followKnown: false, profileFollowing: false, followBusy: false, followError: '',
     user: null, postId: '', posts: [], commentMounts: [], focusReplyId: '', loading: false, error: '', unavailable: false, composerOpen: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72,
     loginSheetOpen: false, loginLoading: false, loginError: '',
@@ -24,6 +26,7 @@ Page({
     this.syncViewer();
   },
   onShow() {
+    this._openingAuthor = false;
     this._visible = true;
     this.syncViewer();
     this.startPostUpdates();
@@ -48,18 +51,20 @@ Page({
     const version = users.getSessionVersion();
     const changed = this._sessionVersion !== version;
     if (changed) {
+      this.closeUnfollowPrompt(true);
       this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' });
       this._sessionVersion = version;
       this._request = null;
       this._loadSequence = (this._loadSequence || 0) + 1;
       // 换账号才重建评论区，避免旧账号的私有折叠状态或草稿被继续展示。
-      this.setData({ user: users.getCachedUser(), posts: [], commentMounts: [{ key: version }], error: '', loading: Boolean(this.data.postId) });
+      this.setData({ user: users.getCachedUser(), followByAccount: {}, posts: [], commentMounts: [{ key: version }], error: '', loading: Boolean(this.data.postId) });
     } else this.setData({ user: users.getCachedUser() });
     const cached = this.data.postId && square.cachedPost(this.data.postId);
     if (cached) this.showPost(cached);
     return changed;
   },
   showPost(post) {
+    this.hydrateFollowAuthors([post]);
     this.setData({ posts: [postView({ ...post, content: post.fullContent || post.content })], unavailable: false, loading: false });
   },
   loadPost(force = false) {
@@ -86,7 +91,8 @@ Page({
     return request;
   },
   retry() { return this.loadPost(true); },
-  interactionBlocked() { return this.data.loginSheetOpen || this.data.loginLoading || this.data.composerOpen; },
+  followDetailAuthor() { return this.followPostAuthor({ detail: { id: this.data.postId } }); },
+  interactionBlocked() { return this.data.loginSheetOpen || this.data.loginLoading || this.data.composerOpen || Boolean(this.data.unfollowTarget); },
   closeComposer() { this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' }); square.consumePublication(); },
   requestLogin() { this.syncViewer(); gate.requestLogin.call(this); },
   onLoggedIn() { this.syncViewer(); return this.loadPost(); },

@@ -65,6 +65,7 @@ module.exports = {
       const top = Math.max(0, Math.min(raw, max));
       const positions = this._chromePositions || (this._chromePositions = {});
       const previous = positions[key] || 0;
+      if (this.data.authorMenu && Math.abs(top - previous) > 1 && typeof this.closeAuthorMenu === 'function') this.closeAuthorMenu();
       positions[key] = top;
       const trackers = this._chromeTrackers || (this._chromeTrackers = {});
       const tracker = trackers[key] || (trackers[key] = createDirectionTracker(previous));

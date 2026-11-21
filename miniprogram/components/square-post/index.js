@@ -1,6 +1,7 @@
 const { rememberSize, imageLayout } = require('../../utils/post-image-layout');
 Component({
-  properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean },
+  options: { multipleSlots: true },
+  properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, followPreview: Object },
   data: { expanded: false, imageIndex: 0, imageFiles: [], galleryWidth: 100, galleryHeight: 471, likeMotionClass: '',
     likeParticleRays: [
       { angle: 0, color: '#b39ad4', accent: '#94c8d1' }, { angle: 51.4, color: '#ad83b3', accent: '#c1a4bf' },
@@ -51,6 +52,22 @@ Component({
   },
   methods: {
     stopEvent() {},
+    viewAuthor() { if (!this._unloaded && !this._pageHidden) this.triggerEvent('author', { author: this.data.post.author }); },
+    isOwnAuthor() {
+      const viewer = this.data.viewer, post = this.data.post;
+      return Boolean(viewer && (viewer.accountId && post.author && post.author.accountId ? viewer.accountId === post.author.accountId : post.isOwn));
+    },
+    avatarMenu() {
+      if (!this.data.homeFeed || this.data.detail || this._unloaded || this._pageHidden || this.isOwnAuthor()) return;
+      this.triggerEvent('avatar', { id: this.data.post._id });
+    },
+    getAvatarRect(callback) {
+      if (this._unloaded || this._pageHidden || !this.data.homeFeed || this.data.detail || this.isOwnAuthor()) return;
+      const id = this.data.post._id;
+      this.createSelectorQuery().select('.post-avatar-anchor').boundingClientRect(rect => {
+        if (!this._unloaded && !this._pageHidden && this.data.post._id === id) callback(rect);
+      }).exec();
+    },
     clearLikeMotion() {
       this._likeIntent = null;
       this._likeMotionSequence = (this._likeMotionSequence || 0) + 1;
@@ -95,7 +112,7 @@ Component({
       this._likeIntent = this.data.likeMotion && this.data.viewer ? { id: this.data.post._id, from: Boolean(this.data.post.liked), expires: Date.now() + 750 } : null;
       this.triggerEvent('react', { id: this.data.post._id, kind: 'like' });
     },
-    more() { this.triggerEvent('more', { id: this.data.post._id }); },
+    more() { this.triggerEvent('more', { id: this.data.post._id, profilePosts: this.data.profilePosts === true }); },
     imageChanged(event) {
       const index = event.detail.current, images = this.data.post.images || [];
       if (this._unloaded || this._pageHidden || !Number.isInteger(index) || index < 0 || index >= images.length || index === this.data.imageIndex) return;

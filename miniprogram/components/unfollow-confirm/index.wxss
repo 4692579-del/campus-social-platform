@@ -1,0 +1,20 @@
+@import "../../styles/avatar.wxss";
+.unfollow-layer { position: fixed; z-index: 500; inset: 0; }
+.unfollow-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .22); animation: unfollow-dim-in 200ms ease both; }
+.unfollow-sheet { position: absolute; left: 24rpx; right: 24rpx; bottom: 0; padding-bottom: calc(16rpx + env(safe-area-inset-bottom)); animation: unfollow-sheet-in 280ms cubic-bezier(.22,.75,.3,1) both; }
+.unfollow-card { overflow: hidden; border-radius: 36rpx; background: #fff; }
+.unfollow-person { display: flex; flex-direction: column; align-items: center; padding: 32rpx 28rpx 36rpx; }
+.unfollow-avatar { display: block; flex-shrink: 0; width: 112rpx; height: 112rpx; background: #f0f2f4; }
+.unfollow-title { margin-top: 26rpx; max-width: 100%; color: #171b20; font-size: 32rpx; line-height: 1.5; text-align: center; overflow-wrap: break-word; }
+.unfollow-title text { font-weight: 650; }
+.unfollow-sheet .unfollow-confirm, .unfollow-sheet .unfollow-cancel { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 100rpx; margin: 0; padding: 0 24rpx; box-sizing: border-box; background: #fff; font-size: 34rpx; font-weight: 500; line-height: 1; }
+.unfollow-sheet .unfollow-confirm { border: 0; border-top: 1rpx solid #e4e7eb; border-radius: 0; color: #ed2452; }
+.unfollow-sheet .unfollow-cancel { margin-top: 16rpx; border: 0; border-radius: 36rpx; color: #171b20; }
+.unfollow-confirm::after, .unfollow-cancel::after { border: 0; }
+.is-closing .unfollow-backdrop { animation: unfollow-dim-out 200ms ease both; }
+.is-closing .unfollow-sheet { animation: unfollow-sheet-out 200ms ease-in both; }
+@keyframes unfollow-dim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes unfollow-dim-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes unfollow-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes unfollow-sheet-out { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { .unfollow-backdrop, .unfollow-sheet { animation-duration: 1ms; } }

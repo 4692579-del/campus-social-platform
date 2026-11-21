@@ -10,6 +10,134 @@ const post = (extra = {}) => ({ _id: 'p_' + 'a'.repeat(40), content: '来自广�
   author: { nickname: '普通同学', avatarFileID: '', accountId: '12345678', verified: false },
   createdAt: '2026-11-17T06:00:00Z', likeCount: 0, replyCount: 0, repostCount: 0, liked: false, reposted: false, ...extra });
 
+test('搜索缓存按关键词、作者及类型隔离，合并读取和分页，返回缓存同步真实互动字段',async()=>{
+  const ok=square=>({result:{success:true,square}}),one=post(),two=post({_id:'p_'+'b'.repeat(40)});
+  const f=client(data=>data.action==='setSquareReaction'?ok({post:{...one,liked:true,likeCount:1}}):ok({keyword:data.keyword,accountId:data.accountId,kind:data.kind,items:data.kind==='users'?[{accountId:'87654321',nickname:'同学'}]:data.cursor?[two]:[one],hasMore:!data.cursor&&data.kind==='square',nextCursor:!data.cursor&&data.kind==='square'?'cursor':''}));
+  const q={keyword:'校园',accountId:'',kind:'square'},first=f.service.searchContent(q),same=f.service.searchContent(q);assert.equal(first,same);await first;await f.service.searchContent(q);assert.equal(f.calls.length,1);
+  await f.service.searchContent({...q,cursor:'cursor'});assert.equal(f.service.cachedSearch(q).items.length,2);
+  await f.service.searchContent({...q,kind:'users'});await f.service.searchContent({...q,accountId:'87654321'});assert.equal(f.calls.length,4);
+  await f.service.react(one._id,'like',true,one);assert.equal(f.service.cachedSearch(q).items[0].liked,true);assert.equal(f.service.cachedSearch({...q,kind:'users'}).items[0].nickname,'同学');
+});
+
+test('迟到搜索不能覆盖当前点赞或恢复删除内容，换账号清理搜索缓存',async()=>{
+  let finish,delay=false;const ok=square=>({result:{success:true,square}}),p=post();
+  const f=client(data=>{
+    if(data.action==='setSquareReaction')return ok({post:{...p,liked:true,likeCount:1}});
+    if(data.action==='deleteSquarePost')return ok({deletedId:p._id});
+    const value=ok({keyword:data.keyword,accountId:data.accountId,kind:data.kind,items:[p],hasMore:false,nextCursor:''});return delay?new Promise(resolve=>{finish=()=>resolve(value);}):value;
+  });
+  const q={keyword:'校园',accountId:'',kind:'square'};await f.service.searchContent(q);delay=true;const pending=f.service.searchContent({...q,force:true});await f.service.react(p._id,'like',true,p);finish();await pending;assert.equal(f.service.cachedSearch(q).items[0].liked,true);
+  const deleted=f.service.searchContent({...q,force:true});await f.service.deletePost(p._id);finish();await assert.rejects(deleted,error=>error.code==='SEARCH_CHANGED');assert.equal(f.service.cachedSearch(q).items.length,0);
+  const late=f.service.searchContent({...q,force:true});f.login({...user,_id:'bob'});finish();await assert.rejects(late,error=>error.code==='SESSION_CHANGED');assert.equal(f.service.cachedSearch(q),null);
+});
+
+test('真实关注同目标串行合并，旧关系与统计读取不能覆盖新版本，失败不伪造成功', async () => {
+  const viewer = { ...user, accountId: '12345678' }, target = '87654321'; let releaseRead, releaseWrite, following = false, version = 0, delay = true;
+  const ok = square => ({ result: { success: true, square } });
+  const f = client(data => {
+    if (data.action === 'getSquareFollowStates') return new Promise(resolve => { releaseRead = () => resolve(ok({ items: [{accountId:target,following:false,version:0}] })); });
+    if (data.action === 'setSquareFollow') {
+      const response = () => { following=data.following; version++; return ok({state:{accountId:target,following,version},viewer:{accountId:viewer.accountId,followingCount:Number(following),followerCount:0,version},profile:{accountId:target,followingCount:0,followerCount:Number(following),version,following,relationVersion:version}}); };
+      return delay ? new Promise(resolve => {releaseWrite=()=>resolve(response());}) : response();
+    }
+  });
+  f.login(viewer); const stale = f.service.getFollowStates([target]);
+  const first = f.service.setFollow(target,true), duplicate = f.service.setFollow(target,true);
+  assert.equal(first,duplicate); assert.equal(f.service.cachedFollowState(target).following,true); assert.equal(f.service.cachedFollowState(target).pending,true);
+  const inverse = f.service.setFollow(target,false); delay=false; releaseWrite(); await first; await inverse;
+  assert.equal(f.calls.filter(row=>row.action==='setSquareFollow').length,2);
+  assert.equal(f.service.cachedFollowState(target).following,false); assert.equal(f.service.cachedFollowState(target).version,2);
+  releaseRead(); await stale; assert.equal(f.service.cachedFollowState(target).version,2);
+  assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,0);
+});
+
+test('关注动态独立缓存、取关移除目标，迟到列表及换账号后的写入不能恢复旧关系', async () => {
+  const viewer={...user,accountId:'12345678'},target='87654321'; let lateList,lateWrite,delay=false;
+  const row=post({author:{accountId:target,nickname:'对方'}}),ok=square=>({result:{success:true,square}});
+  const f=client(data=>{
+    if(data.action==='listSquareFollowing') return delay ? new Promise(resolve=>{lateList=()=>resolve(ok({items:[row],hasMore:false,nextCursor:''}));}) : ok({items:[row],hasMore:false,nextCursor:''});
+    if(data.action==='listSquarePosts') return ok({items:[],hasMore:false,nextOffset:0});
+    if(data.following) return new Promise(resolve=>{lateWrite=()=>resolve(ok({state:{accountId:target,following:true,version:3},viewer:{accountId:viewer.accountId,followingCount:1,followerCount:0,version:3},profile:{accountId:target,followingCount:0,followerCount:1,version:3,following:true,relationVersion:3}}));});
+    return ok({state:{accountId:target,following:false,version:2},viewer:{accountId:viewer.accountId,followingCount:0,followerCount:0,version:2},profile:{accountId:target,followingCount:0,followerCount:0,version:2,following:false,relationVersion:2}});
+  });
+  f.login(viewer); await f.service.list(); await f.service.listFollowing();
+  assert.equal(f.service.cachedFeed().items.length,0); assert.equal(f.service.cachedFollowingFeed().items.length,1);
+  delay=true;const stale=f.service.listFollowing({force:true});await f.service.setFollow(target,false);
+  assert.equal(f.service.cachedFollowingFeed().items.length,0);lateList();await assert.rejects(stale,error=>error.code==='FOLLOW_CHANGED');
+  const write=f.service.setFollow(target,true); f.login({...viewer,_id:'bob',accountId:'23456789'});lateWrite();await assert.rejects(write,error=>error.code==='SESSION_CHANGED');
+  assert.equal(f.service.cachedFollowState(target),null);assert.equal(f.service.cachedFollowingFeed(),null);
+});
+
+test('关注失败保持未知状态，重复读取合并，失败不清除正常登录会话', async()=>{
+  const f=client(()=>({result:{success:false,code:'PROFILE_NOT_FOUND',message:'不可查看'}}));f.login({...user,accountId:'12345678'});
+  await assert.rejects(f.service.setFollow('87654321',true),/不可查看/);
+  assert.equal(f.service.cachedFollowState('87654321'),null);assert.ok(f.users.getCachedUser());
+});
+
+test('乐观取关立即同步状态、统计及关注流；后台失败完整回退，途中读取不重复查询或覆盖',async()=>{
+  const viewer={...user,accountId:'12345678'},target='87654321',row=post({author:{accountId:target}}),ok=square=>({result:{success:true,square}});let fail;
+  const f=client(data=>{
+    if(data.action==='getSquareFollowProfile')return ok({profile:{accountId:data.accountId,followingCount:data.accountId===target?0:1,followerCount:data.accountId===target?1:0,version:5,...(data.accountId===target?{following:true,relationVersion:5}:{})}});
+    if(data.action==='listSquareFollowing')return ok({items:[row],hasMore:false,nextCursor:''});
+    if(data.action==='setSquareFollow')return new Promise((resolve,reject)=>{fail=()=>reject(new Error('offline'));});
+    throw new Error('点击期间不应先读取关注状态');
+  });
+  f.login(viewer);await Promise.all([f.service.getFollowProfile(target),f.service.getFollowProfile(viewer.accountId)]);await f.service.listFollowing();
+  const events=[];f.service.subscribeFollow(event=>events.push(event));const pending=f.service.setFollow(target,false);
+  assert.equal(f.service.cachedFollowState(target).following,false);assert.equal(f.service.cachedFollowProfile(target).followerCount,0);assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,0);assert.equal(f.service.cachedFollowingFeed().items.length,0);
+  const calls=f.calls.length;await f.service.getFollowStates([target],{force:true});await f.service.getFollowProfile(target,{force:true});assert.equal(f.calls.length,calls);
+  fail();await assert.rejects(pending);assert.equal(f.service.cachedFollowState(target).following,true);assert.equal(f.service.cachedFollowProfile(target).followerCount,1);assert.equal(f.service.cachedFollowingFeed().items.length,1);assert.equal(events.at(-1).rollback,true);
+});
+
+test('不同目标的乐观计数合并但保存串行，一条失败只回退对应目标',async()=>{
+  const viewer={...user,accountId:'12345678'},a='87654321',b='23456789',ok=square=>({result:{success:true,square}});let resolveA,rejectB;
+  const f=client(data=>{
+    if(data.action==='getSquareFollowProfile')return ok({profile:{accountId:data.accountId,followingCount:0,followerCount:0,version:0,...(data.accountId!==viewer.accountId?{following:false,relationVersion:0}:{})}});
+    if(data.accountId===a)return new Promise(resolve=>{resolveA=()=>resolve(ok({state:{accountId:a,following:true,version:1},profile:{accountId:a,followingCount:0,followerCount:1,following:true,relationVersion:1,version:1},viewer:{accountId:viewer.accountId,followingCount:1,followerCount:0,version:1}}));});
+    return new Promise((resolve,reject)=>{rejectB=()=>reject(new Error('offline'));});
+  });
+  f.login(viewer);await Promise.all([f.service.getFollowProfile(viewer.accountId),f.service.getFollowProfile(a),f.service.getFollowProfile(b)]);
+  const first=f.service.setFollow(a,true),second=f.service.setFollow(b,true);assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,2);assert.equal(f.calls.filter(item=>item.action==='setSquareFollow').length,1);
+  resolveA();await first;assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,2);assert.equal(f.calls.filter(item=>item.action==='setSquareFollow').length,2);
+  rejectB();await assert.rejects(second);assert.equal(f.service.cachedFollowState(a).following,true);assert.equal(f.service.cachedFollowState(b).following,false);assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,1);
+});
+
+test('同目标连续关注取关再关注合并为最后一次选择，不保存已经过时的中间意图',async()=>{
+  const viewer={...user,accountId:'12345678'},target='87654321',ok=square=>({result:{success:true,square}});let finish;
+  const f=client(data=>new Promise(resolve=>{finish=()=>resolve(ok({state:{accountId:target,following:true,version:1},profile:{accountId:target,followingCount:0,followerCount:1,following:true,relationVersion:1,version:1},viewer:{accountId:viewer.accountId,followingCount:1,followerCount:0,version:1}}));}));
+  f.login(viewer);const first=f.service.setFollow(target,true);f.service.setFollow(target,false);const last=f.service.setFollow(target,true);
+  assert.equal(f.service.cachedFollowState(target).following,true);assert.equal(first,last);assert.equal(f.calls.length,1);finish();await last;assert.equal(f.service.cachedFollowState(target).following,true);assert.equal(f.calls.length,1);
+});
+
+test('访客内容按目标及分类隔离缓存，迟到列表不覆盖点赞，切账号不恢复旧主页', async () => {
+  const targetId = '87654321', otherId = '23456789'; let finish, delay = false;
+  const ok = square => ({ result: { success: true, square } });
+  const f = client(data => {
+    if (data.action === 'setSquareReaction') return ok({ post: post({ liked: true, likeCount: 1 }) });
+    const result = ok({ profileAccountId: data.profileAccountId, postType: data.postType, items: [post()], hasMore: false, nextOffset: 1, pinnedPostId: '' });
+    return delay ? new Promise(resolve => { finish = () => resolve(result); }) : result;
+  });
+  await f.service.listPublicContent(targetId, 'posts'); await f.service.listPublicContent(otherId, 'quotes');
+  assert.equal(f.service.cachedOwnFeed('posts'), null); assert.equal(f.service.cachedFeed(), null);
+  assert.equal(f.service.cachedPublicContent(targetId, 'quotes'), null); assert.equal(f.service.cachedPublicContent(otherId, 'posts'), null);
+  delay = true; const late = f.service.listPublicContent(targetId, 'posts', { force: true });
+  await f.service.react(post()._id, 'like', true, post()); finish(); await late;
+  assert.equal(f.service.cachedPublicContent(targetId, 'posts').items[0].liked, true);
+  const old = f.service.listPublicContent(targetId, 'posts', { force: true }); f.login({ ...user, _id: 'bob' }); finish();
+  await assert.rejects(old, error => error.code === 'SESSION_CHANGED'); assert.equal(f.service.cachedPublicContent(targetId, 'posts'), null);
+});
+
+test('已知目标不可查看后，迟到内容不会恢复公开缓存或从旧动态重建', async () => {
+  const targetId = '87654321'; let finish;
+  const incoming = post({ author: { nickname: '对方', accountId: targetId } });
+  const f = client(data => data.action === 'listSquarePosts' && data.profileAccountId ? new Promise(resolve => { finish = resolve; }) :
+    { result: { success: true, square: { items: [incoming], hasMore: false, nextOffset: 1 } } });
+  await f.service.list(); assert.equal(f.service.cachedPublicContent(targetId, 'posts').items[0]._id, incoming._id);
+  const read = f.service.listPublicContent(targetId, 'posts', { force: true }); f.service.clearPublicAccount(targetId);
+  finish({ result: { success: true, square: { profileAccountId: targetId, postType: 'posts', items: [incoming], hasMore: false, nextOffset: 1 } } });
+  await assert.rejects(read, error => error.code === 'PROFILE_CHANGED'); assert.equal(f.service.cachedPublicContent(targetId, 'posts'), null);
+});
+
 test('分层回复缓存不混入一级列表，迟到读取不会覆盖刚发出的回复和个人折叠状态', async () => {
   const root = { _id: 'r_' + 'a'.repeat(40), content: '一级评论', author: post().author, replyCount: 0 };
   const child = { _id: 'c_' + 'b'.repeat(40), rootId: root._id, content: '新回复', author: post().author, folded: false };
@@ -43,6 +171,45 @@ function client(handler, clock = Date) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/services/square.js'), 'utf8'), context);
   return { service: context.module.exports, users, calls, login(value = user) { current = { ...value }; version++; } };
 }
+
+test('置顶保存后仅重排个人普通动态缓存，迟到列表不回退，取消后恢复时间顺序', async () => {
+  const older = post({ createdAt: '2026-11-01T00:00:00Z' }), newer = post({ _id: 'p_' + 'b'.repeat(40), createdAt: '2026-11-20T00:00:00Z' });
+  const ok = square => ({ result: { success: true, square } });
+  let finish, delay = false, version = 0;
+  const listing = () => ok({ mine: true, postType: 'posts', pinnedPostId: '', pinVersion: version, items: [newer, older], nextOffset: 2, hasMore: false });
+  const f = client(data => {
+    if (data.action === 'setSquareProfilePin') return ok({ post: older, pinnedPostId: data.pinned ? older._id : '', pinVersion: ++version });
+    if (data.mine) return delay ? new Promise(resolve => { const result = listing(); finish = () => resolve(result); }) : listing();
+    return ok({ items: [newer, older], hasMore: false, nextOffset: 2 });
+  });
+  await f.service.list(); await f.service.list({ mine: true, postType: 'posts' });
+  delay = true; const late = f.service.list({ mine: true, postType: 'posts', force: true });
+  await f.service.setProfilePin(older._id, true);
+  assert.equal(f.service.cachedOwnFeed('posts').items[0]._id, older._id);
+  assert.equal(f.service.cachedFeed().items[0]._id, newer._id);
+  finish(); await assert.rejects(late, error => error.code === 'PIN_CHANGED');
+  assert.equal(f.service.cachedOwnFeed('posts').pinnedPostId, older._id);
+  await f.service.setProfilePin(older._id, false);
+  assert.equal(f.service.cachedOwnFeed('posts').items[0]._id, newer._id);
+  assert.equal(f.service.cachedOwnFeed('posts').nextOffset, 2);
+});
+
+test('置顶失败、卸载账号及迟到写入不伪造成功或污染新账号', async () => {
+  let finish;
+  const f = client(data => data.action === 'setSquareProfilePin' ? new Promise(resolve => { finish = resolve; }) :
+    { result: { success: true, square: { mine: true, postType: 'posts', pinnedPostId: '', pinVersion: 0, items: [post()], hasMore: false, nextOffset: 1 } } });
+  await f.service.list({ mine: true, postType: 'posts' });
+  const failed = f.service.setProfilePin(post()._id, true);
+  await assert.rejects(f.service.setProfilePin(post()._id, true), /正在更新置顶/);
+  finish({ result: { success: false, code: 'PIN_EXISTS', message: '先取消置顶' } });
+  await assert.rejects(failed, error => error.code === 'PIN_EXISTS');
+  assert.equal(f.service.cachedOwnFeed('posts').pinnedPostId, '');
+  const late = f.service.setProfilePin(post()._id, true);
+  f.login({ ...user, _id: 'bob' });
+  finish({ result: { success: true, square: { post: post(), pinnedPostId: post()._id, pinVersion: 1 } } });
+  await assert.rejects(late, error => error.code === 'SESSION_CHANGED');
+  assert.equal(f.service.cachedProfilePin(), null); assert.equal(f.service.cachedOwnFeed('posts'), null);
+});
 
 const commentRow = (extra = {}) => ({ _id: 'r_' + 'a'.repeat(40), content: '评论', author: post().author, likeCount: 0, liked: false, folded: false, ...extra });
 test('并发引用响应乱序不能回退数量，删除后的新版本可以正确减少数量', async () => {

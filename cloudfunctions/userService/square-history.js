@@ -28,12 +28,12 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
     return { _id: row._id, author: view.author, content: view.folded ? '' : Array.from(row.content || '').slice(0, 100).join(''),
       imageCount: view.folded ? 0 : (row.images || []).length, folded: Boolean(view.folded), createdAt: row.createdAt };
   }
-  return async function history(action, event, user) {
+  return async function history(action, event, user, profileAuthorId) {
     active(user);
     if (action === 'listSquareOwnReplies') {
       const cursor = event.cursor === undefined ? '' : event.cursor;
       if (typeof cursor !== 'string' || cursor && !/^\d{16}_[rc]_[a-f0-9]{40}$/.test(cursor)) fail('INVALID_POST', '回复分页参数不正确');
-      const condition = { scope: 'square', status: 'published', authorId: user._id, ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
+      const condition = { scope: 'square', status: 'published', authorId: profileAuthorId || user._id, ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
       const batches = await Promise.all(['square_replies', 'square_reply_children'].map(table =>
         db.collection(table).where(condition).orderBy('sortKey', 'desc').limit(21).get()));
       const all = batches.flatMap(batch => batch.data).sort((a, b) => b.sortKey.localeCompare(a.sortKey));
@@ -58,7 +58,7 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
           contextKind: row.rootId ? 'comment' : 'post' };
       });
       // 空页也推进游标，避免已删除的上文使时间线停在同一页。
-      return { items, hasMore: all.length > 20, nextCursor: page.length ? page[page.length - 1].sortKey : cursor };
+      return { ...(profileAuthorId ? { profileAccountId: event.profileAccountId } : {}), items, hasMore: all.length > 20, nextCursor: page.length ? page[page.length - 1].sortKey : cursor };
     }
     const id = postId(event.postId), targetId = commentId(event.replyId);
     await getPost(id);

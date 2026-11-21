@@ -1,0 +1,14 @@
+:host { display: block; width: 100%; height: 100%; min-width: 0; border-radius: inherit; }
+.media-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; background: #f0f2f4; }
+.media-photo { position: absolute; inset: 0; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 220ms cubic-bezier(.22,.75,.3,1); }
+.media-shimmer { position: absolute; inset: 0; overflow: hidden; background: #f0f2f4; opacity: 1; pointer-events: none; transition: opacity 220ms ease-out; }
+.media-shimmer::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 55%; background: linear-gradient(105deg, transparent 0%, rgba(255,255,255,.12) 25%, rgba(255,255,255,.42) 50%, rgba(255,255,255,.12) 75%, transparent 100%); transform: translate3d(-160%,0,0); animation: media-sweep 1050ms linear 120ms infinite; }
+.is-paused .media-shimmer::after { animation-play-state: paused; }
+.is-ready .media-photo { opacity: 1; }
+.is-ready .media-shimmer { opacity: 0; }
+.is-ready .media-shimmer::after, .is-error .media-shimmer::after { animation: none; opacity: 0; }
+.is-known .media-photo, .is-known .media-shimmer { transition: none; }
+.media-failed { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.media-failed image { width: 30rpx; height: 30rpx; opacity: .4; }
+@keyframes media-sweep { from { transform: translate3d(-160%,0,0); } to { transform: translate3d(310%,0,0); } }
+@media (prefers-reduced-motion: reduce) { .media-shimmer::after { animation: none; } .media-photo, .media-shimmer { transition: none; } }

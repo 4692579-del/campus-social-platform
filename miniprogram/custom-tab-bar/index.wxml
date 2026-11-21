@@ -10,7 +10,7 @@
         </view>
         <view class="tab-menu-shade" bindtap="closeProfileMenu" catchtouchmove="stopMenuTouch" aria-hidden="{{!menuOpen}}" aria-role="button" aria-label="收起侧面菜单"></view>
       </view>
-      <button class="tab-compose-button nav-glass" bindtap="openComposer" hover-class="tab-item-pressed" aria-label="发布广场动态"><image class="compose-icon" src="/images/tab-bar/plus-blue.svg" mode="aspectFit" /></button>
+      <view class="tab-compose-glass nav-glass"><button class="tab-compose-button" bindtap="openComposer" hover-class="tab-item-pressed" aria-label="发布广场动态"><image class="compose-icon" src="/images/tab-bar/plus-blue.svg" mode="aspectFit" /></button></view>
     </view>
   </view>
 </view>

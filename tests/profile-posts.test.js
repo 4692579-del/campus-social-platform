@@ -22,8 +22,8 @@ function fixture(options = {}) {
     react: async () => ({ ...post, liked: true, likeCount: 1 }),
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
-    Page: value => { definition = value; },
-    require: name => name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, { showToast() {}, navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } :
+    Page: value => { definition = value; }, setTimeout, clearTimeout,
+    require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, { showToast() {}, navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } :
       name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : users,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       navigateTo: args => routes.push(args.url), showToast() {}, stopPullDownRefresh() {} },
@@ -117,7 +117,7 @@ test('本人列表首次无缓存按需读取，分页请求不会重复；退�
   f.page.selectContent(event('posts')); assert.equal(f.page.data.postsMenuOpen, false);
 });
 
-test('下拉刷新合并正在进行的读取，失败后停止转圈并保留现有内容', async () => {
+test('下拉刷新合并正在进行的读取，失败保留现有内容并完成Cui动画', async () => {
   let fail;
   const f = fixture({ cached: result, list: () => new Promise((resolve, reject) => { fail = reject; }) });
   f.page.onLoad(); f.page._visible = true;
@@ -126,7 +126,8 @@ test('下拉刷新合并正在进行的读取，失败后停止转圈并保留�
   assert.equal(f.calls.length, 1); assert.equal(f.page.data.profileRefreshing, true);
   await Promise.resolve(); assert.equal(f.page.data.profileRefreshing, true);
   fail(new Error('网络失败')); await reading; await refreshing;
-  assert.equal(f.page.data.profileRefreshing, false);
+  assert.equal(f.page.data.profileRefreshing, true);
+  f.page.resetProfilePull(); assert.equal(f.page.data.profileRefreshing, false);
   assert.equal(f.page.data.ownPosts[0].content, post.content);
   assert.equal(f.page.data.postsError, '网络失败');
 });

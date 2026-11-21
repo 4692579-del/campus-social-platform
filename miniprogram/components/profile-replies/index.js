@@ -6,9 +6,9 @@ const { rowView } = require('../../utils/comment-threads');
 const popup = (name, args) => new Promise((resolve, reject) => wx[name]({ ...args, success: resolve, fail: reject }));
 
 Component({
-  properties: { active: Boolean, viewer: Object },
+  properties: { active: Boolean, viewer: Object, accountId: String },
   data: { items: [], loading: false, error: '', hasMore: false },
-  observers: { 'active, viewer': function () { if (this._ready) this.sync(); } },
+  observers: { 'active, viewer, accountId': function () { if (this._ready) this.sync(); } },
   lifetimes: {
     attached() {
       this._ready = true;
@@ -29,7 +29,9 @@ Component({
     current(version = this._version) { return !this._dead && version === users.getSessionVersion(); },
     sync() {
       const version = users.getSessionVersion();
-      if (version !== this._version) {
+      const target = this.data.accountId || '';
+      if (version !== this._version || target !== this._target) {
+        this._target = target;
         this._version = version; this._request = null; this._cursor = '';
         this.setData({ items: [], loading: false, error: '', hasMore: false });
       }
@@ -37,7 +39,7 @@ Component({
       if (this.data.active && users.getCachedUser() && !this._hidden) return this.load();
     },
     showCached() {
-      const cached = square.cachedOwnReplies();
+      const cached = this.data.accountId ? square.cachedProfileReplies(this.data.accountId) : square.cachedOwnReplies();
       if (!cached) return;
       this._cursor = cached.nextCursor;
       const items = cached.items.map(item => ({ ...item, context: postView(item.context), reply: { ...rowView(item.reply), aiCanRetry: false } }));
@@ -53,21 +55,23 @@ Component({
     },
     load(force = false, more = false) {
       if (this._request || !this.current() || !users.getCachedUser() || this._hidden) return this._request || Promise.resolve();
-      const version = this._version;
+      const version = this._version, target = this._target;
+      const current = () => this.current(version) && target === this._target;
       this.setData({ loading: more || !this.data.items.length, error: '' });
       const cursor = more ? this._cursor : '';
-      const request = square.listOwnReplies({ force, cursor }).then(() => {
-        if (this.current(version)) this.showCached();
+      const request = square.listOwnReplies({ force, cursor, ...(this.data.accountId ? { profileAccountId: this.data.accountId } : {}) }).then(() => {
+        if (current()) this.showCached();
       }).catch(error => {
-        if (this.current(version)) {
+        if (current()) {
           this._failedMore = more;
+          if (this.data.accountId && error.code === 'PROFILE_NOT_FOUND') { this.setData({ items: [], hasMore: false }); this.triggerEvent('unavailable', { message: error.message }); }
           if (error.code === 'HISTORY_CHANGED') this._reload = true;
           else this.setData({ error: error.message || '回复读取失败，请重试' });
         }
       }).finally(() => {
         if (this._request !== request) return;
         this._request = null;
-        if (!this.current(version)) return;
+        if (!current()) return;
         this.setData({ loading: false });
         if (this._reload && this.data.active && !this._hidden) { this._reload = false; this.load(); }
       });
@@ -77,6 +81,8 @@ Component({
     loadMore() { if (this.data.hasMore) return this.load(false, true); },
     retry() { return this.load(true, Boolean(this._failedMore)); },
     entry(event) { return this.data.items.find(item => item._id === event.currentTarget.dataset.id); },
+    viewCommentAuthor(event) { const item = this.entry(event); if (item && this.current() && !this._hidden && !item.reply.author.isAI) this.triggerEvent('author', { author: item.reply.author }); },
+    viewContextAuthor(event) { const item = this.entry(event); if (item && item.context.author && this.current() && !this._hidden) this.triggerEvent('author', { author: item.context.author }); },
     openComment(event) {
       const item = this.entry(event);
       if (item && this.current() && !this._hidden) this.triggerEvent('open', { id: item.postId, replyId: item._id });
@@ -100,6 +106,7 @@ Component({
     },
     async manageComment(event) {
       const item = this.entry(event);
+      if (this.data.accountId) return;
       if (!item || this._menuBusy || !this.current() || this._hidden) return;
       const version = this._version;
       this._menuBusy = true;

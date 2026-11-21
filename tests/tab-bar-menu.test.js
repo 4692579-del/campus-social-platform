@@ -152,7 +152,7 @@ test('私信、消息、搜索页面在进入和就绪时恢复正确选中索�
     let definition;
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../miniprogram/pages/${name}/index.js`), 'utf8'), {
       Page: value => { definition = value; },
-      require: () => require('../miniprogram/utils/secondary-tab-page'),
+      require: name => name.includes('services/user') ? { searchSessionKey: () => 'guest:0', consumeSearchEntry: () => null } : name.includes('tab-selection') ? { pendingIndex: () => null } : name.includes('search-query') ? require('../miniprogram/utils/search-query') : require('../miniprogram/utils/secondary-tab-page'),
       wx: new Proxy({}, { get() { throw new Error('占位页面不应发起请求'); } }),
     });
     let state = {};

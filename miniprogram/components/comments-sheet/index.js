@@ -356,6 +356,11 @@ Component({
       this.renderComments();
       this.triggerEvent('changed', { id: this.data.postId });
     },
+    viewCommentAuthor(event) {
+      if (this._dead || this._pageHidden || this.data.sending) return;
+      const row = this.findComment(event.currentTarget.dataset.id);
+      if (row && !row.pending && row.author && !row.author.isAI) this.triggerEvent('author', { author: row.author });
+    },
     async manageComment(event) {
       if (this._commentMenuBusy || this.data.sending || this._dead || this._pageHidden) return;
       const user = users.getCachedUser();

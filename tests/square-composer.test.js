@@ -265,7 +265,7 @@ test('面板首帧复用真实头像昵称与草稿，不请求登录；关闭�
 test('键盘抬升仅缩短面板底部，顶部安全留白稳定，关闭后迟到的键盘事件不抖动', async () => {
   const f = composerFixture(); await f.attach(); const c = f.component;
   assert.equal(c.data.sheetTop, 102); assert.equal(c.data.viewportHeight, 812);
-  c.focusEditor(); c.keyboard({ detail: { height: 340 } });
+  c.focusEditor(); assert.equal(c.data.editorFocused, false); c.editorDidFocus(); c.keyboard({ detail: { height: 340 } });
   assert.equal(c.data.editorFocused, true); assert.equal(c.data.viewportHeight - c.data.sheetTop - c.data.keyboardHeight, 370);
   c.onInput(input('保留内容')); c.openPanel(panel('options'));
   assert.equal(c.data.keyboardHeight, 0); assert.equal(c.data.editorFocused, false);
@@ -595,7 +595,7 @@ test('发布textarea没有纵向滚动祖先、手势拦截祖先和行高回写
   assert.ok(ancestors && ancestors.length);
   assert.ok(ancestors.every(node => node.tag !== 'scroll-view' && !node.attributes.includes('catchtouchmove')));
   const textarea = markup.match(/<textarea\b[^>]*>/)[0];
-  assert.ok(!textarea.includes('auto-height')); assert.ok(!textarea.includes('bindlinechange'));
+  assert.match(textarea, /auto-height="{{!!quotePostId}}"/); assert.ok(!textarea.includes('bindlinechange'));
   assert.ok(!textarea.includes('editorHeight')); assert.match(textarea, /focus="{{editorFocusRequested}}"/);
   const css = fs.readFileSync('miniprogram/components/square-composer/index.wxss', 'utf8');
   assert.match(css, /\.compose-textarea[^}]*height: 100%/);
@@ -607,4 +607,89 @@ test('发布正文回车键只换行并原生保持键盘，不绑定回车发�
   const field = require('fs').readFileSync('miniprogram/components/square-composer/index.wxml', 'utf8').match(/<textarea\b[^>]*>/)[0];
   assert.match(field, /confirm-type="return"/); assert.match(field, /confirm-hold="{{true}}"/);
   assert.ok(!field.includes('bindconfirm="publish"'));
+});
+
+
+test('引用发布的原生输入框不在引用滚动区域内，不再用隐藏占位裁剪固定大输入框', () => {
+  const fs = require('fs'), markup = fs.readFileSync('miniprogram/components/square-composer/index.wxml', 'utf8');
+  const css = fs.readFileSync('miniprogram/components/square-composer/index.wxss', 'utf8');
+  const stack = []; let ancestors;
+  for (const match of markup.matchAll(/<([\w-]+)\b([^>]*?)>|<\/([\w-]+)\s*>/g)) {
+    if (match[3]) { stack.pop(); continue; }
+    if (match[1] === 'textarea') { ancestors = [...stack]; break; }
+    if (!match[2].trimEnd().endsWith('/')) stack.push({ tag: match[1], attributes: match[2] });
+  }
+  assert.ok(ancestors.every(node => node.tag !== 'scroll-view' && !node.attributes.includes('catchtouchmove')));
+  assert.ok(markup.indexOf('<textarea') < markup.indexOf('class="compose-attachments'));
+  assert.match(markup, /scroll-y="{{!!quotePostId}}"/); assert.match(markup, /bindtouchstart="editorTouchStart"/);
+  assert.doesNotMatch(markup + css, /compose-editor-measure/);
+  assert.doesNotMatch(css, /\.compose-body\.is-quoted[^}]*overflow-y/);
+  assert.doesNotMatch(css, /\.has-quote \.compose-textarea[^}]*[;{]\s*height:\s*260rpx/);
+  assert.match(css, /\.has-quote \.compose-textarea[^}]*position: relative[^}]*max-height: 260rpx/);
+});
+
+test('带图引用点击后先缩小窗口再收到focus/键盘事件时，仍保留完整视窗，不主动收键盘', async () => {
+  const quote = { _id: 'p_' + 'b'.repeat(40), content: '引用原文', images: ['public-quote-image'] };
+  for (const focusFirst of [true, false]) {
+    const window = { windowHeight: 812, windowWidth: 375, statusBarHeight: 44 };
+    const f = composerFixture({ window, initialQuote: quote, cachedQuote: quote, detail: async () => quote }); await f.attach(); const c = f.component;
+    c.editorTouchStart(); if (focusFirst) c.editorDidFocus();
+    window.windowHeight = 472; c.measure();
+    if (!focusFirst) c.editorDidFocus();
+    c.keyboard({ detail: { height: 340 } });
+    assert.equal(c.data.viewportHeight, 812); assert.equal(c.data.sheetTop, 102);
+    assert.equal(c.data.viewportHeight - c.data.sheetTop - c.data.keyboardHeight, 370);
+    assert.equal(c.data.editorFocusRequested, false); assert.equal(c.data.quotePostId, quote._id);
+    assert.equal(c.data.quote.images[0], 'public-quote-image'); assert.equal(f.requests.includes('hideKeyboard'), false);
+    const writes = [], update = c.setData;
+    c.setData = function(value) { writes.push(value); update.call(this, value); };
+    c.measure(); c.measure(); c.keyboard({ detail: { height: 340 } });
+    assert.equal(writes.length, 0, '相同窗口及重复键盘事件不再次触发布局'); f.detach();
+  }
+});
+
+test('键盘仍打开时发布输入框临时blur只观测状态，不下发focus=false或反复拉起；真实收起才释放请求', async () => {
+  const f = composerFixture(); await f.attach(); const c = f.component;
+  c.focusEditor(); c.editorDidFocus(); c.keyboard({ detail: { height: 320 } });
+  const writes = [], update = c.setData;
+  c.setData = function(value) { writes.push(value); update.call(this, value); };
+  c.blurEditor(); assert.equal(c.data.editorFocused, false); assert.equal(c.data.editorFocusRequested, true);
+  assert.ok(writes.every(value => !('editorFocusRequested' in value)));
+  c.editorDidFocus(); assert.equal(c.data.editorFocusRequested, true);
+  c.keyboard({ detail: { height: 0 } }); assert.equal(c.data.editorFocusRequested, false); assert.equal(c.data.keyboardHeight, 0);
+  assert.equal(f.requests.includes('hideKeyboard'), false); f.detach();
+});
+
+
+test('引用与首个编辑器同批确定模式，原动态网络读取不阻塞输入框挂载', async () => {
+  const quote = { _id: 'p_' + 'c'.repeat(40), content: '引用正文', images: ['published-photo'] };
+  let finish;
+  const f = composerFixture({ initialQuote: quote, detail: () => new Promise(resolve => { finish = resolve; }) });
+  const c = f.component, writes = [], update = c.setData;
+  c.setData = function(value) { writes.push(value); update.call(this, value); };
+  assert.equal(c.data.editorReady, false);
+  const attaching = f.attach();
+  assert.equal(c.data.editorReady, true); assert.equal(c.data.quotePostId, quote._id); assert.equal(c.data.quoteLoading, true);
+  const firstMount = writes.find(value => value.editorReady === true);
+  assert.equal(firstMount.quotePostId, quote._id, '禁止先挂载满高控件，再切换引用auto-height');
+  finish(quote); await attaching; assert.equal(c.data.editorReady, true); f.detach();
+});
+
+test('设置声明与退出确认只覆盖和禁用编辑器，不卸载或替换正文节点，引用位置不重新初始化', async () => {
+  const quote = { _id: 'p_' + 'd'.repeat(40), content: '原动态', images: ['published-photo'] };
+  const f = composerFixture({ initialQuote: quote, detail: async () => quote }); await f.attach(); const c = f.component;
+  c.onInput(input('本次正文')); const currentQuote = c.data.quote, images = c.data.quote.images;
+  const writes = [], update = c.setData; c.setData = function(value) { writes.push(value); update.call(this, value); };
+  for (const key of ['options', 'declaration', 'options']) { c.openPanel(panel(key)); assert.equal(c.data.editorReady, true); c.closePanel(); }
+  c.cancel(); assert.equal(c.data.exitConfirmVisible, true); assert.equal(c.data.editorReady, true); c.continueEditing();
+  assert.equal(c.data.content, '本次正文'); assert.equal(c.data.quote, currentQuote); assert.equal(c.data.quote.images, images);
+  assert.ok(writes.every(value => !('editorReady' in value)), '面板往返不能重新走挂载流程');
+  const fs = require('fs'), markup = fs.readFileSync('miniprogram/components/square-composer/index.wxml', 'utf8');
+  const field = markup.match(/<textarea\b[^>]*>/)[0];
+  assert.match(field, /wx:if="{{editorReady}}"/); assert.match(field, /disabled="{{[^}]*panel[^}]*exitConfirmVisible/);
+  assert.doesNotMatch(markup, /compose-editor-preview/);
+  const css = fs.readFileSync('miniprogram/components/square-composer/index.wxss', 'utf8');
+  const rule = css.split('.has-quote .compose-textarea {')[1].split('}')[0];
+  assert.ok(rule.includes('height: 53rpx;')); assert.ok(rule.includes('max-height: 260rpx;')); assert.ok(!rule.includes('height: auto;'));
+  f.detach();
 });

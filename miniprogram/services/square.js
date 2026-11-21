@@ -7,11 +7,36 @@ let ownHistory = null, historyRevision = 0;
 const historyListeners = new Set();
 function subscribeHistory(listener) { historyListeners.add(listener); return () => historyListeners.delete(listener); }
 function historyChanged(invalidate = false) {
-  if (invalidate) { historyRevision++; if (ownHistory) ownHistory.time = 0; }
+  if (invalidate) { historyRevision++; if (ownHistory) ownHistory.time = 0; for (const cached of publicHistories.values()) cached.time = 0; }
   for (const listener of historyListeners) { try { listener({ invalidated: invalidate }); } catch (error) { /* 展示不影响保存。 */ } }
 }
 let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
 const profileFeeds = new Map();
+const searchFeeds = new Map();
+const followStates = new Map(), followProfiles = new Map(), followWrites = new Map(), followListeners = new Set();
+let followRevision = 0, followingFeed = null, followWorker = null;
+const publicContent = new Map(), publicHistories = new Map(), publicEpoch = new Map();
+const unavailablePublicAccounts = new Set();
+function clearPublicAccount(accountId) {
+  unavailablePublicAccounts.add(accountId);
+  publicEpoch.set(accountId, (publicEpoch.get(accountId) || 0) + 1); historyRevision++;
+  for (const key of publicContent.keys()) if (key.startsWith(accountId + ':')) publicContent.delete(key);
+  publicHistories.delete(accountId);
+  for (const [key, cached] of searchFeeds) if (cached.value.accountId === accountId) searchFeeds.delete(key);
+}
+let profilePin = null, pinRevision = 0, pinWrite = null;
+function orderProfileItems(items, pinnedPostId) {
+  const time = row => new Date(row.createdAt && row.createdAt.$date || row.createdAt).getTime() || 0;
+  return items.slice().sort((a, b) => Number(b._id === pinnedPostId) - Number(a._id === pinnedPostId) || time(b) - time(a) || b._id.localeCompare(a._id));
+}
+function cachedProfilePin() { session(); return profilePin; }
+function saveProfilePin(value) {
+  if (typeof value.pinnedPostId !== 'string' || !Number.isSafeInteger(value.pinVersion) || value.pinVersion < 0) throw new Error('置顶状态暂不可用，请更新云函数');
+  if (profilePin && profilePin.pinVersion > value.pinVersion) return;
+  profilePin = { pinnedPostId: value.pinnedPostId, pinVersion: value.pinVersion };
+  const cached = profileFeeds.get('posts');
+  if (cached) Object.assign(cached.value, profilePin, { items: orderProfileItems(cached.value.items, profilePin.pinnedPostId) });
+}
 const posts = new Map(), postTimes = new Map(), replies = new Map(), pending = new Map(), revisions = new Map();
 const deleted = new Set();
 const likeWrites = new Map(), postListeners = new Set();
@@ -25,10 +50,143 @@ function subscribeAI(listener) { aiListeners.add(listener); return () => aiListe
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { ownHistory = null; historyRevision++; }
-  if (key !== owner) { owner = key; generation += 1; profileFeeds.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
+  if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; }
+  if (key !== owner) { for (const write of followWrites.values()) write.reject(Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' })); followWorker = null; followStates.clear(); followProfiles.clear(); followWrites.clear(); followRevision++; followingFeed = null; owner = key; generation += 1; searchFeeds.clear(); profileFeeds.clear(); publicContent.clear(); publicHistories.clear(); publicEpoch.clear(); unavailablePublicAccounts.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
 }
+function subscribeFollow(listener) { followListeners.add(listener); return () => followListeners.delete(listener); }
+function cachedFollowState(accountId) {
+  session(); const confirmed = followStates.get(accountId)?.value || null, write = followWrites.get(accountId);
+  return write ? { ...(confirmed || { accountId, version: 0 }), following: write.desired, pending: true } : confirmed;
+}
+function cachedFollowProfile(accountId) {
+  session(); const cached = followProfiles.get(accountId);
+  if (!cached) return null;
+  const value = { ...cached.value }, viewer = users.getCachedUser();
+  for (const [id, write] of followWrites) {
+    if (!write.confirmed || write.confirmed.following === write.desired) continue;
+    const delta = write.desired ? 1 : -1;
+    if (viewer && accountId === viewer.accountId) value.followingCount = Math.max(0, value.followingCount + delta);
+    if (accountId === id) value.followerCount = Math.max(0, value.followerCount + delta);
+  }
+  const state = cachedFollowState(accountId);
+  if (state && typeof value.following === 'boolean') { value.following = state.following; value.pending = Boolean(state.pending); }
+  return value;
+}
+function emitFollow(accountId, { rollback = false } = {}) {
+  followRevision++;
+  if (followingFeed) followingFeed.time = 0;
+  const state = cachedFollowState(accountId), event = { ...(state || { accountId, following: false, version: 0 }), pending: Boolean(state?.pending), rollback, changed: true };
+  for (const listener of followListeners) { try { listener(event); } catch (error) { /* 展示不阻断后台保存。 */ } }
+}
+function saveFollowState(value) {
+  if (!value || !/^[1-9][0-9]{7}$/.test(value.accountId || '') || typeof value.following !== 'boolean' || !Number.isSafeInteger(value.version) || value.version < 0) throw new Error('关注服务需要更新，请部署 userService');
+  const old = followStates.get(value.accountId);
+  if (!old || value.version >= old.value.version) followStates.set(value.accountId, { value, time: Date.now() });
+}
+function saveFollowProfile(value) {
+  if (!value || !/^[1-9][0-9]{7}$/.test(value.accountId || '') || !['followingCount', 'followerCount', 'version'].every(key => Number.isSafeInteger(value[key]) && value[key] >= 0)) throw new Error('关注统计暂不可用');
+  const old = followProfiles.get(value.accountId);
+  if (!old || value.version >= old.value.version) followProfiles.set(value.accountId, { value, time: Date.now() });
+  if (typeof value.following === 'boolean') saveFollowState({ accountId: value.accountId, following: value.following, version: value.relationVersion });
+}
+function getFollowProfile(accountId, { force = false } = {}) {
+  session(); const user = users.getCachedUser();
+  if (!user) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
+  const id = accountId || user.accountId, cached = followProfiles.get(id), revision = followRevision;
+  if (followWrites.size) return cached ? Promise.resolve(cachedFollowProfile(id)) : Promise.reject(Object.assign(new Error('关注状态正在保存'), { code: 'FOLLOW_PENDING' }));
+  if (!force && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedFollowProfile(id));
+  return merged(`follow-profile:${id}:${revision}`, async () => {
+    const result = await call('getSquareFollowProfile', { accountId: id }, true);
+    if (result.profile?.accountId !== id) throw new Error('关注统计暂不可用');
+    if (followWrites.size || revision !== followRevision) {
+      const latest = cachedFollowProfile(id);
+      if (latest) return latest;
+      throw Object.assign(new Error('关注状态正在更新'), { code: 'FOLLOW_PENDING' });
+    }
+    saveFollowProfile(result.profile); return cachedFollowProfile(id);
+  });
+}
+function getFollowStates(ids, { force = false } = {}) {
+  session(); if (!users.getCachedUser()) return Promise.resolve([]);
+  const unique = [...new Set(ids)].filter(id => /^[1-9][0-9]{7}$/.test(id || ''));
+  const missing = unique.filter(id => !followWrites.has(id) && (force || !followStates.has(id) || Date.now() - followStates.get(id).time >= TTL)), revision = followRevision;
+  return Promise.all(Array.from({ length: Math.ceil(missing.length / 50) }, (_, n) => {
+    const batch = missing.slice(n * 50, n * 50 + 50).sort();
+    return merged(`follow-states:${batch.join(',')}:${revision}`, async () => {
+      const result = await call('getSquareFollowStates', { accountIds: batch }, true);
+      if (!Array.isArray(result.items) || result.items.length !== batch.length || new Set(result.items.map(item => item.accountId)).size !== batch.length || result.items.some(item => !batch.includes(item.accountId))) throw new Error('关注状态暂不可用');
+      if (revision === followRevision) result.items.forEach(item => { if (!followWrites.has(item.accountId)) saveFollowState(item); });
+    });
+  })).then(() => unique.map(id => cachedFollowState(id)).filter(Boolean));
+}
+function setFollow(accountId, following) {
+  session(); const viewer = users.getCachedUser();
+  if (!viewer) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
+  if (!/^[1-9][0-9]{7}$/.test(accountId || '') || typeof following !== 'boolean' || accountId === viewer.accountId) return Promise.reject(new Error('关注参数不正确'));
+  let write = followWrites.get(accountId);
+  if (write) {
+    if (write.desired !== following) { write.desired = following; emitFollow(accountId); }
+    return write.promise;
+  }
+  write = { desired: following, confirmed: followStates.get(accountId)?.value || null, generation, resolve: null, reject: null };
+  write.promise = new Promise((resolve, reject) => { write.resolve = resolve; write.reject = reject; });
+  followWrites.set(accountId, write);
+  emitFollow(accountId);
+  drainFollowWrites();
+  return write.promise;
+}
+async function drainFollowWrites() {
+  if (followWorker) return;
+  const worker = { generation }; followWorker = worker;
+  try {
+    // 同一会话串行保存，单个目标随时合并为最新意图；所有入口同步使用乐观投影。
+    while (followWorker === worker && worker.generation === generation && followWrites.size) {
+      const [accountId, write] = followWrites.entries().next().value, target = write.desired;
+      try {
+        const result = await call('setSquareFollow', { accountId, following: target }, true);
+        if (followWorker !== worker || followWrites.get(accountId) !== write) continue;
+        if (result.state?.accountId !== accountId || result.state.following !== target || result.profile?.accountId !== accountId || result.viewer?.accountId !== users.getCachedUser()?.accountId) throw new Error('关注状态确认失败，请刷新后重试');
+        saveFollowState(result.state); saveFollowProfile(result.profile); saveFollowProfile(result.viewer);
+        write.confirmed = followStates.get(accountId).value;
+        if (write.desired === target) {
+          followWrites.delete(accountId);
+          if (!target && followingFeed) followingFeed.value.items = followingFeed.value.items.filter(post => post.author.accountId !== accountId);
+          emitFollow(accountId); write.resolve(cachedFollowState(accountId));
+        } else emitFollow(accountId);
+      } catch (error) {
+        session();
+        if (followWorker !== worker || followWrites.get(accountId) !== write) continue;
+        // 已被反向点击替代的失败不打断后续意图，下一次只保存用户最新选择。
+        if (write.desired !== target && error.code !== 'SESSION_CHANGED') continue;
+        followWrites.delete(accountId); emitFollow(accountId, { rollback: true }); write.reject(error);
+      }
+    }
+  } finally { if (followWorker === worker) followWorker = null; }
+}
+function projectFollowing(result) {
+  if (!result) return null;
+  return { ...result, items: result.items.filter(post => {
+    const write = followWrites.get(post.author.accountId);
+    return !write || write.desired;
+  }) };
+}
+function cachedFollowingFeed() { session(); return projectFollowing(followingFeed?.value || null); }
+function listFollowing({ force = false, cursor = '' } = {}) {
+  session(); const revision = followRevision, before = new Map(revisions), removed = removals;
+  if (!force && !cursor && followingFeed && Date.now() - followingFeed.time < TTL) return Promise.resolve(projectFollowing(followingFeed.value));
+  return merged(`following-feed:${cursor}:${revision}`, async () => {
+    const result = await call('listSquareFollowing', { cursor }, true);
+    if (revision !== followRevision || removed !== removals) throw Object.assign(new Error('关注动态已更新，请刷新'), { code: 'FOLLOW_CHANGED' });
+    if (!Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' || result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('关注动态暂不可用');
+    const rows = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
+    const items = [...new Map([...(cursor && followingFeed ? followingFeed.value.items : []), ...rows].map(post => [post._id, post])).values()];
+    followingFeed = { time: Date.now(), value: { ...result, items } };
+    for (const post of rows) { posts.set(post._id, { ...post, content: post.fullContent || post.content, truncated: false }); postTimes.set(post._id, Date.now()); }
+    return projectFollowing(followingFeed.value);
+  });
+}
+
 function cachedOwnStats() { session(); return ownStats && ownStats.value; }
 function invalidateOwnStats() { statsRevision += 1; if (ownStats) ownStats.time = 0; }
 function getOwnStats() {
@@ -61,19 +219,25 @@ function cachedOwnFeed(postType = 'all') {
   }
   if (!cached) return null;
   cached.value.items = cached.value.items.map(post => posts.has(post._id) ? previewPost(posts.get(post._id)) : post);
+  if (postType === 'posts' && profilePin) Object.assign(cached.value, profilePin, { items: orderProfileItems(cached.value.items, profilePin.pinnedPostId) });
   return cached.value;
 }
 function cachedPost(id) { session(); return posts.get(id) || (feed && feed.value.items.find(item => item._id === id)) || null; }
 function cachedReplies(id) { session(); return replies.get(id) || null; }
 function cachedOwnReplies() { session(); return ownHistory && ownHistory.value; }
-function listOwnReplies({ cursor = '', force = false } = {}) {
+function listOwnReplies({ cursor = '', force = false, profileAccountId = '' } = {}) {
   session();
-  if (!force && !cursor && ownHistory && Date.now() - ownHistory.time < TTL) return Promise.resolve(ownHistory.value);
+  const cached = profileAccountId ? publicHistories.get(profileAccountId) : ownHistory;
+  if (!force && !cursor && cached && Date.now() - cached.time < TTL) return Promise.resolve(cached.value);
   const revision = historyRevision;
-  return merged(`own-replies:${cursor}:${revision}`, async () => {
+  return merged(`own-replies:${profileAccountId || 'self'}:${cursor}:${revision}`, async () => {
     const versions = new Map(commentVersions);
-    const result = await call('listSquareOwnReplies', { cursor }, true);
+    let result;
+    try { result = await call('listSquareOwnReplies', { cursor, ...(profileAccountId ? { profileAccountId } : {}) }, true); }
+    catch (error) { if (profileAccountId && error.code === 'PROFILE_NOT_FOUND') clearPublicAccount(profileAccountId); throw error; }
     if (revision !== historyRevision) throw Object.assign(new Error('回复记录已更新，请重试'), { code: 'HISTORY_CHANGED' });
+    if (profileAccountId && result.profileAccountId !== profileAccountId) throw new Error('个人回复服务需要更新');
+    const previous = profileAccountId ? publicHistories.get(profileAccountId) : ownHistory;
     if (!Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' ||
       result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('回复记录暂不可用');
     const rows = result.items.filter(item => item.reply && item._id === item.reply._id && !deleted.has(item.postId) && !commentGone(item.reply)).map(item => {
@@ -88,10 +252,11 @@ function listOwnReplies({ cursor = '', force = false } = {}) {
         folded: Boolean(parent.folded), content: parent.folded ? '' : Array.from(parent.content || '').slice(0, 100).join(''), imageCount: parent.folded ? 0 : (parent.images || []).length } : item.context;
       return { ...item, reply, context };
     });
-    const items = [...new Map([...(cursor && ownHistory ? ownHistory.value.items : []), ...rows].map(item => [item._id, item])).values()]
+    const items = [...new Map([...(cursor && previous ? previous.value.items : []), ...rows].map(item => [item._id, item])).values()]
       .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
-    ownHistory = { time: Date.now(), value: { ...result, items } };
-    return ownHistory.value;
+    const saved = { time: Date.now(), value: { ...result, items } };
+    if (profileAccountId) { unavailablePublicAccounts.delete(profileAccountId); publicHistories.set(profileAccountId, saved); if (publicHistories.size > 32) publicHistories.delete(publicHistories.keys().next().value); } else ownHistory = saved;
+    return saved.value;
   });
 }
 async function replyContext(id, replyId) {
@@ -123,8 +288,8 @@ function saveComment(row, changed = false, notify = false) {
   comments.set(row._id, row);
   if (changed) commentVersions.set(row._id, ++mutation);
   for (const list of [...replies.values(), ...children.values()]) list.items = list.items.map(item => item._id === row._id ? row : item);
-  if (ownHistory) {
-    ownHistory.value.items = ownHistory.value.items.map(item => {
+  for (const history of [ownHistory, ...publicHistories.values()].filter(Boolean)) {
+    history.value.items = history.value.items.map(item => {
       if (row.folded && [...(item.reply.ancestorIds || []), item.reply.rootId].includes(row._id)) return { ...item,
         reply: { ...item.reply, folded: true, hiddenByAncestor: true, content: '', images: [] }, context: { folded: true, content: '', imageCount: 0 } };
       if (item._id === row._id && !item.reply.hiddenByAncestor) return { ...item, reply: row };
@@ -132,9 +297,9 @@ function saveComment(row, changed = false, notify = false) {
         content: row.folded ? '' : Array.from(row.content || '').slice(0, 100).join(''), imageCount: row.folded ? 0 : (row.images || []).length } };
       return item;
     });
-    if (changed) ownHistory.time = 0;
-    if (notify) historyChanged();
+    if (changed) history.time = 0;
   }
+  if (notify) historyChanged();
   if (notify) for (const listener of commentListeners) {
     try { listener(row); } catch (error) { /* 展示订阅不能影响后台保存。 */ }
   }
@@ -162,8 +327,10 @@ function updatePost(post, prepend = false) {
   if (deleted.has(post._id)) return;
   post = pendingLike(post);
   const firstPublication = prepend && !posts.has(post._id);
+  for (const cached of searchFeeds.values()) { if (prepend) cached.time = 0; if (cached.value.kind === 'square') cached.value.items = cached.value.items.map(row => row._id === post._id ? previewPost(post) : row); }
   posts.set(post._id, post);
   postTimes.set(post._id, Date.now());
+  if (followingFeed) followingFeed.value.items = followingFeed.value.items.map(row => row._id === post._id ? previewPost(post) : row);
   if (feed) {
     const found = feed.value.items.some(item => item._id === post._id);
     feed.value.items = feed.value.items.map(item => item._id === post._id ? previewPost(post) : item);
@@ -185,6 +352,7 @@ function updatePost(post, prepend = false) {
       if (postType === 'all') ownFeed = saved; else profileFeeds.set(postType, saved);
     }
   }
+  for (const [key, cached] of publicContent) if (!key.endsWith(':album')) cached.value.items = cached.value.items.map(row => row._id === post._id ? previewPost(post) : row);
   for (const listener of postListeners) {
     try { listener(post); } catch (error) { /* 页面观察者不能影响已完成的保存或缓存更新。 */ }
   }
@@ -199,7 +367,11 @@ function removedQuote(quote, id) {
   return nested === quote.quote ? quote : { ...quote, quote: nested };
 }
 function removePost(id, knownOwn = false) {
-  if (ownHistory) ownHistory.value.items = ownHistory.value.items.filter(item => item.postId !== id);
+  for (const cached of searchFeeds.values()) if (cached.value.kind === 'square') { cached.value.items = cached.value.items.filter(row => row._id !== id); cached.time = 0; }
+  if (followingFeed) { followingFeed.value.items = followingFeed.value.items.filter(row => row._id !== id); followingFeed.time = 0; }
+  if (profilePin && profilePin.pinnedPostId === id) { pinRevision++; saveProfilePin({ pinnedPostId: '', pinVersion: profilePin.pinVersion + 1 }); }
+  for (const history of [ownHistory, ...publicHistories.values()].filter(Boolean)) history.value.items = history.value.items.filter(item => item.postId !== id);
+  for (const [key, cached] of publicContent) { const oldLength = cached.value.items.length; cached.value.items = cached.value.items.filter(row => key.endsWith(':album') ? row.postId !== id : row._id !== id); if (!key.endsWith(':album') && cached.value.items.length !== oldLength) cached.value.nextOffset = Math.max(0, cached.value.nextOffset - 1); if (cached.value.pinnedPostId === id) cached.value.pinnedPostId = ''; cached.time = 0; }
   historyChanged(true);
   invalidateOwnStats();
   const newlyRemoved = !deleted.has(id);
@@ -259,6 +431,7 @@ function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}
   const cached = mine ? ownCache(postType) : feed;
   if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cached.value);
   return merged(`${mine ? 'own:' + postType : 'feed'}:${offset}`, async () => {
+    const pinBefore = pinRevision;
     const revision = mutation;
     const before = new Map(revisions);
     let requestOffset = offset, removalVersion = removals;
@@ -270,6 +443,10 @@ function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}
       if (removalVersion !== removals) throw new Error('动态列表已更新，请刷新后重试');
     }
     if (mine && (result.mine !== true || postType !== 'all' && result.postType !== postType)) throw new Error('个人动态服务需要更新，请重新部署 userService 云函数');
+    if (mine && postType === 'posts') {
+      if (pinBefore !== pinRevision || profilePin && Number.isSafeInteger(result.pinVersion) && result.pinVersion < profilePin.pinVersion) throw Object.assign(new Error('置顶状态已更新，请重试'), { code: 'PIN_CHANGED' });
+      if (typeof result.pinnedPostId === 'string') saveProfilePin(result);
+    }
     const currentItems = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
     const timestamp = post => new Date(post.createdAt && post.createdAt.$date || post.createdAt).getTime() || 0;
     const latest = mine ? ownCache(postType) : feed;
@@ -278,11 +455,85 @@ function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}
     const allTotal = mine && latest && (requestOffset || revision !== mutation) ? latest.value.allTotal : result.allTotal;
     const saved = { value: { ...result, ...(mine && Number.isSafeInteger(total) ? { total } : {}), ...(Number.isSafeInteger(allTotal) ? { allTotal } : {}), items }, time: Date.now() };
     if (mine && postType === 'all') ownFeed = saved;
-    else if (mine) profileFeeds.set(postType, saved);
+    else if (mine) {
+      if (postType === 'posts' && profilePin) Object.assign(saved.value, profilePin, { items: orderProfileItems(items, profilePin.pinnedPostId) });
+      profileFeeds.set(postType, saved);
+    }
     else feed = saved;
     for (const post of items) if (!post.truncated || typeof post.fullContent === 'string') {
       posts.set(post._id, { ...post, content: post.fullContent || post.content, truncated: false }); postTimes.set(post._id, Date.now());
     }
+    return saved.value;
+  });
+}
+function searchKey(keyword, accountId, kind) { return JSON.stringify([String(keyword || '').trim(), accountId || '', kind || 'square']); }
+function cachedSearch({ keyword = '', accountId = '', kind = 'square' } = {}) {
+  session(); const cached = searchFeeds.get(searchKey(keyword, accountId, kind));
+  if (!cached) return null;
+  if (kind === 'square') cached.value.items = cached.value.items.filter(row => !deleted.has(row._id)).map(row => posts.has(row._id) ? previewPost(posts.get(row._id)) : row);
+  return cached.value;
+}
+function searchContent({ keyword = '', accountId = '', kind = 'square', cursor = '', force = false } = {}) {
+  session(); keyword = String(keyword).trim(); const key = searchKey(keyword, accountId, kind), cached = searchFeeds.get(key);
+  if (!force && !cursor && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedSearch({ keyword, accountId, kind }));
+  const revision = removals, epoch = publicEpoch.get(accountId) || 0, before = new Map(revisions);
+  return merged(`search:${key}:${cursor}:${revision}:${epoch}`, async () => {
+    let result;
+    try { result = await call('searchSquareContent', { keyword, accountId, kind, cursor }, Boolean(accountId || kind === 'users')); }
+    catch (error) { if (accountId && error.code === 'PROFILE_NOT_FOUND') { clearPublicAccount(accountId); if (typeof users.invalidatePublicProfile === 'function') users.invalidatePublicProfile(accountId, { unavailable: true }); } throw error; }
+    if (revision !== removals || epoch !== (publicEpoch.get(accountId) || 0)) throw Object.assign(new Error('搜索内容已更新，请重试'), { code: 'SEARCH_CHANGED' });
+    if (result.kind !== kind || result.keyword !== keyword || result.accountId !== accountId || !Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' || result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('搜索服务需要更新，请部署完整 userService');
+    const rows = kind === 'square' ? result.items.filter(row => !deleted.has(row._id)).map(row => pendingLike(before.get(row._id) !== revisions.get(row._id) && posts.has(row._id) ? previewPost(posts.get(row._id)) : row)) : result.items;
+    const previous = searchFeeds.get(key), id = row => kind === 'square' ? row._id : row.accountId;
+    const items = [...new Map([...(cursor && previous ? previous.value.items : []), ...rows].map(row => [id(row), row])).values()];
+    searchFeeds.set(key, { value: { ...result, items }, time: Date.now() });
+    if (searchFeeds.size > 32) searchFeeds.delete(searchFeeds.keys().next().value);
+    if (kind === 'square') for (const row of rows) { posts.set(row._id, { ...row, content: row.fullContent || row.content, truncated: false }); postTimes.set(row._id, Date.now()); }
+    return cachedSearch({ keyword, accountId, kind });
+  });
+}
+
+function cachedProfileReplies(accountId) { session(); return unavailablePublicAccounts.has(accountId) ? null : publicHistories.get(accountId)?.value || null; }
+function cachedPublicContent(accountId, kind) {
+  session();
+  if (!users.getCachedUser() || unavailablePublicAccounts.has(accountId)) return null;
+  const key = `${accountId}:${kind}`;
+  let cached = publicContent.get(key);
+  if (!cached && ['posts', 'quotes', 'album'].includes(kind)) {
+    const known = [...posts.values()].filter(row => row.author && row.author.accountId === accountId && !deleted.has(row._id));
+    const items = kind === 'album' ? known.flatMap(row => (row.images || []).map((fileID, index) => ({ _id: `${row._id}_${index}`, postId: row._id, fileID, createdAt: row.createdAt, index }))) :
+      orderProfileItems(known.filter(row => ownMatches(row, kind)).map(previewPost), '');
+    if (items.length) { cached = { time: 0, value: { profileAccountId: accountId, items, hasMore: true, nextOffset: 0 } }; publicContent.set(key, cached); }
+  }
+  if (!cached) return null;
+  if (kind !== 'album') cached.value.items = orderProfileItems(cached.value.items.filter(row => !deleted.has(row._id)).map(row => posts.has(row._id) ? previewPost(posts.get(row._id)) : row), kind === 'posts' ? cached.value.pinnedPostId : '');
+  return cached.value;
+}
+function listPublicContent(accountId, kind, { force = false, offset = 0 } = {}) {
+  session();
+  if (!/^[1-9][0-9]{7}$/.test(accountId || '') || !['posts', 'quotes', 'album'].includes(kind)) return Promise.reject(new Error('个人主页参数不正确'));
+  const key = `${accountId}:${kind}`, cached = publicContent.get(key);
+  if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedPublicContent(accountId, kind));
+  return merged(`public:${key}:${offset}`, async () => {
+    const removalVersion = removals, before = new Map(revisions), epoch = publicEpoch.get(accountId) || 0;
+    let result;
+    try { result = await call(kind === 'album' ? 'listSquareAlbum' : 'listSquarePosts', { profileAccountId: accountId, offset,
+      ...(kind !== 'album' ? { postType: kind } : {}) }, true); }
+    catch (error) { if (error.code === 'PROFILE_NOT_FOUND') clearPublicAccount(accountId); throw error; }
+    if (epoch !== (publicEpoch.get(accountId) || 0)) throw Object.assign(new Error('个人主页状态已变化'), { code: 'PROFILE_CHANGED' });
+    if (result.profileAccountId !== accountId || !Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || !Number.isSafeInteger(result.nextOffset)) throw new Error('个人主页服务需要更新，请部署 userService');
+    if (removalVersion !== removals) throw new Error('动态已更新，请刷新后重试');
+    const incoming = kind === 'album' ? result.items.filter(row => !deleted.has(row.postId)) : result.items.filter(row => !deleted.has(row._id)).map(row =>
+      pendingLike(before.get(row._id) !== revisions.get(row._id) && posts.has(row._id) ? previewPost(posts.get(row._id)) : row));
+    const previous = publicContent.get(key);
+    let items = offset && previous ? [...new Map([...previous.value.items, ...incoming].map(row => [row._id, row])).values()] : incoming;
+    if (kind !== 'album') {
+      items = orderProfileItems(items, kind === 'posts' ? result.pinnedPostId : '');
+      for (const post of items) { posts.set(post._id, { ...post, content: post.fullContent || post.content }); postTimes.set(post._id, Date.now()); }
+    }
+    unavailablePublicAccounts.delete(accountId);
+    const saved = { time: Date.now(), value: { ...result, items } }; publicContent.set(key, saved);
+    if (publicContent.size > 64) publicContent.delete(publicContent.keys().next().value);
     return saved.value;
   });
 }
@@ -551,12 +802,33 @@ async function deletePost(id) {
   if (result.quotedPost) updatePost(result.quotedPost);
   return id;
 }
+async function setProfilePin(id, pinned) {
+  session(); unavailable(id);
+  if (pinWrite) throw new Error('正在更新置顶，请稍候');
+  const ticket = {}; pinWrite = ticket;
+  try {
+    const result = await call('setSquareProfilePin', { postId: id, pinned }, true);
+    unavailable(id);
+    if (!result.post || result.post._id !== id || result.pinnedPostId !== (pinned ? id : '')) throw new Error('置顶未确认，请重试');
+    if (profilePin && profilePin.pinVersion > result.pinVersion) throw Object.assign(new Error('置顶状态已变化，请刷新后重试'), { code: 'PIN_CHANGED' });
+    pinRevision++;
+    saveProfilePin(result);
+    updatePost(result.post);
+    const cached = profileFeeds.get('posts');
+    if (cached) {
+      if (!cached.value.items.some(row => row._id === id)) cached.value.items.push(previewPost(result.post));
+      cached.value.items = orderProfileItems(cached.value.items, result.pinnedPostId);
+      cached.time = 0;
+    }
+    return profilePin;
+  } finally { if (pinWrite === ticket) pinWrite = null; }
+}
 async function deleteReply(id, replyId) {
   const result = await call('deleteSquareReply', { postId: id, replyId }, true);
   if (result.deletedId !== replyId || !result.post) throw new Error('删除未确认，请重试');
   unavailable(id);
   deletedComments.add(replyId); commentRemovals += 1;
-  if (ownHistory) ownHistory.value.items = ownHistory.value.items.filter(item => !commentGone(item.reply)).map(item =>
+  for (const history of [ownHistory, ...publicHistories.values()].filter(Boolean)) history.value.items = history.value.items.filter(item => !commentGone(item.reply)).map(item =>
     item.context._id === replyId ? { ...item, context: { unavailable: true } } : item);
   historyChanged(true);
   revisions.set(id, ++mutation);
@@ -596,4 +868,4 @@ async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };
+module.exports = { cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };

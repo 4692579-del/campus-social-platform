@@ -11,6 +11,81 @@ let pendingAccountInfo = null;
 let pendingCertification = null;
 let dataVersion = 0;
 let aiUsageCache = null, pendingAIUsage = null, aiUsageRevision = 0;
+const publicProfiles = new Map(), publicProfileReads = new Map();
+const publicAccountInfos = new Map(), publicAccountInfoReads = new Map();
+const unavailablePublicProfiles = new Set();
+let publicProfileRevision = 0;
+let searchEntry = null;
+function searchSessionKey() { return `${getCachedUser()?._id || 'guest'}:${sessionVersion}`; }
+function stageProfileSearch(accountId) {
+  if (!getCachedUser() || !/^[1-9][0-9]{7}$/.test(accountId || '')) return null;
+  const ticket = { accountId, session: searchSessionKey(), createdAt: Date.now() }; searchEntry = ticket; return ticket;
+}
+function cancelSearchEntry(ticket) { if (searchEntry === ticket) searchEntry = null; }
+function consumeSearchEntry() {
+  const value = searchEntry; searchEntry = null;
+  return value && value.session === searchSessionKey() && Date.now() - value.createdAt < 30000 ? value : null;
+}
+
+function clearPublicProfiles() { publicAccountInfos.clear(); publicAccountInfoReads.clear(); publicProfiles.clear(); publicProfileReads.clear(); unavailablePublicProfiles.clear(); publicProfileRevision++; }
+function invalidatePublicProfile(accountId, { unavailable = false } = {}) { publicAccountInfos.delete(accountId); publicAccountInfoReads.delete(accountId); publicProfiles.delete(accountId); publicProfileReads.delete(accountId); if (unavailable) unavailablePublicProfiles.add(accountId); publicProfileRevision++; }
+function getCachedPublicProfile(accountId) { return getCachedUser() && !unavailablePublicProfiles.has(accountId) && publicProfiles.get(accountId)?.value || null; }
+function seedPublicProfile(author) {
+  if (!getCachedUser() || !author || !/^[1-9][0-9]{7}$/.test(author.accountId || '') || publicProfiles.has(author.accountId) || unavailablePublicProfiles.has(author.accountId)) return;
+  publicProfiles.set(author.accountId, { time: 0, value: { accountId: author.accountId, nickname: author.nickname || '', avatarFileID: author.avatarFileID || '', isVerified: Boolean(author.verified) } });
+  if (publicProfiles.size > 64) publicProfiles.delete(publicProfiles.keys().next().value);
+}
+function getPublicProfile(accountId, { force = false } = {}) {
+  if (!getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录后查看个人主页'), { code: 'UNAUTHENTICATED' }));
+  if (!/^[1-9][0-9]{7}$/.test(accountId || '')) return Promise.reject(new Error('该用户暂不可查看'));
+  const cached = publicProfiles.get(accountId);
+  if (!force && cached && fresh(cached.time)) return Promise.resolve(cached.value);
+  if (publicProfileReads.has(accountId)) return publicProfileReads.get(accountId);
+  const version = sessionVersion, revision = publicProfileRevision, owner = getCachedUser()._id;
+  const promise = request('getSquarePublicProfile', { accountId }, 'square').then(result => {
+    if (version !== sessionVersion || !getCachedUser() || getCachedUser()._id !== owner) throw Object.assign(new Error('登录状态已变更'), { code: 'SESSION_CHANGED' });
+    if (revision !== publicProfileRevision) throw Object.assign(new Error('资料已更新，请重试'), { code: 'PROFILE_CHANGED' });
+    const profile = result && result.profile;
+    if (!profile || profile.accountId !== accountId) throw new Error('个人主页读取失败，请更新云函数');
+    unavailablePublicProfiles.delete(accountId);
+    publicProfiles.delete(accountId); publicProfiles.set(accountId, { time: Date.now(), value: profile });
+    if (publicProfiles.size > 64) publicProfiles.delete(publicProfiles.keys().next().value);
+    return profile;
+  }).catch(error => {
+    if (version === sessionVersion && error.code === 'PROFILE_NOT_FOUND') invalidatePublicProfile(accountId, { unavailable: true });
+    throw error;
+  }).finally(() => { if (publicProfileReads.get(accountId) === promise) publicProfileReads.delete(accountId); });
+  publicProfileReads.set(accountId, promise);
+  return promise;
+}
+
+function getCachedPublicAccountInfo(accountId) {
+  return getCachedUser() && !unavailablePublicProfiles.has(accountId) && publicAccountInfos.get(accountId)?.value || null;
+}
+function getPublicAccountInfo(accountId, { force = false } = {}) {
+  const viewer = getCachedUser();
+  if (!viewer) return Promise.reject(Object.assign(new Error('请先登录后查看账号信息'), { code: 'UNAUTHENTICATED' }));
+  if (!/^[1-9][0-9]{7}$/.test(accountId || '')) return Promise.reject(new Error('账号地址不正确'));
+  const cached = publicAccountInfos.get(accountId);
+  if (!force && cached && fresh(cached.time)) return Promise.resolve(cached.value);
+  if (publicAccountInfoReads.has(accountId)) return publicAccountInfoReads.get(accountId);
+  const version = sessionVersion, revision = publicProfileRevision;
+  const promise = request('getSquarePublicAccountInfo', { accountId }, 'square').then(result => {
+    if (version !== sessionVersion || getCachedUser()?._id !== viewer._id) throw Object.assign(new Error('登录状态已变更'), { code: 'SESSION_CHANGED' });
+    if (revision !== publicProfileRevision) throw Object.assign(new Error('资料已更新，请重试'), { code: 'PROFILE_CHANGED' });
+    const info = result && result.accountInfo;
+    if (!info || info.user?.accountId !== accountId || typeof info.user.isVerified !== 'boolean' || !info.nicknameHistory ||
+      !(info.nicknameHistory.changeCount === null || Number.isSafeInteger(info.nicknameHistory.changeCount) && info.nicknameHistory.changeCount >= 0)) throw new Error('账号信息读取失败，请更新 userService 云函数');
+    unavailablePublicProfiles.delete(accountId);
+    publicAccountInfos.delete(accountId); publicAccountInfos.set(accountId, { value: info, time: Date.now() });
+    if (publicAccountInfos.size > 64) publicAccountInfos.delete(publicAccountInfos.keys().next().value);
+    return info;
+  }).catch(error => {
+    if (version === sessionVersion && error.code === 'PROFILE_NOT_FOUND') invalidatePublicProfile(accountId, { unavailable: true });
+    throw error;
+  }).finally(() => { if (publicAccountInfoReads.get(accountId) === promise) publicAccountInfoReads.delete(accountId); });
+  publicAccountInfoReads.set(accountId, promise); return promise;
+}
 
 function getCachedAIUsage() {
   const user = getCachedUser();
@@ -78,6 +153,7 @@ async function request(action, extra, resultKey = 'user') {
 function remember(user) {
   if ((getApp().globalData.currentUser || {})._id !== (user || {})._id) { aiUsageCache = null; invalidateAIUsage(); }
   if (JSON.stringify(getApp().globalData.currentUser) !== JSON.stringify(user)) {
+    clearPublicProfiles();
     dataVersion += 1;
     accountInfoCache = null;
     certificationCache = null;
@@ -242,5 +318,5 @@ function reviewCertification(applicationId, revision, review) {
   return reviewRequest('reviewCertification', { applicationId, revision, review });
 }
 
-module.exports = { login, restore, getSessionVersion: () => sessionVersion, getCachedUser, getCachedAIUsage, getAIUsage, invalidateAIUsage, getCachedAccountInfo, getCachedCertification, updateProfile, updateCover, logout, getAccountInfo, findUserByAccountId, getAdminDashboard, getCertification, submitCertification, withdrawCertification,
+module.exports = { stageProfileSearch, cancelSearchEntry, consumeSearchEntry, searchSessionKey, getCachedPublicAccountInfo, getPublicAccountInfo, invalidatePublicProfile, getCachedPublicProfile, seedPublicProfile, getPublicProfile, login, restore, getSessionVersion: () => sessionVersion, getCachedUser, getCachedAIUsage, getAIUsage, invalidateAIUsage, getCachedAccountInfo, getCachedCertification, updateProfile, updateCover, logout, getAccountInfo, findUserByAccountId, getAdminDashboard, getCertification, submitCertification, withdrawCertification,
   listCertifications, getCertificationDetail, getCertificationProof, reviewCertification };

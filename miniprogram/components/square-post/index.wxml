@@ -7,19 +7,21 @@
     <view class="post-action post-action-share" catchtap="stopEvent" aria-label="分享功能暂未开放"><image src="/images/post-actions/share.svg" mode="aspectFit" /></view>
   </view>
 </template>
-<view class="post-card {{detail ? 'is-detail' : ''}}" bindtap="open">
-  <image class="post-avatar" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
+<view wx:if="{{(profilePosts || showPin) && pinned}}" class="post-pin" aria-label="置顶动态"><image src="/images/interface/pin.svg" mode="aspectFit" /><text>置顶</text></view>
+<view class="post-card {{detail ? 'is-detail' : ''}} {{(profilePosts || showPin) && pinned ? 'is-pinned' : ''}}" bindtap="open">
+  <view wx:if="{{homeFeed && !detail}}" class="post-avatar-anchor" catchtap="avatarMenu" aria-role="{{viewer && (viewer.accountId && post.author.accountId ? post.author.accountId === viewer.accountId : post.isOwn) ? 'img' : 'button'}}" aria-label="作者头像"><image class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-avatar-follow {{followPreview.phase === 'following' ? 'is-demo-following' : followPreview.followed ? 'is-demo-followed' : ''}}" aria-hidden="true"><image class="follow-plus" src="/images/interface/plus-white.svg" mode="aspectFit" /><image class="follow-check" src="/images/interface/follow-check-white.svg" mode="aspectFit" /></view></view>
+  <image wx:else catchtap="viewAuthor" aria-role="button" aria-label="查看作者主页" class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
   <view class="post-main">
-    <view class="post-author-details"><view class="post-heading"><text class="post-name">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><button wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-follow" catchtap="stopEvent" disabled aria-label="关注功能暂未开放">关注</button><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <view class="post-author-details"><view class="post-heading"><text class="post-name" catchtap="viewAuthor">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><slot name="header-actions"></slot><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
     <text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text>
     </view>
     <text class="post-text" selectable>{{detail || expanded ? (post.fullContent || post.content) : post.content}}</text>
     <view wx:if="{{post.truncated && !detail}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
     <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{imageFiles.length > 1 ? 'is-carousel' : 'is-single'}}" style="width: {{galleryWidth}}%; height: {{galleryHeight}}rpx;" catchtap="stopEvent">
       <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="帖子图片，左右滑动查看">
-        <swiper-item wx:for="{{imageFiles}}" wx:key="*this" class="post-image-slide"><view class="post-photo-frame"><image class="post-photo" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" data-file="{{item}}" bindload="photoLoaded" catchtap="previewImage" /></view></swiper-item>
+        <swiper-item wx:for="{{imageFiles}}" wx:key="*this" class="post-image-slide"><view class="post-photo-frame"><media-image class="post-photo" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" data-file="{{item}}" bindload="photoLoaded" catchtap="previewImage" /></view></swiper-item>
       </swiper>
-      <view wx:else class="post-photo-frame"><image class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" /></view>
+      <view wx:else class="post-photo-frame"><media-image class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" /></view>
       <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter" aria-label="{{'第' + (imageIndex + 1) + '张，共' + imageFiles.length + '张'}}">{{imageIndex + 1}} / {{imageFiles.length}}</view>
     </view>
     <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>

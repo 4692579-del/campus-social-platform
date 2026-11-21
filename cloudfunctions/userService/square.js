@@ -1,10 +1,13 @@
 const crypto = require('crypto');
+const followsModule = require('./square-follows');
+const searchModule = require('./square-search');
 const { BOT_ID, BOT, createSquareAI } = require('./square-ai');
 const { messageFor: aiMessageFor } = require('./ai-errors');
 const { createSquarePolisher, POLISH_CODES } = require('./square-polish');
 const { checkUnavailableMessage } = require('./wechat-content-check');
 const { createReplyHistory } = require('./square-history');
 const { createQuoteReader } = require('./square-quotes');
+const { createAccountIdService } = require('./account-id');
 
 const SQUARE_ACTIONS = ['getSquareOwnStats', 'listSquarePosts', 'listSquareAlbum', 'getSquarePost', 'publishSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren', 'setSquareCommentState', 'publishSquareReply', 'processSquareAIReply', 'deleteSquarePost', 'reportSquarePost', 'deleteSquareReply', 'reportSquareReply', 'optimizeSquareContent'];
 const REPORT_REASONS = ['spam', 'illegal', 'sexual', 'abuse', 'other'];
@@ -13,6 +16,12 @@ const DECLARATIONS = ['none', 'ai', 'opinion', 'repost', 'fiction', 'marketing']
 const SQUARE_CODES = ['INVALID_POST', 'POST_NOT_FOUND', 'CONTENT_REJECTED', 'CONTENT_CHECK_UNAVAILABLE', 'REQUEST_CONFLICT', 'INVALID_IMAGES', 'IMAGE_UPLOAD_UNAVAILABLE', ...POLISH_CODES];
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 SQUARE_CODES.push('QUOTE_UNAVAILABLE');
+SQUARE_ACTIONS.push('setSquareProfilePin');
+SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
+SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
+SQUARE_CODES.push(...searchModule.CODES);
+SQUARE_CODES.push(...followsModule.CODES);
+SQUARE_CODES.push('PIN_EXISTS', 'PIN_CHANGED', 'PROFILE_NOT_FOUND');
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function active(user) {
   if (!user) fail('NOT_REGISTERED', '请先登录');
@@ -61,6 +70,20 @@ function createSquareService(db, options = {}) {
   const posts = db.collection('square_posts'), replies = db.collection('square_replies'), reactions = db.collection('square_interactions');
   const profileReads = new Map();
   const ai = createSquareAI(db, options);
+  const accounts = createAccountIdService(db, options);
+  async function profileOwner(accountId, viewer) {
+    active(viewer);
+    const found = await accounts.find(accountId);
+    if (!found) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
+    const owner = (await db.collection('users').doc(found._id).get()).data;
+    if (!owner || owner.status !== 'active' || owner.accountId !== accountId || !['user', 'student', 'admin'].includes(owner.role)) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
+    return owner;
+  }
+  async function recheckProfile(owner) {
+    const current = (await db.collection('users').doc(owner._id).get()).data;
+    if (!current || current.accountId !== owner.accountId || current.status !== 'active' || !['user', 'student', 'admin'].includes(current.role)) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
+    return current;
+  }
   profileReads.set(BOT_ID, Promise.resolve(BOT));
   async function profilesFor(ids) {
     const missing = [...new Set(ids)].filter(id => !profileReads.has(id));
@@ -129,37 +152,83 @@ function createSquareService(db, options = {}) {
     const row = (await posts.doc(id).get()).data;
     return row && row.scope === 'square' && row.status === 'published' ? (await present([row], viewer))[0] : null;
   }
+  const search = searchModule.createSearch(db, { active, fail, profileOwner, recheckProfile, present });
+  const follows = followsModule.createFollows(db, { active, fail, profileOwner, recheckProfile, present });
   const history = createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor });
   return async function square(action, event, user, identity) {
     // 仅复用本次可信身份查询的资料，不跨请求缓存认证或账号状态。
     if (user) profileReads.set(user._id, Promise.resolve(author(user)));
-    if (action === 'listSquareOwnReplies' || action === 'getSquareReplyContext') return history(action, event, user);
+    if (action === searchModule.ACTION) return search(event, user);
+    if (followsModule.ACTIONS.includes(action)) return follows(action, event, user);
+    if (action === 'getSquarePublicAccountInfo') {
+      const owner = await recheckProfile(await profileOwner(event.accountId, user));
+      const verified = author(owner).verified;
+      const tracked = Number.isSafeInteger(owner.nicknameChangeCount) && owner.nicknameChangeCount >= 0 && Boolean(owner.nicknameTrackingStartedAt) && typeof owner.nicknameHistoryComplete === 'boolean';
+      // 关于此账号单独列出公开字段，不复用本人的资料响应，也不替他人初始化历史。
+      return { accountInfo: { user: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '',
+        createdAt: owner.createdAt || null, isVerified: verified, schoolName: verified ? owner.schoolName || '' : '' },
+        nicknameHistory: { changeCount: tracked ? owner.nicknameChangeCount : null, lastChangedAt: tracked ? owner.nicknameLastChangedAt || null : null,
+          trackingStartedAt: tracked ? owner.nicknameTrackingStartedAt : null, historyComplete: tracked ? owner.nicknameHistoryComplete : false } } };
+    }
+    if (action === 'getSquarePublicProfile') {
+      let owner = await profileOwner(event.accountId, user);
+      const filter = { scope: 'square', status: 'published', authorId: owner._id };
+      const [count, likes] = await Promise.all([posts.where(filter).count(), posts.aggregate().match(filter).group({ _id: null, receivedLikes: db.command.aggregate.sum('$likeCount') }).end()]);
+      owner = await recheckProfile(owner);
+      return { profile: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '', coverFileID: owner.coverFileID || '',
+        bio: owner.bio || '', createdAt: owner.createdAt || null, isVerified: author(owner).verified,
+        postCount: count.total, receivedLikes: Math.max(0, likes.list[0] && likes.list[0].receivedLikes || 0) } };
+    }
+    if (action === 'listSquareOwnReplies' || action === 'getSquareReplyContext') {
+      const owner = action === 'listSquareOwnReplies' && event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : null;
+      const result = await history(action, event, user, owner && owner._id);
+      if (owner) await recheckProfile(owner);
+      return result;
+    }
     if (action === 'listSquareAlbum') {
       active(user);
+      const owner = event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : user;
       const offset = pagination(event);
-      const rows = (await posts.where({ scope: 'square', status: 'published', authorId: user._id, hasImages: true })
+      const rows = (await posts.where({ scope: 'square', status: 'published', authorId: owner._id, hasImages: true })
         .orderBy('sortKey', 'desc').skip(offset).limit(21).get()).data;
-      return { items: rows.slice(0, 20).flatMap(row => (row.images || []).map((fileID, index) => ({
+      if (event.profileAccountId !== undefined) await recheckProfile(owner);
+      return { ...(event.profileAccountId !== undefined ? { profileAccountId: owner.accountId } : {}), items: rows.slice(0, 20).flatMap(row => (row.images || []).map((fileID, index) => ({
         _id: `${row._id}_${index}`, postId: row._id, fileID, createdAt: row.createdAt, index,
       }))), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
     }
     if (action === 'listSquarePosts') {
       const offset = pagination(event);
       const mine = event.mine === true;
+      const profile = event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : null;
+      if (mine && profile) fail('INVALID_POST', '动态来源参数不正确');
       const postType = event.postType === undefined ? 'all' : event.postType;
-      if (!['all', 'posts', 'quotes'].includes(postType) || !mine && postType !== 'all') fail('INVALID_POST', '动态分类参数不正确');
+      if (!['all', 'posts', 'quotes'].includes(postType) || !mine && !profile && postType !== 'all') fail('INVALID_POST', '动态分类参数不正确');
       if (mine) active(user);
-      const base = { scope: 'square', status: 'published', ...(mine ? { authorId: user._id } : {}) };
+      const base = { scope: 'square', status: 'published', ...(mine || profile ? { authorId: profile ? profile._id : user._id } : {}) };
       // 普通发布不写 quotePostId；引用归属只看最终保存的关系，来源失效也不改变分类。
       const filter = { ...base, ...(postType !== 'all' ? { quotePostId: db.command.exists(postType === 'quotes') } : {}) };
       const [result, count, allCount] = await Promise.all([
         posts.where(filter).orderBy('sortKey', 'desc').skip(offset).limit(21).get(),
         // 总数是导航展示附加信息，读取失败不阻断原有帖子列表。
-        mine && !offset ? posts.where(filter).count().catch(() => null) : Promise.resolve(null),
-        mine && !offset && postType !== 'all' ? posts.where(base).count().catch(() => null) : Promise.resolve(null),
+        (mine || profile) && !offset ? posts.where(filter).count().catch(() => null) : Promise.resolve(null),
+        (mine || profile) && !offset && postType !== 'all' ? posts.where(base).count().catch(() => null) : Promise.resolve(null),
       ]);
       const rows = result.data;
-      return { ...(mine ? { mine: true, postType } : {}), ...(count ? { total: count.total } : {}), ...(allCount ? { allTotal: allCount.total } : {}), items: await present(rows.slice(0, 20), mine || event.personalize === true ? user : null, true), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
+      let items = rows.slice(0, 20), profilePin = {};
+      if ((mine || profile) && postType === 'posts') {
+        const owner = profile || (await db.collection('users').doc(user._id).get()).data;
+        active(owner);
+        const pinned = owner.squarePinnedPostId ? (await posts.doc(owner.squarePinnedPostId).get()).data : null;
+        const valid = pinned && pinned.authorId === owner._id && pinned.scope === 'square' && pinned.status === 'published' && !pinned.quotePostId;
+        const pinnedPostId = valid ? pinned._id : '';
+        profilePin = { pinnedPostId, pinVersion: owner.squarePinVersion || 0 };
+        // 自然时间分页的游标不含额外置顶行，旧动态置顶也不会跳过或重复普通动态。
+        items = items.filter(row => row._id !== pinnedPostId);
+        if (valid) items.unshift(pinned);
+      }
+      const presented = await present(items, mine || profile || event.personalize === true ? user : null, true);
+      if (profile) await recheckProfile(profile);
+      return { ...profilePin, ...(profile ? { profileAccountId: profile.accountId, postType } : {}), ...(mine ? { mine: true, postType } : {}), ...(count ? { total: count.total } : {}), ...(allCount ? { allTotal: allCount.total } : {}), items: presented, hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
     }
     if (action === 'getSquarePost') return { post: (await present([await getPost(event.postId)], event.personalize === true ? user : null))[0] };
     if (action === 'listSquareReplies' || action === 'listSquareReplyChildren') {
@@ -175,6 +244,28 @@ function createSquareService(db, options = {}) {
       return { items, hasMore: rows.length > 20, nextOffset: offset + items.length };
     }
     active(user);
+    if (action === 'setSquareProfilePin') {
+      const id = postId(event.postId);
+      if (typeof event.pinned !== 'boolean') fail('INVALID_POST', '置顶参数不正确');
+      let committed;
+      await db.runTransaction(async transaction => {
+        const ownerRef = transaction.collection('users').doc(user._id), owner = (await ownerRef.get()).data;
+        active(owner);
+        const row = visible((await transaction.collection('square_posts').doc(id).get()).data);
+        if (row.authorId !== user._id) fail('FORBIDDEN', '只能置顶自己的动态');
+        if (row.quotePostId) fail('INVALID_POST', '只能置顶动态标签下的普通动态');
+        const previous = owner.squarePinnedPostId || '';
+        const old = previous && previous !== id ? (await transaction.collection('square_posts').doc(previous).get()).data : row;
+        const validOld = previous && old && old.authorId === user._id && old.scope === 'square' && old.status === 'published' && !old.quotePostId;
+        if (event.pinned && validOld && previous !== id) fail('PIN_EXISTS', '请先取消当前动态的置顶');
+        if (!event.pinned && validOld && previous !== id) fail('PIN_CHANGED', '置顶状态已变化，请刷新后重试');
+        const pinnedPostId = event.pinned ? id : '';
+        const changed = previous !== pinnedPostId, pinVersion = (owner.squarePinVersion || 0) + (changed ? 1 : 0);
+        if (changed) await ownerRef.update({ data: { squarePinnedPostId: pinnedPostId, squarePinVersion: pinVersion } });
+        committed = { pinnedPostId, pinVersion, row };
+      });
+      return { pinnedPostId: committed.pinnedPostId, pinVersion: committed.pinVersion, post: (await present([committed.row], user, true))[0] };
+    }
     if (action === 'getSquareOwnStats') {
       // 由可信会话限定本人，聚合全部已发布动态，不受列表分页范围影响。
       const result = await posts.aggregate().match({ scope: 'square', status: 'published', authorId: user._id })
@@ -270,12 +361,14 @@ function createSquareService(db, options = {}) {
       const id = postId(event.postId);
       let quotedId = '';
       await db.runTransaction(async transaction => {
-        active((await transaction.collection('users').doc(user._id).get()).data);
+        const ownerRef = transaction.collection('users').doc(user._id), owner = (await ownerRef.get()).data;
+        active(owner);
         const ref = transaction.collection('square_posts').doc(id), post = (await ref.get()).data;
         if (!post || post.scope !== 'square') fail('POST_NOT_FOUND', '动态不存在或已不可见');
         if (post.authorId !== user._id) fail('FORBIDDEN', '只能删除自己发布的动态');
         const quoteRef = post.quotePostId && transaction.collection('square_posts').doc(post.quotePostId);
         const quote = quoteRef ? (await quoteRef.get()).data : null;
+        if (owner.squarePinnedPostId === id) await ownerRef.update({ data: { squarePinnedPostId: '', squarePinVersion: (owner.squarePinVersion || 0) + 1 } });
         if (post.status !== 'deleted') {
           await ref.update({ data: { status: 'deleted', deletedAt: db.serverDate() } });
           if (quote && quote.scope === 'square') await quoteRef.update({ data: { quoteCount: Math.max(0, (quote.quoteCount || 0) - 1), quoteVersion: (quote.quoteVersion || 0) + 1 } });

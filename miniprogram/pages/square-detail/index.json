@@ -6,6 +6,7 @@
   "usingComponents": {
     "square-composer": "/components/square-composer/index",
     "square-post": "/components/square-post/index",
-    "comments-sheet": "/components/comments-sheet/index"
+    "comments-sheet": "/components/comments-sheet/index",
+    "unfollow-confirm": "/components/unfollow-confirm/index"
   }
 }
