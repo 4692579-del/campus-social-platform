@@ -9,6 +9,8 @@ const { checkUnavailableMessage } = require('./wechat-content-check');
 const { createReplyHistory } = require('./square-history');
 const { createQuoteReader } = require('./square-quotes');
 const { createAccountIdService } = require('./account-id');
+const { commentsDisabled, requireOpenComments } = require('./square-comment-policy');
+const { joinDateFields } = require('./profile-join-date');
 
 const SQUARE_ACTIONS = ['getSquareOwnStats', 'listSquarePosts', 'listSquareAlbum', 'getSquarePost', 'publishSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren', 'setSquareCommentState', 'publishSquareReply', 'processSquareAIReply', 'deleteSquarePost', 'reportSquarePost', 'deleteSquareReply', 'reportSquareReply', 'optimizeSquareContent'];
 const REPORT_REASONS = ['spam', 'illegal', 'sexual', 'abuse', 'other'];
@@ -23,7 +25,7 @@ SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
 SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
 SQUARE_CODES.push(...searchModule.CODES);
 SQUARE_CODES.push(...followsModule.CODES);
-SQUARE_CODES.push('PIN_EXISTS', 'PIN_CHANGED', 'PROFILE_NOT_FOUND');
+SQUARE_CODES.push('PIN_EXISTS', 'PIN_CHANGED', 'PROFILE_NOT_FOUND', 'COMMENTS_DISABLED');
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function active(user) {
   if (!user) fail('NOT_REGISTERED', '请先登录');
@@ -51,7 +53,9 @@ function commentId(value) {
 const commentTable = id => id.startsWith('c_') ? 'square_reply_children' : 'square_replies';
 function author(user) {
   return user && user.status === 'active' ? { nickname: user.nickname, avatarFileID: user.avatarFileID || '', accountId: user.accountId || '',
-    verified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId) }
+    verified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
+    ...(user.officialVerified === true ? { officialVerified: true } : {}),
+    ...(commentsDisabled(user) ? { commentsDisabled: true } : {}) }
     : { nickname: '账号暂不可用', avatarFileID: '', accountId: '', verified: false };
 }
 function visible(post) {
@@ -193,7 +197,8 @@ function createSquareService(db, options = {}) {
       const tracked = Number.isSafeInteger(owner.nicknameChangeCount) && owner.nicknameChangeCount >= 0 && Boolean(owner.nicknameTrackingStartedAt) && typeof owner.nicknameHistoryComplete === 'boolean';
       // 关于此账号单独列出公开字段，不复用本人的资料响应，也不替他人初始化历史。
       return { accountInfo: { user: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '',
-        createdAt: owner.createdAt || null, isVerified: verified, schoolName: verified ? owner.schoolName || '' : '' },
+        ...joinDateFields(owner), isVerified: verified, schoolName: verified ? owner.schoolName || '' : '',
+        ...(owner.officialVerified === true ? { officialVerified: true } : {}) },
         nicknameHistory: { changeCount: tracked ? owner.nicknameChangeCount : null, lastChangedAt: tracked ? owner.nicknameLastChangedAt || null : null,
           trackingStartedAt: tracked ? owner.nicknameTrackingStartedAt : null, historyComplete: tracked ? owner.nicknameHistoryComplete : false } } };
     }
@@ -203,7 +208,8 @@ function createSquareService(db, options = {}) {
       const [count, likes] = await Promise.all([posts.where(filter).count(), posts.aggregate().match(filter).group({ _id: null, receivedLikes: db.command.aggregate.sum('$likeCount') }).end()]);
       owner = await recheckProfile(owner);
       return { profile: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '', coverFileID: owner.coverFileID || '',
-        bio: owner.bio || '', createdAt: owner.createdAt || null, isVerified: author(owner).verified,
+        bio: owner.bio || '', ...joinDateFields(owner), isVerified: author(owner).verified,
+        ...(owner.officialVerified === true ? { officialVerified: true } : {}),
         postCount: count.total, receivedLikes: Math.max(0, likes.list[0] && likes.list[0].receivedLikes || 0) } };
     }
     if (action === 'listSquareOwnReplies' || action === 'getSquareReplyContext') {
@@ -262,13 +268,17 @@ function createSquareService(db, options = {}) {
       const id = postId(event.postId), offset = pagination(event);
       const children = action === 'listSquareReplyChildren';
       if (children) commentId(event.rootId);
-      const [, root, result] = await Promise.all([getPost(id), children ? getComment(event.rootId, id) : Promise.resolve(null),
+      const [post, root, result] = await Promise.all([getPost(id), children ? getComment(event.rootId, id) : Promise.resolve(null),
         db.collection(children ? 'square_reply_children' : 'square_replies').where({ postId: id, status: 'published',
           ...(children ? { rootId: event.rootId } : {}) }).orderBy('sortKey', children ? 'asc' : 'desc').skip(offset).limit(21).get()]);
       if (root && root.rootId) fail('INVALID_POST', '回复分组不正确');
       const rows = result.data;
-      const items = await presentComments(rows.slice(0, 20), event.personalize === true ? user : null);
-      return { items, hasMore: rows.length > 20, nextOffset: offset + items.length };
+      const [items, authors] = await Promise.all([
+        presentComments(rows.slice(0, 20), event.personalize === true ? user : null),
+        children ? null : profilesFor([post.authorId]),
+      ]);
+      return { items, hasMore: rows.length > 20, nextOffset: offset + items.length,
+        ...(authors?.get(post.authorId)?.commentsDisabled ? { commentsDisabled: true } : {}) };
     }
     active(user);
     if (action === 'getSquarePublication') {
@@ -471,6 +481,7 @@ function createSquareService(db, options = {}) {
         JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && (
           JSON.stringify(saved.mediaSources || []) !== JSON.stringify(mediaSources) || (saved.declaration || 'none') !== declaration || (saved.quotePostId || '') !== quoteId);
       if (existing && conflicts(existing)) fail('REQUEST_CONFLICT', '相同提交标识的内容或回复对象已变更，请重新提交');
+      if (!existing && parent) await requireOpenComments(db, parent);
       if (!existing) await quoted();
       if (!existing && content) await checked(content, identity);
       let images = existing && existing.images || [];
@@ -519,6 +530,7 @@ function createSquareService(db, options = {}) {
           if (conflicts(saved)) fail('REQUEST_CONFLICT', '本次内容已提交，请勿重复修改请求');
           return;
         }
+        if (latestParent) await requireOpenComments(transaction, latestParent);
         const aiFields = isReply ? await ai.enqueue(transaction, { _id: id, authorId: user._id, postId: parent._id, content, askAI,
           ancestorIds: target ? [...(latestTarget.ancestorIds || []), latestTarget._id] : [] }) : {};
         await ref.set({ data: { scope: 'square', status: 'published', authorId: user._id, content, ...aiFields,

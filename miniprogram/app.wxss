@@ -27,10 +27,10 @@ button::after{
 
 /* 只淡化正文区域，不动画整张 feed，不遮住顶部或底栏，不制造全透明空白。 */
 .tab-page-fader { position: fixed; z-index: 90; left: 0; right: 0; bottom: 0; background: #fff; pointer-events: none; opacity: 0; animation-fill-mode: both; }
-.tab-page-fader.is-leaving { animation: tab-content-out 80ms ease-out both; }
-.tab-page-fader.is-entering { animation: tab-content-in 180ms ease-out both; }
-@keyframes tab-content-out { from { opacity: 0; } to { opacity: .24; } }
-@keyframes tab-content-in { from { opacity: .24; } to { opacity: 0; } }
+.tab-page-fader.is-leaving { animation: tab-content-out 80ms cubic-bezier(.3333,.6667,.6667,1) both; }
+.tab-page-fader.is-entering { animation: tab-content-in 180ms cubic-bezier(.3333,.6667,.6667,1) both; }
+@keyframes tab-content-out { from { opacity: var(--tab-cover-start, 0); } to { opacity: .24; } }
+@keyframes tab-content-in { from { opacity: var(--tab-cover-start, 0); } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .tab-page-fader { display: none; animation: none; } }
 
 

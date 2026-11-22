@@ -132,6 +132,10 @@ async function previewImages(files, current) {
   const resolved = await resolveFiles(files);
   return native('previewImage', { urls: resolved, current: resolved[Math.max(0, files.indexOf(current))] });
 }
+async function resolveVideoPlayback(fileID) {
+  const [url] = await resolveFiles([fileID]);
+  return url;
+}
 async function previewMedia(items, index) {
   if (!items[index]) return;
   if (!items.some(item => item.type === 'video')) return previewImages(items.map(item => item.fileID), items[index].fileID);
@@ -149,4 +153,4 @@ function discardUploads(files) {
   if (owned.length) return wx.cloud.deleteFile({ fileList: owned }).catch(() => {});
   return Promise.resolve();
 }
-module.exports = { chooseImages, uploadImages, previewImages, previewMedia, discardUploads, MAX_IMAGES, MAX_POST_MEDIA };
+module.exports = { chooseImages, uploadImages, previewImages, previewMedia, resolveVideoPlayback, discardUploads, MAX_IMAGES, MAX_POST_MEDIA };

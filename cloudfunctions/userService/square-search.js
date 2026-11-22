@@ -4,7 +4,8 @@ const accountIdPattern = /^[1-9][0-9]{7}$/;
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function createSearch(db, { active, fail, profileOwner, recheckProfile, present }) {
   const person = user => ({ accountId: user.accountId, nickname: user.nickname, avatarFileID: user.avatarFileID || '', bio: user.bio || '',
-    isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId) });
+    isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
+    ...(user.officialVerified === true ? { officialVerified: true } : {}) });
   return async (event, viewer) => {
     const kind = event.kind || 'square', accountId = event.accountId || '', cursor = event.cursor || '';
     if (kind === 'campus') fail('SEARCH_SCOPE_UNAVAILABLE', '校园圈搜索暂未开放');

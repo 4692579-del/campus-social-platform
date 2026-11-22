@@ -1,4 +1,63 @@
 @import "../../styles/search-toolbar.wxss";
-page { background: #fff; }
-.search-page { min-height: 100vh; padding: 24rpx 28rpx; box-sizing: border-box; background: #fff; }
-.search-notice { margin:80rpx 16rpx 0; text-align:center; color:#8b949e; font-size:25rpx; line-height:1.7; }
+@import "../../styles/account-avatar.wxss";
+@import "../../styles/account-menu.wxss";
+@import "../../styles/login-sheet.wxss";
+page { height:100%; overflow:hidden; overscroll-behavior:none; background:#fff; }
+.search-shell { position:relative; width:100%; height:100vh; overflow:hidden; }
+.search-shell .tab-secondary-page { position:relative; left:0; transition:left .26s ease; }
+.search-shell.menu-open .tab-secondary-page { left:66.666667vw; }
+.search-shell.menu-instant .tab-secondary-page, .search-shell.menu-instant .profile-menu-layer,
+.search-shell.menu-instant .menu-panel, .search-shell.menu-instant .menu-backdrop { transition:none; }
+.search-page { display:flex; flex-direction:column; min-height:0; background:#fff; }
+.search-discovery-frame { position:relative; flex:1; min-height:0; margin-top:20rpx; }
+.search-discovery { position:relative; z-index:0; width:100%; height:100%; overscroll-behavior-y:none; }
+.search-refresh-space { width:100%; background:#fff; pointer-events:none; }
+.search-refresh-anchor { position:absolute; z-index:1; top:0; right:0; left:0; display:flex; align-items:center; justify-content:center; visibility:hidden; pointer-events:none; }
+.search-refresh-anchor.is-visible { visibility:visible; }
+.search-refresh-anchor .search-refresh-logo { display:block; width:104rpx; height:54rpx; }
+.search-discovery-content { padding-bottom:calc(152rpx + env(safe-area-inset-bottom)); }
+.search-board-tabs { position:-webkit-sticky; position:sticky; top:0; z-index:30; display:flex; height:84rpx; margin:0 24rpx; border-bottom:1rpx solid #e9ebf0; background:#fff; }
+.search-board-tabs::before { content:''; position:absolute; left:-24rpx; right:-24rpx; top:0; bottom:0; z-index:-1; background:#fff; }
+.board-tab { flex:1 1 0%; min-width:0; display:flex; align-items:center; justify-content:center; height:84rpx; color:#777c88; font-size:32rpx; font-weight:600; white-space:nowrap; }
+.board-tab.selected { color:#15191d; font-weight:700; }
+.board-tab-label { display:inline-flex; align-items:center; height:100%; padding-bottom:8rpx; box-sizing:border-box; }
+.board-arrow { display:flex; align-items:center; justify-content:center; width:38rpx; height:100%; margin-right:-14rpx; }
+.board-chevron { width:23rpx; height:23rpx; transition:transform .18s ease; }
+.board-chevron.expanded { transform:rotate(180deg); }
+.board-indicator { position:absolute; bottom:0; height:6rpx; width:134rpx; border-radius:6rpx; background:#4775fa; transition:left .26s ease; }
+.is-cui-board .board-indicator { bottom:-1rpx; }
+.board-dropdown { position:absolute; z-index:31; top:calc(100% + 8rpx); width:164rpx; padding:8rpx; border:1rpx solid #edf0f2; border-radius:20rpx; background:#fff; box-shadow:0 10rpx 36rpx rgba(25,36,56,.14); }
+.board-option { display:flex; align-items:center; justify-content:center; height:76rpx; border-radius:12rpx; color:#30373e; font-size:28rpx; }
+.board-option.active { color:#4775fa; font-weight:600; }
+.board-viewport { overflow:hidden; }
+.board-panels { position:relative; display:flex; align-items:flex-start; width:300%; transition:left .26s ease; }
+.board-panel { flex:0 0 33.333333%; width:33.333333%; height:0; min-width:0; overflow:hidden; box-sizing:border-box; padding:0 28rpx; }
+.board-panel.is-active { height:auto; }
+.board-panel.cui-board-panel { padding:0; }
+.cui-promo-frame { position:relative; display:flex; align-items:center; justify-content:center; width:100%; height:421.875rpx; background:#f3f5f8; }
+.cui-promo { display:block; width:100%; height:100%; }
+.cui-promo-link { position:absolute; top:0; right:0; bottom:0; left:0; }
+.cui-promo-credit { position:absolute; left:24rpx; bottom:20rpx; color:#fff; font-size:24rpx; font-weight:600; line-height:1.4; text-shadow:0 1rpx 6rpx rgba(0,0,0,.72); pointer-events:none; }
+.cui-promo-sound { position:absolute; z-index:1; top:16rpx; right:16rpx; width:64rpx; height:64rpx; border-radius:32rpx; background:rgba(0,0,0,.44); }
+.cui-promo-sound-icon { position:absolute; top:15rpx; left:15rpx; width:34rpx; height:34rpx; }
+.cui-promo-status, .cui-promo-retry { font-size:26rpx; color:#737d8b; }
+.cui-promo-retry { width:auto; margin:0; padding:0 24rpx; border-radius:100rpx; color:#4775fa; background:#fff; }
+.cui-promo-retry::after { border:0; }
+.cui-hotboard { padding:16rpx 28rpx 0; }
+.hot-source { padding:24rpx 0 4rpx; font-size:23rpx; color:#98a1ad; }
+.hot-item { display:flex; align-items:center; min-height:94rpx; padding:22rpx 0; box-sizing:border-box; border-bottom:1rpx solid #f0f1f3; }
+.hot-rank { flex:0 0 52rpx; width:52rpx; margin-right:10rpx; color:#9ca5b1; font-size:27rpx; line-height:40rpx; font-weight:600; font-variant-numeric:tabular-nums; }
+.hot-rank.is-top { font-weight:700; transform:skewX(-8deg); transform-origin:0 50%; }
+.hot-rank.rank-1 { color:#254cce; font-size:34rpx; }
+.hot-rank.rank-2 { color:#3d65db; font-size:32rpx; }
+.hot-rank.rank-3 { color:#5678dd; font-size:30rpx; }
+.hot-title { flex:1; min-width:0; color:#282e36; font-size:28rpx; line-height:42rpx; overflow-wrap:break-word; }
+.hot-empty { padding:72rpx 12rpx; text-align:center; color:#949da8; font-size:26rpx; }
+.hot-warning { margin-top:20rpx; color:#8b949e; font-size:23rpx; line-height:1.6; }
+.hot-error { display:flex; align-items:center; margin-top:28rpx; color:#8b949e; font-size:24rpx; line-height:1.6; }
+.hot-error-text { flex:1; }.hot-retry { flex-shrink:0; padding:12rpx 4rpx 12rpx 24rpx; color:#4775fa; }
+.hot-updated { margin-top:24rpx; color:#a0a7b2; font-size:22rpx; line-height:1.6; }
+.hot-more { display:flex; align-items:center; justify-content:center; min-height:90rpx; color:#4775fa; font-size:26rpx; }
+.hot-more-icon { width:25rpx; height:25rpx; margin-left:10rpx; }
+.hot-end { padding:30rpx 0 4rpx; text-align:center; color:#a0a7b2; font-size:23rpx; }
+@media (prefers-reduced-motion:reduce) { .board-panels,.board-indicator,.board-chevron { transition:none; } }

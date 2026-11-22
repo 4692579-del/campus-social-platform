@@ -4,6 +4,7 @@ const { createCertificationReviewService, REVIEW_ACTIONS, REVIEW_CODES } = requi
 const { createAccountIdService, isAccountId, ACCOUNT_ID_CODES } = require('./account-id');
 const { createSquareService, SQUARE_ACTIONS, SQUARE_CODES } = require('./square');
 const { createAIUsage, USAGE_CODES } = require('./ai-usage');
+const { joinDateFields } = require('./profile-join-date');
 
 function fail(code, message) {
   const error = new Error(message);
@@ -26,10 +27,11 @@ function publicProfile(user) {
     coverFileID: user.coverFileID || '',
     bio: user.bio || '',
     birthDate: user.birthDate || '',
-    createdAt: user.createdAt || null,
+    ...joinDateFields(user),
     schoolId: user.schoolId,
     schoolName: user.schoolName || '',
     certificationStatus: user.certificationStatus,
+    ...(user.officialVerified === true ? { officialVerified: true } : {}),
     role: effectiveRole(user),
   };
 }

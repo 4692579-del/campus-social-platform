@@ -1,0 +1,29 @@
+<wxs module="historySwipe" src="./history-swipe.wxs" />
+<view class="tab-secondary-page search-entry-page"
+  prop="{{ {width: windowWidth, revision: swipeRevision} }}" change:prop="{{historySwipe.sync}}">
+  <view class="tab-page-header" style="height: {{navHeight}}px;">
+    <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">搜索</view>
+  </view>
+  <view class="search-toolbar search-toolbar-inset">
+    <view class="search-toolbar-field">
+      <search-box value="{{keyword}}" account-id="{{accountId}}" focus-input="{{focused}}" bind:input="onInput" bind:submit="search" bind:removeauthor="removeAuthor" />
+    </view>
+    <view class="search-toolbar-action search-entry-cancel" bindtap="cancel" aria-role="button">取消</view>
+  </view>
+  <scroll-view wx:if="{{records.length}}" class="search-entry-history" scroll-y enhanced bounces="{{false}}" show-scrollbar="{{false}}">
+    <view class="search-history-heading">搜索记录</view>
+    <view wx:for="{{records}}" wx:key="id"
+      class="search-history-row history-row-{{index}} {{removingId === item.id ? 'is-removing' : ''}}"
+      data-id="{{item.id}}" data-index="{{index}}"
+      bindtouchstart="{{historySwipe.start}}" bindtouchmove="{{historySwipe.move}}"
+      bindtouchend="{{historySwipe.end}}" bindtouchcancel="{{historySwipe.cancel}}">
+      <view class="search-history-delete history-delete-{{index}}" data-id="{{item.id}}" catchtap="{{historySwipe.remove}}" aria-role="button" aria-label="删除搜索记录">
+        <image class="search-history-delete-icon" src="/images/interface/trash-white.svg" mode="aspectFit" aria-hidden="true" />
+      </view>
+      <view class="search-history-card history-card-{{index}}" data-id="{{item.id}}" bindtap="{{historySwipe.tap}}" aria-role="button">
+        <text wx:if="{{item.accountId}}" class="search-history-author">@{{item.accountId}}</text>
+        <text wx:if="{{item.keyword}}" class="search-history-keyword">{{item.keyword}}</text>
+      </view>
+    </view>
+  </scroll-view>
+</view>

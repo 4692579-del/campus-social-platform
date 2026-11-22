@@ -1,4 +1,5 @@
 <import src="../../templates/login-sheet.wxml" />
+<wxs src="../../components/square-post/action-count.wxs" module="profileCount" />
 <view class="profile-shell">
   <view class="profile-navigation {{navBlurOpacity === 0 ? 'is-clear' : ''}}" style="height: {{navHeight}}px;">
     <view class="profile-nav-background" aria-hidden="true">
@@ -31,14 +32,15 @@
     <view wx:if="{{error && !loginSheetOpen}}" class="cs-error profile-error">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading || coverBusy}}">重新读取</button></view>
     <view class="profile-heading">
       <view class="nickname">{{profileUnavailable ? '该用户暂不可查看' : profileUser ? profileUser.nickname : loading ? '正在读取资料…' : isVisitor ? '个人主页' : '你好，新同学'}}</view>
-      <view wx:if="{{isVerified}}" class="verified-badge" bindtap="openCertification" aria-role="{{isVisitor ? 'text' : 'button'}}" aria-label="已认证"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>已认证</text></view>
+      <view wx:if="{{profileUser.officialVerified}}" class="verified-badge"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>Cui官方</text></view>
+      <view wx:elif="{{isVerified}}" class="verified-badge" bindtap="openCertification" aria-role="{{isVisitor ? 'text' : 'button'}}" aria-label="已认证"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>已认证</text></view>
       <view wx:elif="{{!isVisitor && identity.isAdmin}}" class="role-badge">管理员</view>
       <view wx:elif="{{profileUser && !isVisitor}}" class="verified-badge unverified-badge" bindtap="openCertification" aria-role="button" aria-label="未认证，查看学校认证"><image class="verification-icon" src="/images/verification/unverified.png" mode="aspectFit" /><text>未认证</text></view>
     </view>
     <view wx:if="{{profileUser.accountId}}" class="profile-account">@{{profileUser.accountId}}</view>
     <view wx:if="{{profileUser.bio}}" class="profile-bio">{{profileUser.bio}}</view>
     <view wx:if="{{joinedText}}" class="joined-row" bindtap="openAccountAbout" aria-role="button" aria-label="查看关于此账号"><image class="calendar-icon" src="/images/interface/calendar-muted.svg" mode="aspectFit" /><text>{{joinedText}}</text><image class="account-chevron" src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /></view>
-    <view wx:if="{{!profileUnavailable}}" class="profile-stats"><view><text class="stat-count">{{likeCount}}</text><text>获赞</text></view><view><text class="stat-count">{{followingCount}}</text><text>关注</text></view><view><text class="stat-count">{{followerCount}}</text><text>粉丝</text></view></view>
+    <view wx:if="{{!profileUnavailable}}" class="profile-stats"><view><text class="stat-count">{{profileUser.officialVerified ? profileCount.formatKnown(likeCount) : likeCount}}</text><text>获赞</text></view><view><text class="stat-count">{{followingCount}}</text><text>关注</text></view><view><text class="stat-count">{{profileUser.officialVerified ? profileCount.formatKnown(followerCount) : followerCount}}</text><text>粉丝</text></view></view>
 
     <view wx:if="{{isVisitor && user && profileUser && !profileUnavailable}}" class="visitor-actions {{profileFollowing ? 'is-followed' : ''}}">
       <view class="visitor-follow-group">
@@ -50,7 +52,7 @@
     <view wx:if="{{isVisitor && followError}}" class="follow-error">{{followError}}</view>
     <view wx:if="{{user && !isVisitor}}" class="profile-actions">
       <button size="mini" wx:if="{{identity.isAdmin}}" class="profile-action" bindtap="openAdmin">管理工作台</button>
-      <button size="mini" wx:elif="{{!isVerified}}" class="profile-action primary-profile-action" bindtap="openCertification">{{certificationAction}}</button>
+      <button size="mini" wx:elif="{{!isVerified && !profileUser.officialVerified}}" class="profile-action primary-profile-action" bindtap="openCertification">{{certificationAction}}</button>
       <button size="mini" wx:else class="profile-action primary-profile-action" bindtap="publishPost">发布动态</button>
       <button size="mini" class="profile-action" bindtap="editProfile" disabled="{{coverBusy}}">编辑资料</button>
       <button size="mini" class="profile-action share-action" bindtap="shareProfile" aria-label="分享主页"><image class="share-icon" src="/images/interface/profile-share.svg" mode="aspectFit" /></button>
@@ -78,7 +80,10 @@
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
     <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
     <block wx:else>
-      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" profile-posts="{{!isVisitor && selectedContent === 'posts' && postScope === 'square'}}" pinned="{{item._id === pinnedPostId}}" show-pin="{{isVisitor}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" profile-posts="{{!isVisitor && selectedContent === 'posts' && postScope === 'square'}}"
+        seven-line-preview="{{profileUser.officialVerified || item.author.officialVerified}}"
+        feed-video-enabled="{{(profileUser.officialVerified || item.author.officialVerified) && selectedContent === 'posts' && !profileUnavailable && !menuOpen && !authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !composerOpen && !unfollowTarget}}"
+        pinned="{{item._id === pinnedPostId}}" show-pin="{{isVisitor}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>

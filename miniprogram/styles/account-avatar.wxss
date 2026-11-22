@@ -1,0 +1,6 @@
+.home-header .account-avatar-button, .tab-page-header .account-avatar-button { position: absolute; z-index: 150; left: 24rpx; display: block; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: #f1f3f5; line-height: 1; transition: transform 0.26s ease; }
+.account-avatar-button::after { position: absolute; z-index: 1; inset: 0; width: auto; height: auto; border: 1rpx solid #d3d8df; border-radius: inherit; box-sizing: border-box; transform: none; pointer-events: none; }
+.account-avatar-button image { display: block; width: 100%; height: 100%; }
+.account-avatar-button .account-avatar-image { position: absolute; inset: 0; opacity: 0; }
+.account-avatar-button .account-avatar-image.is-ready { opacity: 1; }
+.menu-open .account-avatar-button { opacity: 0; pointer-events: none; }

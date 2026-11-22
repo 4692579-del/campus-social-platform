@@ -32,7 +32,8 @@ function invalidatePublicProfile(accountId, { unavailable = false } = {}) { publ
 function getCachedPublicProfile(accountId) { return getCachedUser() && !unavailablePublicProfiles.has(accountId) && publicProfiles.get(accountId)?.value || null; }
 function seedPublicProfile(author) {
   if (!getCachedUser() || !author || !/^[1-9][0-9]{7}$/.test(author.accountId || '') || publicProfiles.has(author.accountId) || unavailablePublicProfiles.has(author.accountId)) return;
-  publicProfiles.set(author.accountId, { time: 0, value: { accountId: author.accountId, nickname: author.nickname || '', avatarFileID: author.avatarFileID || '', isVerified: Boolean(author.verified) } });
+  publicProfiles.set(author.accountId, { time: 0, value: { accountId: author.accountId, nickname: author.nickname || '', avatarFileID: author.avatarFileID || '', isVerified: Boolean(author.verified),
+    ...(author.officialVerified === true ? { officialVerified: true } : {}) } });
   if (publicProfiles.size > 64) publicProfiles.delete(publicProfiles.keys().next().value);
 }
 function getPublicProfile(accountId, { force = false } = {}) {

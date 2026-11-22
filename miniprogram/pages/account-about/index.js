@@ -84,7 +84,7 @@ Page({
     const isVerified = this.data.isVisitor ? user.isVerified === true : user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId);
     this.setData({ user, isVerified, loading: false,
       schoolText: isVerified ? (user.schoolName || (this.data.isVisitor && !complete ? '正在读取学校信息…' : '认证学校信息暂缺')) : '未认证',
-      joinedText: formatTime(user.createdAt) || '暂无加入日期记录' });
+      joinedText: user.joinedMonth || formatTime(user.createdAt) || '暂无加入日期记录' });
   },
   applyAccountInfo(info) {
     this.showUser(info.user, true);

@@ -1,14 +1,85 @@
-<view class="tab-secondary-page">
+<import src="../../templates/account-avatar.wxml" />
+<import src="../../templates/account-menu.wxml" />
+<import src="../../templates/login-sheet.wxml" />
+<wxs module="discovery" src="./discovery-motion.wxs" />
+<view class="search-shell {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
+<view class="tab-secondary-page" bindtap="closePlatformMenu" prop="{{ {active:searchActive, compact:chromeCompact, menu:platformMenuOpen} }}" change:prop="{{discovery.sync}}">
   <view class="tab-page-header" style="height: {{navHeight}}px;">
+    <template is="account-avatar" data="{{navTop: navTop, navButtonHeight: navButtonHeight, menuOpen: menuOpen, avatarSource: avatarSource, avatarReady: avatarReady}}" />
     <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">搜索</view>
   </view>
-<view class="search-page has-tab-bar">
-  <view class="search-toolbar">
-    <view class="search-toolbar-field"><search-box value="{{keyword}}" account-id="{{accountId}}" bind:input="onInput" bind:submit="search" bind:removeauthor="removeAuthor" /></view>
-    <view class="search-toolbar-action search-toolbar-submit" bindtap="search" aria-role="button" aria-label="搜索"><text class="search-toolbar-label">搜索</text></view>
+  <view class="search-page">
+    <view class="search-toolbar search-toolbar-inset" bindtap="tapSearchEntry" aria-role="button" aria-label="打开搜索">
+      <view class="search-toolbar-field"><search-box entry="{{true}}" /></view>
+    </view>
+    <view class="search-discovery-frame" bindtouchstart="beginSearchPull">
+    <view class="search-refresh-anchor {{searchRefreshVisible ? 'is-visible' : ''}}" style="height:{{searchRefreshThreshold}}px;" aria-hidden="true">
+      <cui-refresh id="search-cui" class="search-refresh-logo" bind:ready="onSearchBrandReady" />
+    </view>
+    <scroll-view class="search-discovery" scroll-y="{{!menuOpen && !loginSheetOpen && !authChecking}}" enhanced bounces="{{false}}"
+      refresher-enabled="{{searchActive && boardIndex !== 2 && !menuOpen && !platformMenuOpen && !loginSheetOpen && !authChecking}}"
+      refresher-triggered="{{searchRefreshing}}" refresher-threshold="{{searchRefreshThreshold}}" refresher-default-style="none" refresher-background="#FFFFFF"
+      bindrefresherpulling="pullSearch" bindrefresherrefresh="refreshSearch" bindrefresherrestore="cancelSearchPull" bindrefresherabort="cancelSearchPull"
+      bindtouchend="releaseSearchPull" bindtouchcancel="cancelSearchPull" show-scrollbar="{{false}}" bindscroll="{{discovery.scroll}}" bindtouchstart="{{discovery.begin}}">
+      <view class="search-discovery-content">
+        <view class="search-board-tabs {{boardIndex === 0 ? 'is-cui-board' : ''}}" role="tablist">
+          <view wx:for="{{boardTabs}}" wx:key="*this" class="board-tab {{boardIndex === index ? 'selected' : ''}}" data-index="{{index}}" catchtap="selectBoardTab" aria-role="tab" aria-selected="{{boardIndex === index}}">
+            <view class="board-tab-label"><text>{{item}}</text><view wx:if="{{index === hotBoardIndex}}" class="board-arrow" catchtap="togglePlatformMenu" aria-role="button" aria-label="选择热榜平台" aria-expanded="{{platformMenuOpen}}"><image class="board-chevron {{platformMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" /></view></view>
+          </view>
+          <view class="board-indicator" style="left:calc({{(boardIndex + 0.5) * 100 / 3}}% - 67rpx);"></view>
+          <view wx:if="{{platformMenuOpen}}" class="board-dropdown" style="left:calc({{hotBoardIndex * 100 / 3}}% + 12rpx);" catchtap="stopSearchEvent">
+            <view wx:for="{{hotPlatforms}}" wx:key="key" class="board-option {{hotType === item.key ? 'active' : ''}}" data-type="{{item.key}}" catchtap="selectHotPlatform" aria-role="button">{{item.label}}</view>
+          </view>
+        </view>
+        <view class="board-viewport">
+          <view class="board-panels" style="left:{{-boardIndex * 100}}%;">
+            <view class="board-panel cui-board-panel {{boardIndex === 0 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 0 ? boardMinHeight : 0}}px;">
+              <view class="cui-promo-frame">
+                <video wx:if="{{cuiPromoSrc}}" id="cui-promo" class="cui-promo" src="{{cuiPromoSrc}}" object-fit="contain"
+                  autoplay="{{searchActive && boardIndex === 0 && !menuOpen && !loginSheetOpen && !authChecking}}" loop="{{true}}" muted="{{cuiPromoMuted}}" controls="{{false}}"
+                  show-play-btn="{{false}}" show-center-play-btn="{{false}}" show-fullscreen-btn="{{false}}"
+                  play-gesture="{{false}}" enable-progress-gesture="{{false}}" binderror="cuiPromoFailed" aria-label="Cui 宣传片">
+                  <cover-view class="cui-promo-link" catchtap="openCuiPromoPost" aria-role="button" aria-label="查看 Cui 官方推荐动态">
+                    <cover-view class="cui-promo-credit">由「Cui · 萃」官方推荐</cover-view>
+                  </cover-view>
+                  <cover-view class="cui-promo-sound" catchtap="toggleCuiPromoSound" aria-role="button" aria-label="{{cuiPromoMuted ? '开启声音' : '静音'}}">
+                    <cover-image class="cui-promo-sound-icon" src="{{cuiPromoMuted ? '/images/interface/speaker-muted-white.png' : '/images/interface/speaker-on-white.png'}}" aria-hidden="true" />
+                  </cover-view>
+                </video>
+                <button wx:elif="{{cuiPromoError}}" class="cui-promo-retry" bindtap="loadCuiPromo">重新加载宣传片</button>
+                <text wx:elif="{{cuiPromoLoading}}" class="cui-promo-status" role="status">正在加载宣传片…</text>
+              </view>
+              <view class="cui-hotboard">
+                <view wx:if="{{cuiHotWarning}}" class="hot-warning">{{cuiHotWarning}}</view>
+                <view wx:if="{{cuiHotError}}" class="hot-error"><text class="hot-error-text">{{cuiHotError}}</text><view class="hot-retry" bindtap="loadCuiHotboard" aria-role="button">重试</view></view>
+                <view wx:if="{{cuiHotLoading && !cuiHotRows.length}}" class="hot-empty" role="status">正在获取热搜…</view>
+                <view wx:elif="{{!cuiHotRows.length && !cuiHotError}}" class="hot-empty">今日头条暂无热搜</view>
+                <view class="hot-list"><view wx:for="{{cuiHotRows}}" wx:key="rank" class="hot-item" data-rank="{{item.rank}}" bindtap="searchHotword" aria-role="button"><text class="hot-rank {{item.rank <= 3 ? 'is-top rank-' + item.rank : ''}}">{{item.rank}}</text><text class="hot-title">{{item.title}}</text></view></view>
+                <view wx:if="{{cuiHotHasMore}}" class="hot-more" bindtap="showMoreCuiHotwords" aria-role="button">显示更多<image class="hot-more-icon" src="/images/interface/chevron-down-muted.svg" /></view>
+                <view wx:if="{{cuiHotUpdateText}}" class="hot-updated">榜单更新于 {{cuiHotUpdateText}}{{cuiHotLoading ? ' · 更新中' : ''}}</view>
+              </view>
+            </view>
+            <view class="board-panel {{boardIndex === hotBoardIndex ? 'is-active' : ''}}" style="min-height:{{boardIndex === hotBoardIndex ? boardMinHeight : 0}}px;">
+              <view class="hot-source">{{hotPlatforms[hotType === 'weibo' ? 0 : hotType === 'zhihu' ? 1 : hotType === 'bilibili' ? 2 : 3].label}}热榜</view>
+              <view wx:if="{{hotWarning}}" class="hot-warning">{{hotWarning}}</view>
+              <view wx:if="{{hotError}}" class="hot-error"><text class="hot-error-text">{{hotError}}</text><view class="hot-retry" bindtap="loadHotboard" aria-role="button">重试</view></view>
+              <view wx:if="{{hotLoading && !hotRows.length}}" class="hot-empty" role="status">正在获取热搜…</view>
+              <view wx:elif="{{!hotRows.length && !hotError}}" class="hot-empty">该平台暂无热搜</view>
+              <view class="hot-list"><view wx:for="{{hotRows}}" wx:key="rank" class="hot-item" data-rank="{{item.rank}}" bindtap="searchHotword" aria-role="button"><text class="hot-rank {{item.rank <= 3 ? 'is-top rank-' + item.rank : ''}}">{{item.rank}}</text><text class="hot-title">{{item.title}}</text></view></view>
+              <view wx:if="{{hotHasMore}}" class="hot-more" bindtap="showMoreHotwords" aria-role="button">显示更多<image class="hot-more-icon" src="/images/interface/chevron-down-muted.svg" /></view>
+              <view wx:elif="{{hotRows.length}}" class="hot-end">已显示全部热搜</view>
+              <view wx:if="{{hotUpdateText}}" class="hot-updated">榜单更新于 {{hotUpdateText}}{{hotLoading ? ' · 更新中' : ''}}</view>
+            </view>
+            <view class="board-panel {{boardIndex === 2 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 2 ? boardMinHeight : 0}}px;"></view>
+          </view>
+        </view>
+      </view>
+      <view slot="refresher" class="search-refresh-space" style="height:{{searchRefreshThreshold}}px;" aria-hidden="true"></view>
+    </scroll-view>
+    </view>
   </view>
-  <view class="search-notice">{{accountId ? '输入关键词搜索该用户的动态，或直接搜索此账号' : '搜索动态或用户'}}</view>
 </view>
+<template is="account-menu" data="{{user: user, accountHint: accountHint, menuOpen: menuOpen, navHeight: navHeight, menuLikeCount: menuLikeCount, followerCount: followerCount, followingCount: followingCount, menuItems: menuItems, utilityMenuItems: utilityMenuItems, loading: loading, confirmingLogout: confirmingLogout}}" />
+<template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: accountError, loading: loading, cancelText: '暂不登录'}}" />
+<view wx:if="{{tabMotionPhase && !menuOpen && !authChecking && !loginSheetOpen}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>
 </view>
-
-<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px;" aria-hidden="true"></view>

@@ -4,7 +4,7 @@
   <view wx:for="{{frames}}" wx:key="_id" class="quote-entry {{index ? 'is-nested' : ''}}" data-id="{{item._id}}" catchtap="open" aria-role="{{removable ? 'region' : 'button'}}" aria-label="{{item.unavailable ? '原动态不可见' : '引用的动态'}}">
     <view wx:if="{{item.loading || item.unavailable || item.failed || item.collapsed}}" class="quote-placeholder">{{item.loading ? '正在读取原动态…' : item.unavailable ? '原动态已删除或不可见' : item.failed ? '原动态暂时无法读取' : '查看更早的引用 ›'}}</view>
     <block wx:else>
-      <view class="quote-heading"><image class="quote-avatar avatar-outline" src="{{item.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><text class="quote-name">{{item.author.nickname}}</text><image wx:if="{{item.author.verified}}" class="quote-verified" src="/images/verification/verified.png" /><text class="quote-time">{{item.timeText}}</text></view>
+      <view class="quote-heading"><image class="quote-avatar avatar-outline" src="{{item.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><text class="quote-name">{{item.author.nickname}}</text><image wx:if="{{item.author.verified || item.author.officialVerified}}" class="quote-verified" src="/images/verification/verified.png" /><text class="quote-time">{{item.timeText}}</text></view>
       <text wx:if="{{item.content}}" class="quote-content" user-select>{{item.content}}</text>
       <view wx:if="{{item.images.length}}" class="quote-media-width" data-frame="{{index}}"><view class="quote-gallery" style="width: {{item.galleryWidth}}%; height: {{item.galleryHeight}}rpx;">
         <swiper wx:if="{{item.images.length > 1}}" current="{{item.imageIndex}}" duration="240" next-margin="44rpx" data-frame="{{index}}" bindchange="imageChanged" class="quote-swiper" indicator-dots="{{false}}">

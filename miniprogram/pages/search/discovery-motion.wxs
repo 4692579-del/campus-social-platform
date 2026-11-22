@@ -1,0 +1,19 @@
+function sync(value, old, owner) {
+  var state = owner.getState();
+  if (!old || (!old.active && value.active)) {state.compact=!!value.compact;state.distance=0;state.direction=0;state.baseline=true;}
+  state.config = value;
+}
+function scroll(event, owner) {
+  var state = owner.getState(); if (!state.config || !state.config.active) return;
+  var top = Math.max(0,event.detail.scrollTop || 0), delta = top - (state.top || 0);
+  state.top = top;
+  if (state.config.menu) owner.callMethod('closePlatformMenu',{});
+  if (state.baseline) {state.baseline=false;return;}
+  if (top <= 1) { state.distance = 0; state.direction = 0; if (state.compact !== false) {state.compact=false;owner.callMethod('setSearchCompact',{compact:false});} return; }
+  if (Math.abs(delta) < 0.5) return;
+  var dir = delta > 0 ? 1 : -1;
+  state.distance = dir === state.direction ? (state.distance || 0) + Math.abs(delta) : Math.abs(delta); state.direction = dir;
+  if (state.distance >= 3) { state.distance=0; var compact=dir>0; if (state.compact !== compact) {state.compact=compact;owner.callMethod('setSearchCompact',{compact:compact});} }
+}
+function begin(event,owner){owner.getState().baseline=false;}
+module.exports={sync:sync,scroll:scroll,begin:begin};

@@ -1,4 +1,20 @@
 <wxs module="actionCount" src="./action-count.wxs" />
+<template name="post-video">
+  <view class="post-photo post-video-frame" data-index="{{index}}" catchtap="previewImage" aria-role="button" aria-label="打开视频预览">
+    <video wx:if="{{feedVideo && feedVideo.file === item.fileID && feedVideo.src}}" id="feed-video-{{feedVideo.token}}"
+      class="post-inline-video {{feedVideo.ready ? 'is-ready' : ''}}"
+      src="{{feedVideo.src}}" data-token="{{feedVideo.token}}" initial-time="{{feedVideo.start}}" object-fit="{{mode === 'aspectFill' ? 'cover' : 'contain'}}"
+      autoplay="{{true}}" muted="{{true}}" loop="{{false}}" controls="{{false}}" show-play-btn="{{false}}" show-center-play-btn="{{false}}"
+      enable-progress-gesture="{{false}}" play-gesture="{{false}}" bindtimeupdate="feedVideoTime" bindended="feedVideoEnded" binderror="feedVideoError" />
+    <view class="post-video-cover {{feedVideo && feedVideo.file === item.fileID && feedVideo.ready ? 'is-hidden' : ''}}">
+      <media-image wx:if="{{item.poster}}" class="post-photo" src="{{item.poster}}" mode="{{mode}}" lazy-load />
+    </view>
+    <view wx:if="{{feedVideo && feedVideo.file === item.fileID && !feedVideo.ready}}" class="post-video-loading" role="status" aria-label="视频加载中">
+      <image class="post-video-loading-icon" src="/images/interface/video-loading.svg" mode="aspectFit" aria-hidden="true" />
+    </view>
+    <view wx:if="{{!homeFeed && (!feedVideo || feedVideo.file !== item.fileID)}}" class="post-play-badge"></view>
+  </view>
+</template>
 <template name="actions">
   <view class="post-actions">
     <button class="post-action" catchtap="reply" aria-label="查看评论"><image src="/images/post-actions/comment.svg" mode="aspectFit" /><text>{{actionCount.format(post.replyCount)}}</text></button>
@@ -12,28 +28,24 @@
   <view wx:if="{{homeFeed && !detail}}" class="post-avatar-anchor" catchtap="avatarMenu" aria-role="{{viewer && (viewer.accountId && post.author.accountId ? post.author.accountId === viewer.accountId : post.isOwn) ? 'img' : 'button'}}" aria-label="作者头像"><image class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-avatar-follow {{followPreview.phase === 'following' ? 'is-demo-following' : followPreview.followed ? 'is-demo-followed' : ''}}" aria-hidden="true"><image class="follow-plus" src="/images/interface/plus-white.svg" mode="aspectFit" /><image class="follow-check" src="/images/interface/follow-check-white.svg" mode="aspectFit" /></view></view>
   <image wx:else catchtap="viewAuthor" aria-role="button" aria-label="查看作者主页" class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
   <view class="post-main">
-    <view class="post-author-details"><view class="post-heading"><text class="post-name" catchtap="viewAuthor">{{post.author.nickname}}</text><image wx:if="{{post.author.verified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><slot name="header-actions"></slot><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <view class="post-author-details"><view class="post-heading"><text class="post-name" catchtap="viewAuthor">{{post.author.nickname}}</text><image wx:if="{{post.author.verified || post.author.officialVerified}}" class="author-badge" src="/images/verification/verified.png" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><slot name="header-actions"></slot><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
     <text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text>
     </view>
-    <text class="post-text" selectable>{{detail || expanded ? (post.fullContent || post.content) : post.content}}</text>
-    <view wx:if="{{post.truncated && !detail}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
+    <view class="{{sevenLinePreview && !detail && !expanded ? 'post-text-clip' : ''}}">
+      <text class="post-text {{sevenLinePreview && !detail ? 'post-text-seven-lines' : ''}}" selectable>{{detail || expanded || sevenLinePreview ? (post.fullContent || post.content) : post.content}}</text>
+    </view>
+    <view wx:if="{{!detail && (sevenLinePreview && sevenLineOverflow !== null ? sevenLineOverflow : post.truncated)}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
     <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{imageFiles.length > 1 ? 'is-carousel' : 'is-single'}}" style="width: {{galleryWidth}}%; height: {{galleryHeight}}rpx;" catchtap="stopEvent">
       <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="动态媒体，左右滑动查看">
         <swiper-item wx:for="{{mediaItems}}" wx:key="fileID" class="post-image-slide">
           <view class="post-photo-frame">
-            <view wx:if="{{item.type === 'video'}}" class="post-photo" data-index="{{index}}" catchtap="previewImage" aria-role="button" aria-label="播放视频">
-              <media-image wx:if="{{item.poster}}" class="post-photo" src="{{item.poster}}" mode="aspectFill" lazy-load />
-              <view class="post-play-badge"></view>
-            </view>
+            <template wx:if="{{item.type === 'video'}}" is="post-video" data="{{item: item, index: index, mode: 'aspectFill', feedVideo: feedVideo, homeFeed: homeFeed}}" />
             <media-image wx:else class="post-photo" src="{{item.fileID}}" mode="aspectFill" lazy-load data-index="{{index}}" data-file="{{item.fileID}}" bindload="photoLoaded" catchtap="previewImage" />
           </view>
         </swiper-item>
       </swiper>
       <view wx:else class="post-photo-frame">
-        <view wx:if="{{mediaItems[0].type === 'video'}}" class="post-photo" data-index="0" catchtap="previewImage" aria-role="button" aria-label="播放视频">
-          <media-image wx:if="{{mediaItems[0].poster}}" class="post-photo" src="{{mediaItems[0].poster}}" mode="aspectFit" lazy-load />
-          <view class="post-play-badge"></view>
-        </view>
+        <template wx:if="{{mediaItems[0].type === 'video'}}" is="post-video" data="{{item: mediaItems[0], index: 0, mode: 'aspectFit', feedVideo: feedVideo, homeFeed: homeFeed}}" />
         <media-image wx:else class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" />
       </view>
       <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter" aria-label="{{'第' + (imageIndex + 1) + '项，共' + imageFiles.length + '项'}}">{{imageIndex + 1}} / {{imageFiles.length}}</view>

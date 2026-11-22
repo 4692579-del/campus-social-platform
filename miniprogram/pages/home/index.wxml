@@ -1,11 +1,12 @@
 <import src="../../templates/account-menu.wxml" />
+<import src="../../templates/account-avatar.wxml" />
 <import src="../../templates/login-sheet.wxml" />
 <wxs module="headerMotion" src="./header-motion.wxs" />
 <view class="home-shell {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}} {{chromeCompact ? 'chrome-compact' : ''}}">
   <view class="home-page" style="--home-header-height: {{chromeHeaderHeight}}px; --home-safe-top: {{chromeSafeTop}}px;" prop="{{ {compact: chromeCompact, active: activeTab, header: chromeHeaderHeight, safe: chromeSafeTop, blocked: menuOpen || tabMenuKey || authorMenu || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'} }}" change:prop="{{headerMotion.sync}}">
     <view class="home-status-cover" style="height: {{chromeSafeTop}}px;" aria-hidden="true"></view>
     <view class="home-header {{tabMenuKey ? 'dropdown-open' : ''}}" style="padding-top: {{navHeight}}px;">
-      <button size="mini" class="home-avatar-button" style="top: {{navTop}}px; width: {{navButtonHeight}}px; height: {{navButtonHeight}}px;" bindtap="openMenu" disabled="{{menuOpen}}" aria-hidden="{{menuOpen}}" aria-label="打开侧面菜单" aria-expanded="{{menuOpen}}"><image src="/images/avatar.png" mode="aspectFill" /><image class="home-avatar-image {{homeAvatarReady ? 'is-ready' : ''}}" src="{{homeAvatarSource}}" data-source="{{homeAvatarSource}}" mode="aspectFill" bindload="onHomeAvatarLoad" binderror="onAvatarError" /></button>
+      <template is="account-avatar" data="{{navTop: navTop, navButtonHeight: navButtonHeight, menuOpen: menuOpen, avatarSource: homeAvatarSource, avatarReady: homeAvatarReady}}" />
       <button size="mini" class="home-brand-button" style="top: {{navTop}}px; height: {{navButtonHeight}}px;" bindtap="backToFeedTop" disabled="{{menuOpen || tabMenuKey || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'}}" aria-hidden="{{menuOpen}}" aria-label="Cui，返回列表顶部" hover-class="none"><view class="home-brand-art {{brandBouncing ? 'is-bouncing' : ''}}" bindanimationend="finishBrandBounce"><cui-refresh id="home-cui" class="home-brand-icon" bind:ready="onHomeBrandReady" /></view></button>
       <view class="home-tabs {{tabMenuKey ? 'dropdown-open' : ''}}" role="tablist" aria-label="首页板块">
         <view wx:for="{{tabs}}" wx:key="key" class="home-tab-group">
@@ -33,7 +34,10 @@
     <block>
       <view wx:if="{{feedError}}" class="feed-error"><text>{{feedError}}</text><button size="mini" bindtap="retryFeed">重试</button></view>
       <block wx:if="{{feedLoading && !posts.length}}"><view wx:for="{{skeletons}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view></block>
-      <block wx:else><square-post wx:for="{{posts}}" wx:key="_id" id="home-post-{{item._id}}" home-feed="{{true}}" follow-preview="{{followPreviews[item._id]}}" bind:avatar="openAuthorMenu" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" /><view wx:if="{{!posts.length && !feedError}}" class="feed-empty"><view class="empty-heading">{{tabFilters.square === 'following' ? user ? feedHasMore ? '看看更早的关注动态' : '还没有关注动态' : '登录后查看关注动态' : '广场还很安静'}}</view><view class="empty-caption">{{tabFilters.square === 'following' ? '关注感兴趣的人，在这里查看他们的动态' : '写下一个想法，开启第一段对话'}}</view><button wx:if="{{tabFilters.square !== 'following'}}" size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button></view><view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view><view wx:elif="{{posts.length && !feedHasMore}}" class="feed-end">已经看到这里了</view></block>
+      <block wx:else><square-post wx:for="{{posts}}" wx:key="_id" id="home-post-{{item._id}}" home-feed="{{true}}"
+        seven-line-preview="{{item._id === cuiWelcomePostId}}"
+        feed-video-enabled="{{activeTab === 'square' && !menuOpen && !tabMenuKey && !authorMenu && !unfollowTarget && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}"
+        follow-preview="{{followPreviews[item._id] || defaultFollowPreview}}" bind:avatar="openAuthorMenu" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" /><view wx:if="{{!posts.length && !feedError}}" class="feed-empty"><view class="empty-heading">{{tabFilters.square === 'following' ? user ? feedHasMore ? '看看更早的关注动态' : '还没有关注动态' : '登录后查看关注动态' : '广场还很安静'}}</view><view class="empty-caption">{{tabFilters.square === 'following' ? '关注感兴趣的人，在这里查看他们的动态' : '写下一个想法，开启第一段对话'}}</view><button wx:if="{{tabFilters.square !== 'following'}}" size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button></view><view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view><view wx:elif="{{posts.length && !feedHasMore}}" class="feed-end">已经看到这里了</view></block>
     </block>
     <button wx:if="{{tabFilters.square === 'following' && feedHasMore && !feedMoreLoading}}" class="following-more" bindtap="loadMoreFeed">加载更多关注动态</button>
     <view class="home-feed-bottom" aria-hidden="true"></view>
@@ -55,4 +59,4 @@
 
 <square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />
 
-<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{chromeCompact ? chromeSafeTop : navHeight}}px;" aria-hidden="true"></view>
+<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{chromeCompact ? chromeSafeTop : navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>

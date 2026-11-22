@@ -5,4 +5,7 @@ function format(value) {
   if (count >= 10000) return (Math.floor(count / 1000) / 10) + '万';
   return '' + count;
 }
-module.exports = { format: format };
+function formatKnown(value) {
+  return value === '—' ? value : format(value);
+}
+module.exports = { format: format, formatKnown: formatKnown };

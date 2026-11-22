@@ -38,7 +38,7 @@ module.exports = { methods: {
     const raw = profile.createdAt && profile.createdAt.$date || profile.createdAt;
     const date = raw ? new Date(new Date(raw).getTime() + 8 * 3600000) : null;
     const patch = { profileUser: profile, profileUnavailable: false, isVerified: Boolean(profile.isVerified),
-      joinedText: date && Number.isFinite(date.getTime()) ? `${date.getUTCFullYear()}年${date.getUTCMonth() + 1}月 加入` : '',
+      joinedText: profile.joinedMonth ? `${profile.joinedMonth} 加入` : date && Number.isFinite(date.getTime()) ? `${date.getUTCFullYear()}年${date.getUTCMonth() + 1}月 加入` : '',
       likeCount: Number.isSafeInteger(profile.receivedLikes) ? profile.receivedLikes : '—' };
     if (this.data.coverFileID !== (profile.coverFileID || '')) Object.assign(patch, { coverFileID: profile.coverFileID || '', coverFailed: false });
     if (Number.isSafeInteger(profile.postCount)) patch.postCountText = `${profile.postCount} 条帖子`;

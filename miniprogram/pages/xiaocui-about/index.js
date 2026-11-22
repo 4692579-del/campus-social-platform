@@ -62,7 +62,8 @@ Page({
     if (this._returning || this._unloaded) return;
     this._returning = true;
     const prepared = this.prepareReturn();
-    const navigate = () => wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/index', fail: () => { this._returning = false; } }) });
+    const fallbackUrl = this._returnPage?.route === 'pages/search/index' ? '/pages/search/index' : '/pages/home/index';
+    const navigate = () => wx.navigateBack({ fail: () => wx.switchTab({ url: fallbackUrl, fail: () => { this._returning = false; } }) });
     if (prepared && typeof wx.nextTick === 'function') wx.nextTick(navigate); else navigate();
   },
 });

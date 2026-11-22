@@ -1,0 +1,8 @@
+<template name="account-avatar">
+  <button size="mini" class="account-avatar-button" style="top: {{navTop}}px; width: {{navButtonHeight}}px; height: {{navButtonHeight}}px;"
+    bindtap="openMenu" disabled="{{menuOpen}}" aria-hidden="{{menuOpen}}" aria-label="打开侧面菜单" aria-expanded="{{menuOpen}}">
+    <image src="/images/avatar.png" mode="aspectFill" />
+    <image class="account-avatar-image {{avatarReady ? 'is-ready' : ''}}" src="{{avatarSource}}" data-source="{{avatarSource}}"
+      mode="aspectFill" bindload="onHomeAvatarLoad" binderror="onAvatarError" />
+  </button>
+</template>

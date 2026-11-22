@@ -152,8 +152,12 @@ test('私信、消息、搜索页面在进入和就绪时恢复正确选中索�
     let definition;
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../miniprogram/pages/${name}/index.js`), 'utf8'), {
       Page: value => { definition = value; },
-      require: name => name.includes('services/user') ? { searchSessionKey: () => 'guest:0', consumeSearchEntry: () => null } : name.includes('tab-selection') ? { pendingIndex: () => null } : name.includes('search-query') ? require('../miniprogram/utils/search-query') : require('../miniprogram/utils/secondary-tab-page'),
-      wx: new Proxy({}, { get() { throw new Error('占位页面不应发起请求'); } }),
+      require: name => name === './refresh' ? require('../miniprogram/pages/search/refresh') : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('services/square') ? {} : name.includes('services/hotboard') ? { cached:()=>null, load:async()=>{throw new Error('此测试不联网');} } : name.includes('services/user') ? { getCachedUser: () => null, restore: async () => null, searchSessionKey: () => 'guest:0', consumeSearchEntry: () => null } : name.includes('tab-selection') ? { pendingIndex: () => null } : name.includes('search-query') ? require('../miniprogram/utils/search-query') : require('../miniprogram/utils/secondary-tab-page'),
+      wx: new Proxy({}, { get(target,key) {
+        if (key === 'nextTick') return fn => fn();
+        if (name === 'search' && key === 'cloud') return undefined;
+        throw new Error('占位页面不应发起请求');
+      } }),
     });
     let state = {};
     const page = { ...definition, data: { ...definition.data }, setData(value, callback) { Object.assign(this.data, value); if (callback) callback(); }, getTabBar: () => ({ setData: value => { state = { ...state, ...value }; } }) };
@@ -202,16 +206,15 @@ test('无过渡能力的页面使用原生切页兜底，底栏从共享进度�
   source.pages.push({ route: 'pages/home/index', data: {} }); source.attach();
   source.bar.switchTab({ currentTarget: { dataset: { index: 3 } } });
   assert.deepEqual(source.routes, ['/pages/search/index']); assert.equal(source.bar.data.selected, 3);
-  assert.equal(source.bar.data.indicatorAnimating, false, '原生切页不等待动画开始或结束');
-  now += 32; sourceTicks.shift()();
-  assert.equal(source.bar.data.indicatorDelay, -32); assert.equal(source.bar.data.indicatorAnimating, true);
+  assert.equal(sourceTicks.length, 0, '原生切页和胶囊启动都不等待 nextTick');
+  assert.equal(source.bar.data.indicatorAnimating, true);
+  now += 48;
   source.hide(); assert.equal(source.timers.size, 0);
   const target = fixture({ selection, nextTick: callback => targetTicks.push(callback) });
   target.pages.push({ route: 'pages/search/index', data: {} }); target.attach();
   assert.equal(target.bar.data.indicatorPosition, selection.read(3).position);
   assert.ok(target.bar.data.indicatorPosition > 0 && target.bar.data.indicatorPosition < 300);
-  target.ready(); target.show(); assert.equal(targetTicks.length, 1);
-  now += 16; targetTicks.shift()();
+  target.ready(); target.show(); assert.equal(targetTicks.length, 0);
   assert.equal(target.bar.data.indicatorDelay, -48); assert.equal(target.bar.data.indicatorFrom, 0);
   assert.equal(target.bar.data.indicatorTo, 300); assert.equal(target.timers.size, 1);
   assert.equal([...target.timers.values()][0].delay, 272);
@@ -224,17 +227,19 @@ test('快速反向切换从当前滑动坐标继续，旧帧与旧结束回调�
   const selection = createTabSelection(() => now), ticks = [];
   selection.begin(0, 3);
   const f = fixture({ selection, switchTab() {}, nextTick: callback => ticks.push(callback) });
-  f.pages.push({ route: 'pages/search/index', data: {} }); f.attach(); ticks.shift()();
+  f.pages.push({ route: 'pages/search/index', data: {} }); f.attach();
   const staleFinish = [...f.timers.values()][0].callback;
   now = 1096; const position = selection.read(3).position;
   f.bar.switchTab({ currentTarget: { dataset: { index: 1 } } });
   assert.equal(f.bar.data.indicatorPosition, position); assert.equal(selection.read(1).from, position);
-  ticks.shift()(); assert.equal(f.bar.data.indicatorTo, 100);
+  assert.equal(ticks.length, 0); assert.equal(f.bar.data.indicatorTo, 100);
   staleFinish(); assert.equal(f.bar.data.indicatorTo, 100); assert.equal(f.bar.data.indicatorAnimating, true);
   const interrupted = fixture({ selection, nextTick: callback => ticks.push(callback) });
   interrupted.pages.push({ route: 'pages/inbox/index', data: {} }); interrupted.attach();
-  const oldFrame = ticks.shift(); interrupted.hide(); oldFrame();
-  assert.equal(interrupted.bar.data.indicatorAnimating, false); assert.equal(interrupted.timers.size, 0);
+  const interruptedState = { ...interrupted.bar.data };
+  const oldFinish = [...interrupted.timers.values()][0].callback;
+  interrupted.hide(); oldFinish();
+  assert.deepEqual(interrupted.bar.data, interruptedState); assert.equal(interrupted.timers.size, 0);
 });
 
 test('直接进入标签页不从首页虚假滑动，过期动画也只呈现正确终点', () => {
@@ -274,8 +279,9 @@ test('切页失败从当前位置滑回原标签，过期失败不能覆盖后�
   assert.equal(f.bar.data.selected, 0); assert.equal(selection.read(0).from, position);
   assert.equal(f.bar.data.indicatorTo, 0); assert.equal(f.bar.data.indicatorAnimating, true);
   f.bar.switchTab({ currentTarget: { dataset: { index: 1 } } });
-  const nextPosition = f.bar.data.indicatorPosition; failed.fail();
+  const nextPosition = f.bar.data.indicatorPosition; failed.fail(); failed.complete();
   assert.equal(f.bar.data.selected, 1); assert.equal(f.bar.data.indicatorPosition, nextPosition);
+  assert.equal(f.bar._switching, true);
   assert.deepEqual(f.toasts, ['页面打开失败，请重试']);
 });
 
@@ -335,17 +341,20 @@ test('源页隐藏时仅清理回调，不撤掉 CSS 动画让灰滑块跳到终
   now += 80; f.show(); assert.equal(f.bar.data.indicatorDelay, -80);
 });
 
-test('快速反向时撤掉旧 CSS 动画与写入采样位置在同一补丁内，不暴露旧终点', () => {
+test('快速反向时在同一补丁内更换动画名并从采样位置开始', () => {
   let now = 1000;
   const selection = createTabSelection(() => now), f = fixture({ selection, switchTab() {} });
   selection.begin(0, 3); f.pages.push({ route: 'pages/search/index', data: {} }); f.attach();
   now += 80;
-  const position = selection.read(3).position, writes = [], setData = f.bar.setData.bind(f.bar);
+  const position = selection.read(3).position, variant = f.bar.data.indicatorVariant, writes = [], setData = f.bar.setData.bind(f.bar);
   f.bar.setData = (values, callback) => { writes.push(values); setData(values, callback); };
   f.bar.switchTab({ currentTarget: { dataset: { index: 1 } } });
-  const resets = writes.filter(values => values.indicatorAnimating === false);
-  assert.equal(resets.length, 1);
-  assert.equal(resets[0].indicatorPosition, position);
+  const starts = writes.filter(values => 'indicatorAnimating' in values);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].indicatorAnimating, true);
+  assert.equal(starts[0].indicatorPosition, position);
+  assert.equal(starts[0].indicatorFrom, position);
+  assert.notEqual(starts[0].indicatorVariant, variant);
 });
 
 test('准备正文淡出后立即原生换页，不等待视图回调；成功后通知源页清理', () => {
@@ -388,6 +397,6 @@ test('首页滚动时底栏晚初始化能恢复紧凑状态，其他原生标�
   const f = fixture(); f.pages.push({ route: 'pages/home/index', data: { chromeCompact: true } });
   f.attach(); f.ready(); f.show(); assert.equal(f.bar.data.compact, true);
   for (const route of ['pages/inbox/index', 'pages/messages/index', 'pages/search/index']) {
-    f.pages[0] = { route, data: { chromeCompact: true } }; f.show(); assert.equal(f.bar.data.compact, false);
+    f.pages[0] = { route, data: { chromeCompact: true } }; f.show(); assert.equal(f.bar.data.compact, route === 'pages/search/index');
   }
 });

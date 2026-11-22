@@ -328,7 +328,8 @@ Page({
     if (this._returning || this._unloaded) return;
     this._returning = true;
     const prepared = this.prepareReturnSurface();
-    const fallback = () => wx.switchTab({ url: '/pages/home/index', fail: () => {
+    const fallbackUrl = this._returnPage?.route === 'pages/search/index' ? '/pages/search/index' : '/pages/home/index';
+    const fallback = () => wx.switchTab({ url: fallbackUrl, fail: () => {
       this._returning = false;
       if (!this._unloaded) wx.showToast({ title: '返回失败，请重试', icon: 'none' });
     } });

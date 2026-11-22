@@ -3,7 +3,7 @@
     <view class="tab-dock-scale {{compact ? 'is-compact' : ''}}">
       <view class="tab-bar nav-glass">
         <view class="tab-items">
-          <view class="tab-indicator {{indicatorAnimating ? 'is-sliding' : ''}}" style="opacity: {{selected >= 0 ? 1 : 0}}; width: {{100 / items.length}}%; transform: translateX({{indicatorPosition}}%); --tab-slide-from: {{indicatorFrom}}%; --tab-slide-to: {{indicatorTo}}%; animation-duration: {{indicatorDuration}}ms; animation-delay: {{indicatorDelay}}ms;" aria-hidden="true"></view>
+          <view class="tab-indicator {{indicatorAnimating ? (indicatorVariant ? 'slide-a' : 'slide-b') : ''}}" style="opacity: {{selected >= 0 ? 1 : 0}}; width: {{100 / items.length}}%; transform: translate3d({{indicatorAnimating ? indicatorTo : indicatorPosition}}%, 0, 0); --tab-slide-from: {{indicatorFrom}}%; --tab-slide-to: {{indicatorTo}}%; animation-duration: {{indicatorDuration}}ms; animation-delay: {{indicatorDelay}}ms;" aria-hidden="true"></view>
           <button wx:for="{{items}}" wx:key="path" class="tab-item {{selected === index ? 'is-selected' : ''}}" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="tab-item-pressed">
             <view class="tab-icon-capsule"><image class="tab-icon tab-icon-idle" src="/images/tab-bar/{{item.icon}}.svg" mode="aspectFit" /><image class="tab-icon tab-icon-active" src="/images/tab-bar/{{item.icon}}-active.svg" mode="aspectFit" /></view>
           </button>

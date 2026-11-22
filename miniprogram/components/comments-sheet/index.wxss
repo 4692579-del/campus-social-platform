@@ -18,6 +18,7 @@ button::after { border: 0; }
 .comments-list { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .comments-footer { position: relative; z-index: 1; flex: 0 0 auto; width: 100%; background: #fff; }
 .comments-status { padding: 52rpx 28rpx; color: #98a1ad; font-size: 26rpx; text-align: center; }
+.comments-closed { box-sizing: border-box; padding: 24rpx 28rpx calc(24rpx + env(safe-area-inset-bottom)); color: #6b7280; font-size: 26rpx; text-align: center; border-top: 1rpx solid #edf0f3; }
 .comment-group { padding: 24rpx 28rpx 12rpx; }
 .comment-row { display: flex; gap: 18rpx; padding: 0; }
 .comment-row.is-located { border-radius: 14rpx; animation: located-reply 1.8s ease-out both; }

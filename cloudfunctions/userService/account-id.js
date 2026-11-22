@@ -96,7 +96,8 @@ function createAccountIdService(db, options = {}) {
     if (!boundUser(user) || user.accountId !== accountId || user.status !== 'active' ||
         !['user', 'student', 'admin'].includes(user.role)) return null;
     return { _id: user._id, accountId, nickname: user.nickname, avatarFileID: user.avatarFileID,
-      isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId) };
+      isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
+      ...(user.officialVerified === true ? { officialVerified: true } : {}) };
   }
 
   return { assign, backfill, find };

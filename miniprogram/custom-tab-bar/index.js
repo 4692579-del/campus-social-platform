@@ -15,6 +15,7 @@ Component({
     indicatorDuration: 320,
     indicatorDelay: 0,
     indicatorAnimating: false,
+    indicatorVariant: false,
     items: [
       { label: '首页', path: '/pages/home/index', icon: 'home' },
       { label: '消息', path: '/pages/inbox/index', icon: 'paper-plane' },
@@ -57,27 +58,15 @@ Component({
       this._indicatorFlight = key;
       const epoch = this._indicatorEpoch;
       if (!state.active) { this.setData({ indicatorAnimating: false, indicatorPosition: state.position }); return; }
-      // 先呈现当前进度，再从同一时间点接续 CSS 动画；跨页不从上次停留的标签重播。
-      const animate = () => {
+      // 交替动画名，切页及反向时在同一补丁里从共享时间轴启动，不插入静止帧。
+      this.setData({ indicatorAnimating: true, indicatorPosition: state.position, indicatorFrom: state.from,
+        indicatorTo: state.to, indicatorDuration: state.duration, indicatorDelay: -state.elapsed, indicatorVariant: !this.data.indicatorVariant });
+      this._indicatorTimer = setTimeout(() => {
         if (epoch !== this._indicatorEpoch || this._indicatorDetached || this._indicatorVisible === false) return;
-        const latest = tabSelection.read(index);
-        if (!latest.active || latest.id !== state.id) {
-          this.setData({ indicatorPosition: latest.position });
-          this._indicatorFlight = null;
-          return;
-        }
-        this.setData({ indicatorAnimating: true, indicatorPosition: latest.to, indicatorFrom: latest.from,
-          indicatorTo: latest.to, indicatorDuration: latest.duration, indicatorDelay: -latest.elapsed });
-        this._indicatorTimer = setTimeout(() => {
-          if (epoch !== this._indicatorEpoch || this._indicatorDetached || this._indicatorVisible === false) return;
-          this._indicatorTimer = null;
-          this.setData({ indicatorAnimating: false, indicatorPosition: latest.to });
-          this._indicatorFlight = null;
-        }, latest.duration - latest.elapsed);
-      };
-      this.setData({ indicatorAnimating: false, indicatorPosition: state.position }, () => {
-        if (typeof wx.nextTick === 'function') wx.nextTick(animate); else animate();
-      });
+        this._indicatorTimer = null;
+        this.setData({ indicatorAnimating: false, indicatorPosition: state.to });
+        this._indicatorFlight = `${index}:0`;
+      }, state.duration - state.elapsed);
     },
     syncPageState(arriving = false) {
       const pages = getCurrentPages(), page = pages[pages.length - 1];
@@ -93,7 +82,7 @@ Component({
         authBlocked: Boolean(page.data.authChecking || page.data.loginSheetOpen || page.data.composerOpen),
         menuOpen: Boolean(page.data.menuOpen),
         menuInstant: Boolean(page.data.menuInstant),
-        compact: page.route === 'pages/home/index' && Boolean(page.data.chromeCompact) &&
+        compact: ['pages/home/index', 'pages/search/index'].includes(page.route) && Boolean(page.data.chromeCompact) &&
           !page.data.menuOpen && !page.data.commentPostId && !page.data.composerOpen && !page.data.authChecking && !page.data.loginSheetOpen,
       };
       const selected = pending === null ? this.data.items.findIndex(item => item.path === `/${page.route}`) : pending;
@@ -137,14 +126,15 @@ Component({
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }
       const index = Number(event.currentTarget.dataset.index);
       if (!Number.isInteger(index) || !this.data.items[index] || index === this.data.selected || this._switching) return;
-      this._switching = true;
       const previous = this.data.selected, previousCompact = this.data.compact, animationId = tabSelection.begin(previous, index);
+      this._switching = true;
+      this._tabNavigationId = animationId;
       this.setData({ selected: index, compact: false });
       const pages = getCurrentPages(), source = pages[pages.length - 1];
       const motionTicket = source && typeof source.prepareTabLeave === 'function' ?
         source.prepareTabLeave(this.data.items[index].path) : null;
       const rollback = () => {
-        this._switching = false;
+        if (this._tabNavigationId !== animationId) return false;
         if (!tabSelection.rollback(animationId, previous)) return false;
         if (!this._indicatorDetached) this.setData({ selected: previous, compact: previousCompact });
         return true;
@@ -159,7 +149,12 @@ Component({
           if (motionTicket !== null && source && typeof source.cancelTabLeave === 'function') source.cancelTabLeave(motionTicket);
           wx.showToast({ title: '页面打开失败，请重试', icon: 'none' });
         },
-        complete: () => { tabSelection.complete(animationId); this._switching = false; },
+        complete: () => {
+          tabSelection.complete(animationId);
+          if (this._tabNavigationId !== animationId) return;
+          this._tabNavigationId = null;
+          this._switching = false;
+        },
       });
     },
   },

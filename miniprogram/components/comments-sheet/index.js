@@ -28,7 +28,7 @@ const popup = (name, options) => new Promise((resolve, reject) => wx[name]({ ...
 
 Component({
   options: { multipleSlots: true },
-  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean },
+  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean, commentsDisabled: Boolean },
   observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); },
     focusReplyId() { if (this._roots) this.locateReply(); },
     'postId, viewer._id': function (id, account) {
@@ -37,7 +37,7 @@ Component({
       this._commentMotionOwner = owner;
       this.clearCommentMotions();
     } },
-  data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0,
+  data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0, commentsClosed: false,
     selectedImages: [], choosingImages: false,
     text: '', inputValue: '', nativeInputValue: '', inputCursor: -1, askAI: false, count: 0, remainingCount: COMMENT_MAX, countWarning: false, countProgress: 0, limitHintVisible: false, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
     viewportHeight: 812, sheetTop: 260, expanded: false, dragging: false,
@@ -86,6 +86,7 @@ Component({
   } },
   methods: {
     stopEvent() {},
+    commentsAreClosed() { return this.data.commentsDisabled || this.data.commentsClosed; },
     clearCommentMotions(id = '', render = true) {
       if (!this._commentMotions) return;
       const ids = id ? [id] : [...this._commentMotions.keys()];
@@ -286,6 +287,7 @@ Component({
     },
     login() { this.triggerEvent('login'); },
     focusComposer() {
+      if (this.commentsAreClosed()) return;
       if (!users.getCachedUser()) { this.login(); return; }
       this.cancelReply();
       this.setData({ inputFocused: true, inputFocusRequested: true });
@@ -411,7 +413,7 @@ Component({
     showReplies(result) {
       this._roots = result.items.filter(row => !this._removedComments.has(row._id));
       if (this._focusRoot && !this._removedComments.has(this._focusRoot._id) && !this._roots.some(row => row._id === this._focusRoot._id)) this._roots.push(this._focusRoot);
-      this.setData({ hasMore: result.hasMore, nextOffset: result.nextOffset });
+      this.setData({ hasMore: result.hasMore, nextOffset: result.nextOffset, commentsClosed: result.commentsDisabled === true });
       this.renderComments();
       if (typeof square.warmReplyChildren === 'function') square.warmReplyChildren(this.data.postId, result.items);
       this.resumeAIReplies(result.items);
@@ -473,7 +475,7 @@ Component({
       return this._roots.find(row => row._id === id) || [...this._threads.values()].flatMap(thread => thread.items).find(row => row._id === id);
     },
     selectReply(event) {
-      if (this.data.sending) return;
+      if (this.commentsAreClosed() || this.data.sending) return;
       if (!users.getCachedUser()) { this.login(); return; }
       const row = this.findComment(event.currentTarget.dataset.id);
       if (!row || row.folded || row.rootId && this.findComment(row.rootId)?.folded) return;
@@ -661,6 +663,7 @@ Component({
       }
     },
     async send() {
+      if (this.commentsAreClosed()) return;
       const content = replyText(this.data.text, this.data.askAI);
       if (this._dead || this._pageHidden || this.data.sending || this.data.choosingImages || !content.trim() && !this.data.selectedImages.length || Array.from(content).length > COMMENT_MAX) return;
       if (!users.getCachedUser()) { this.login(); return; }

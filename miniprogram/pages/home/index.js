@@ -1,6 +1,6 @@
 const userService = require('../../services/user');
 const { describeUser } = require('../../utils/user-role');
-const { menuItems, utilityMenuItems } = require('../../utils/account-menu');
+const { menuItems, utilityMenuItems, accountMenuRoutes } = require('../../utils/account-menu');
 const square = require('../../services/square');
 const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
@@ -9,8 +9,10 @@ const { readTabLayout, patchState } = require('../../utils/tab-page-layout');
 const tabPageMotion = require('../../utils/tab-page-motion');
 const homeScrollChrome = require('../../utils/home-scroll-chrome');
 const DEFAULT_AVATAR = '/images/avatar.png';
+const CUI_WELCOME_POST_ID = 'p_1efff1a54dbe48e2e8e6ceb309fc2f56bde1a7e6';
 
 Page({
+  ...accountMenuRoutes(wx),
   ...postActions,
   ...homeRefresh,
   ...tabPageMotion.methods,
@@ -27,9 +29,9 @@ Page({
     brandRefreshPhase: 'idle', nativeRefreshing: false, refreshThreshold: 72,
     brandBouncing: false, squareTopTarget: '', campusTopTarget: '',
     menuLikeCount: '—', followerCount: '—', followingCount: '—', menuItems, utilityMenuItems,
-    activeTab: 'square', tabMenuKey: '', authorMenu: null, followPreviews: {}, unfollowTarget: null, unfollowClosing: false, unfollowBusy: false, tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
+    activeTab: 'square', tabMenuKey: '', authorMenu: null, followPreviews: {}, defaultFollowPreview: { followed: false }, unfollowTarget: null, unfollowClosing: false, unfollowBusy: false, tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
     tabIndicatorLeft: 43.75, tabIndicatorWidth: 85,
-    posts: [], feedLoading: false, feedError: '', feedHasMore: false, feedOffset: 0, feedMoreLoading: false, pullRefreshing: false, skeletons: [1, 2, 3],
+    posts: [], cuiWelcomePostId: CUI_WELCOME_POST_ID, feedLoading: false, feedError: '', feedHasMore: false, feedOffset: 0, feedMoreLoading: false, pullRefreshing: false, skeletons: [1, 2, 3],
     tabs: [
       { key: 'square', label: '动态广场', options: [{ key: 'square', label: '推荐' }, { key: 'following', label: '关注' }] },
       { key: 'campus', label: '校园圈', options: [{ key: 'campus', label: '推荐' }, { key: 'following', label: '关注' }] },
@@ -314,20 +316,6 @@ Page({
     this.setData({ loading: false, loginSheetOpen: false, authChecking: false, error: '' });
     this.setAuthBlocked(false);
   },
-  openProfile() {
-    if (this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
-    if (!this.data.user) { this.openMenu(); return; }
-    this.navigateFromMenu('/pages/profile/index', '个人主页打开失败，请重试');
-  },
-  navigateFromMenu(url, failureMessage) {
-    if (this._menuNavigating || this._unloaded || this._visible === false) return;
-    this._menuNavigating = true;
-    // 保留当前展开画面，直到新页面覆盖它；不要在 onHide 中提前收起。
-    wx.navigateTo({ url, fail: () => {
-      this._menuNavigating = false;
-      if (!this._unloaded && this._visible !== false) wx.showToast({ title: failureMessage, icon: 'none' });
-    } });
-  },
   prepareMenuReturn() {
     if (this._unloaded) return;
     // 在子页面仍覆盖首页时恢复底层画面，不在返回动画中收起菜单。
@@ -336,24 +324,6 @@ Page({
     const cached = userService.getCachedUser();
     if (cached !== this.data.user) this.applyUser(cached);
     this.syncNavigation();
-  },
-  selectMenuItem(event) {
-    if (this._menuNavigating || this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
-    const item = [...this.data.menuItems, ...this.data.utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
-    if (!item) return;
-    if (item.key === 'xiaocui') { this.navigateFromMenu('/pages/xiaocui-about/index', '小萃AI页面打开失败，请重试'); return; }
-    if (item.key === 'profile') { this.openProfile(); return; }
-    if (item.key === 'certification') {
-      if (!this.data.user) {
-        this.closeMenu();
-        this.openMenu();
-        return;
-      }
-      if (this.data.identity.isAdmin) { wx.showToast({ title: '管理员账号无需学生认证', icon: 'none' }); return; }
-      this.navigateFromMenu('/pages/certification/index', '认证页面打开失败，请重试');
-      return;
-    }
-    wx.showToast({ title: `${item.label}功能将在后续开放`, icon: 'none' });
   },
   logout() {
     if (this._menuNavigating || !this.data.user || this._unloaded || this._visible === false || this.data.loading || this.data.confirmingLogout) return;

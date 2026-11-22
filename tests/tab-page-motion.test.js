@@ -35,7 +35,9 @@ test('目标页渐入后清理遮片；源页仅在原生换页成功且隐藏�
   source.showTabMotion('/pages/home/index'); const ticket = source.prepareTabLeave('/pages/search/index');
   source.finishTabLeave(ticket); assert.equal(source.data.tabMotionPhase, 'leaving');
   source.hideTabMotion(); source.finishTabLeave(ticket); assert.equal(source.data.tabMotionPhase, '');
+  f.advance(40);
   target.showTabMotion('/pages/search/index'); assert.equal(target.data.tabMotionPhase, 'entering');
+  assert.ok(Math.abs(target.data.tabMotionOpacity - .18) < .00001);
   assert.equal([...f.timers.values()][0].delay, 180); f.finish();
   assert.equal(target.data.tabMotionPhase, '');
   target.hideTabMotion(); target.showTabMotion('/pages/search/index'); assert.equal(f.timers.size, 0);
@@ -52,10 +54,13 @@ test('路由失败回退淡出并清除匹配目标，不会让随后普通进�
 test('快速往返及旧成功/失败回调不得清除新一轮状态', () => {
   const f = fixture(), source = f.page(), target = f.page();
   source.showTabMotion('/pages/home/index'); const old = source.prepareTabLeave('/pages/search/index');
-  source.hideTabMotion(); target.showTabMotion('/pages/search/index');
+  source.hideTabMotion(); f.advance(40); target.showTabMotion('/pages/search/index');
   const stale = [...f.timers.values()][0].callback;
-  target.prepareTabLeave('/pages/home/index'); target.hideTabMotion(); source.showTabMotion('/pages/home/index');
-  source.prepareTabLeave('/pages/search/index'); source.hideTabMotion(); target.showTabMotion('/pages/search/index');
+  f.advance(90);
+  target.prepareTabLeave('/pages/home/index');
+  assert.ok(Math.abs(target.data.tabMotionOpacity - .045) < .00001);
+  target.hideTabMotion(); f.advance(40); source.showTabMotion('/pages/home/index');
+  source.prepareTabLeave('/pages/search/index'); source.hideTabMotion(); f.advance(40); target.showTabMotion('/pages/search/index');
   source.finishTabLeave(old); source.cancelTabLeave(old);
   assert.equal(source.data.tabMotionPhase, 'leaving');
   stale(); assert.equal(target.data.tabMotionPhase, 'entering');
@@ -64,7 +69,8 @@ test('快速往返及旧成功/失败回调不得清除新一轮状态', () => {
 test('隐藏、卸载取消回调，过期标记不重播，不保存正文、图片或账号数据', () => {
   const f = fixture(), source = f.page(), target = f.page();
   source.showTabMotion('/pages/home/index'); source.prepareTabLeave('/pages/inbox/index');
-  source.hideTabMotion(); target.showTabMotion('/pages/inbox/index');
+  source.hideTabMotion(); f.advance(80); target.showTabMotion('/pages/inbox/index');
+  assert.equal(target.data.tabMotionOpacity, .24);
   const stale = [...f.timers.values()][0].callback;
   target.hideTabMotion(); target._unloaded = true;
   target.setData = () => assert.fail('已卸载页面不能被迟到回调写入');
@@ -72,5 +78,5 @@ test('隐藏、卸载取消回调，过期标记不重播，不保存正文、�
   assert.equal(target.prepareTabLeave('/pages/home/index'), null);
   source.showTabMotion('/pages/home/index'); source.prepareTabLeave('/pages/search/index'); f.advance(1001);
   const late = f.page(); late.showTabMotion('/pages/search/index'); assert.equal(late.data.tabMotionPhase, '');
-  assert.deepEqual(Object.keys(late.data), ['tabMotionPhase']);
+  assert.equal(late.data.tabMotionOpacity, 0);
 });

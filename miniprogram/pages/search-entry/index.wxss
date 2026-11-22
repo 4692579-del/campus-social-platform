@@ -1,0 +1,22 @@
+@import "../../styles/search-toolbar.wxss";
+
+page { height:100%; overflow:hidden; background:#fff; }
+.search-entry-page { height:100%; }
+.search-entry-cancel { flex:0 0 72rpx; margin-left:14rpx; color:#4775fa; font-size:28rpx; font-weight:600; line-height:1; }
+.search-entry-history { flex:1; min-height:0; height:0; width:calc(100% - 56rpx); margin:20rpx 28rpx 0; }
+.search-history-heading { margin:12rpx 0 8rpx; color:#737d8b; font-size:24rpx; }
+.search-history-row { position:relative; height:84rpx; overflow:hidden; touch-action:pan-y; }
+.search-history-row:not(:last-child)::after { content:""; position:absolute; right:0; bottom:0; left:0; border-bottom:1px solid #e5e7eb; pointer-events:none; }
+.search-history-card { position:absolute; top:0; right:0; left:0; display:flex; align-items:center; gap:12rpx; height:84rpx; background:#fff; color:#282e36; font-size:28rpx; }
+.search-history-card::after { content:""; position:absolute; top:18rpx; bottom:18rpx; left:100%; border-left:1px solid #e5e7eb; pointer-events:none; }
+.search-history-author { flex-shrink:0; color:#626c78; font-size:24rpx; }
+.search-history-keyword { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.search-history-delete { position:absolute; top:6rpx; right:0; display:flex; align-items:center; justify-content:center; width:72rpx; height:72rpx; border-radius:50%; background:#ef2644; opacity:0; visibility:hidden; transform:translate3d(24rpx,0,0) scale(.65); }
+.search-history-delete-icon { width:34rpx; height:34rpx; }
+.history-settling .search-history-card { transition:transform 260ms cubic-bezier(.3333,1,.6667,1); }
+.history-settling .search-history-delete { transition:transform 260ms cubic-bezier(.3333,1,.6667,1), opacity 200ms ease-out, visibility 260ms; }
+.search-history-row.is-removing { height:0; opacity:0; pointer-events:none; transition:height 220ms cubic-bezier(.22,.75,.3,1), opacity 140ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .search-history-row.is-removing, .history-settling .search-history-card,
+  .history-settling .search-history-delete { transition:none; }
+}

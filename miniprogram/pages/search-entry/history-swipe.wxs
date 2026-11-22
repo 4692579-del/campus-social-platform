@@ -1,0 +1,93 @@
+function clamp(value, max) { return Math.max(0, Math.min(value, max)); }
+
+// 手指拖动只更新视图层，松手后由 CSS 接续当前位置。
+function paint(row, distance, limit, settling) {
+  var progress = clamp(distance / limit, 1);
+  if (settling) row.node.addClass('history-settling');
+  else row.node.removeClass('history-settling');
+  row.card.setStyle({ transform: 'translate3d(' + (0 - distance) + 'px,0,0)' });
+  row.button.setStyle({ opacity: progress * progress, visibility: progress > 0 ? 'visible' : 'hidden',
+    transform: 'translate3d(' + ((1 - progress) * limit * 0.28) + 'px,0,0) scale(' + (0.65 + 0.35 * progress) + ')' });
+}
+
+function close(state, settling) {
+  if (state.open) paint(state.open, 0, state.limit, settling);
+  state.open = null;
+}
+
+function sync(value, old, owner) {
+  var state = owner.getState();
+  if (state.drag) paint(state.drag.row, 0, state.limit, false);
+  close(state, false);
+  state.drag = null;
+  state.swiped = false;
+  state.limit = (value.width || 375) * 88 / 750;
+}
+
+function start(event, owner) {
+  var state = owner.getState();
+  state.drag = null;
+  state.swiped = false;
+  if (event.touches.length !== 1) return;
+  var dataset = event.instance ? event.instance.getDataset() : event.currentTarget.dataset;
+  var id = dataset.id;
+  var opened = state.open && state.open.id === id;
+  var index = dataset.index;
+  var row = opened ? state.open : { id: id, node: owner.selectComponent('.history-row-' + index),
+    card: owner.selectComponent('.history-card-' + index),
+    button: owner.selectComponent('.history-delete-' + index) };
+  if (!row.node || !row.card || !row.button) return;
+  var point = event.touches[0];
+  state.drag = { row: row, x: point.clientX, y: point.clientY, distance: opened ? state.limit : 0,
+    opened: opened, time: event.timeStamp };
+}
+
+function move(event, owner) {
+  var state = owner.getState(), drag = state.drag;
+  if (!drag || drag.axis === 'y') return;
+  if (event.touches.length !== 1) { cancel(event, owner); return; }
+  var point = event.touches[0];
+  var dx = point.clientX - drag.x, dy = point.clientY - drag.y;
+  if (!drag.axis) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 7) return;
+    drag.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+    state.swiped = true;
+    if (drag.axis === 'y' || (!drag.opened && dx > 0)) { drag.axis = 'y'; return; }
+    if (!drag.opened) close(state, true);
+  }
+  var raw = (drag.opened ? state.limit : 0) - dx;
+  drag.distance = clamp(raw, state.limit) + clamp((raw - state.limit) * 0.2, state.limit * 0.18);
+  paint(drag.row, drag.distance, state.limit, false);
+}
+
+function finish(event, owner, cancelled) {
+  var state = owner.getState(), drag = state.drag;
+  state.drag = null;
+  if (!drag || drag.axis !== 'x') return;
+  var quick = event.timeStamp - drag.time < 200;
+  var threshold = quick ? (drag.opened ? 0.8 : 0.2) : 0.5;
+  var opened = cancelled ? drag.opened : drag.distance >= state.limit * threshold;
+  paint(drag.row, opened ? state.limit : 0, state.limit, true);
+  state.open = opened ? drag.row : null;
+}
+
+function end(event, owner) { finish(event, owner, false); }
+function cancel(event, owner) { finish(event, owner, true); }
+
+function tap(event, owner) {
+  var state = owner.getState();
+  if (state.swiped) return;
+  if (state.open) { close(state, true); return; }
+  var dataset = event.instance ? event.instance.getDataset() : event.currentTarget.dataset;
+  owner.callMethod('searchRecord', { currentTarget: { dataset: dataset } });
+}
+
+function remove(event, owner) {
+  var state = owner.getState();
+  var dataset = event.instance ? event.instance.getDataset() : event.currentTarget.dataset;
+  if (!state.swiped && state.open && state.open.id === dataset.id) {
+    owner.callMethod('deleteHistoryRecord', { id: dataset.id });
+  }
+}
+
+module.exports = { sync: sync, start: start, move: move, end: end, cancel: cancel, tap: tap, remove: remove };

@@ -23,6 +23,59 @@ test('访客资料严格筛选公开字段，普通未认证用户可互看；�
   f.users.get(bob._id).status = 'disabled'; assert.equal((await read(f.alice)).code, 'PROFILE_NOT_FOUND');
 });
 
+test('官方账号显示官方认证并保留普通账号的学校权限', async () => {
+  const f = fixture();
+  const cui = await f.login(f.bob);
+  await f.login();
+  Object.assign(f.users.get(cui._id), { nickname: 'Cui', officialVerified: true, publicJoinedMonth: '2026-11' });
+
+  const own = await f.handle({ action: 'getProfile' }, f.bob);
+  assert.equal(own.user.nickname, 'Cui');
+  assert.equal(own.user.officialVerified, true);
+  assert.equal(own.user.role, 'user');
+  assert.equal(own.user.certificationStatus, 'unverified');
+  assert.equal(own.user.joinedMonth, '2026年11月');
+  assert.equal(own.user.createdAt, null);
+
+  const visitor = await f.handle({ action: 'getSquarePublicProfile', accountId: cui.accountId }, f.alice);
+  assert.equal(visitor.square.profile.officialVerified, true);
+  assert.equal(visitor.square.profile.isVerified, false);
+  assert.equal(visitor.square.profile.joinedMonth, '2026年11月');
+
+  const info = await f.handle({ action: 'getSquarePublicAccountInfo', accountId: cui.accountId }, f.alice);
+  assert.equal(info.square.accountInfo.user.officialVerified, true);
+  assert.equal(info.square.accountInfo.user.schoolName, '');
+  assert.equal(info.square.accountInfo.user.createdAt, null);
+
+  const publication = await f.handle({ action: 'publishSquarePost', post: { content: '官方动态', scope: 'square', requestId: 'cui-official-post-01' } }, f.bob);
+  assert.equal(publication.square.post.author.officialVerified, true);
+  assert.equal(publication.square.post.author.verified, false);
+});
+
+test('官方账号关闭评论后，保留旧评论并同时拒绝一级评论、楼中回复和 AI 任务', async () => {
+  const f = fixture();
+  const cui = await f.login(f.bob);
+  await f.login();
+  const account = f.users.get(cui._id);
+  account.officialVerified = true;
+  const created = await f.handle({ action: 'publishSquarePost', post: { content: '官方动态', scope: 'square', requestId: 'closed-official-post-01' } }, f.bob);
+  const postId = created.square.post._id;
+  const reply = (requestId, extra = {}) => f.handle({ action: 'publishSquareReply', post: { postId, content: '留言', scope: 'square', requestId, ...extra } }, f.alice);
+  const before = await reply('closed-official-before', { askAI: true });
+  assert.equal(before.success, true);
+  const replyId = before.square.reply._id;
+  f.users.get(cui._id).squareCommentsDisabled = true;
+
+  const list = await f.handle({ action: 'listSquareReplies', postId }, f.alice);
+  assert.equal(list.square.commentsDisabled, true);
+  assert.equal(list.square.items[0]._id, replyId);
+  assert.equal((await f.handle({ action: 'getSquarePost', postId }, f.alice)).square.post.author.commentsDisabled, true);
+  assert.equal((await reply('closed-official-first')).code, 'COMMENTS_DISABLED');
+  assert.equal((await reply('closed-official-child', { replyToId: replyId })).code, 'COMMENTS_DISABLED');
+  assert.equal((await f.handle({ action: 'processSquareAIReply', postId, replyId }, f.alice)).code, 'COMMENTS_DISABLED');
+  assert.equal(f.squarePosts.get(postId).replyCount, 1);
+});
+
 test('公开动态/引用/相册限定目标和square已发布成品，置顶可见但访客不能管理', async () => {
   const f = fixture(), alice = await f.login(), bob = await f.login(f.bob);
   for (let n = 1; n <= 24; n++) f.squarePosts.set(postId(n), { _id: postId(n), authorId: bob._id, scope: 'square', status: 'published', content: String(n),
@@ -77,10 +130,21 @@ function pageFixture(options = {}) {
   vm.runInNewContext(fs.readFileSync('miniprogram/utils/public-profile.js', 'utf8'), context);
   vm.runInNewContext(fs.readFileSync('miniprogram/pages/profile/index.js', 'utf8'), { wx, Page: value => { definition = value; },
     require: name => name.includes('utils/public-profile') ? context.module.exports : name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('post-actions') ? loadPostActions(users, square, wx) :
-      name.includes('services/post-images') ? {} : require('../miniprogram/utils/' + name.split('/').pop()), getCurrentPages: () => [] });
+      name.includes('services/post-images') ? {} : require('../miniprogram/utils/' + name.split('/').pop()), getCurrentPages: () => options.pages || [] });
   const page = { ...definition, route: 'pages/profile/index', data: structuredClone(definition.data), setData(patch) { applyPageData(this.data, patch); } };
   return { page, calls, routes, contents, users, switchUser(value) { current = value; version++; cache.clear(); contents.clear(); page.applyUser(value); } };
 }
+
+test('从搜索页侧栏打开自己的主页时，返回搜索页并预先恢复其侧栏', () => {
+  const pages = [], prepared = [];
+  const f = pageFixture({ pages, viewer: null });
+  pages.push({ route: 'pages/search/index', prepareMenuReturn() { prepared.push('search'); } }, f.page);
+  f.page.onLoad();
+  f.page.backToHome();
+  assert.deepEqual(prepared, ['search']);
+  assert.equal(f.routes.length, 1);
+  assert.equal(f.routes[0].back, 1);
+});
 
 test('访客模式同步展示缓存，viewer与主页作者分离，只有目标公开内容被请求', async () => {
   const f = pageFixture(); f.page.onLoad({ accountId: target.accountId });

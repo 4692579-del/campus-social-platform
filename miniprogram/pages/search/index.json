@@ -6,6 +6,7 @@
   "navigationStyle": "custom",
   "disableScroll": true,
   "usingComponents": {
-    "search-box": "/components/search-box/index"
+    "search-box": "/components/search-box/index",
+    "cui-refresh": "/components/cui-refresh/index"
   }
 }

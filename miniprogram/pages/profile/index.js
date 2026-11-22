@@ -44,7 +44,7 @@ Page({
   },
   onLoad(options = {}) {
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
-    this._homePage = pages.find(page => page.route === 'pages/home/index');
+    this._menuSource = [...pages.slice(0, -1)].reverse().find(page => typeof page.prepareMenuReturn === 'function');
     this.updateNavigationLayout();
     const cached = userService.getCachedUser();
     if (options.accountId !== undefined && (!cached || cached.accountId !== options.accountId)) { this.initializePublicProfile(options.accountId); return; }
@@ -56,8 +56,8 @@ Page({
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
     this.stopPostUpdates();
-    this.prepareHomeReturn();
-    this._homePage = null;
+    this.prepareMenuSourceReturn();
+    this._menuSource = null;
     this.resetProfilePull();
     this.clearProfileScrollSync();
     this.clearNavigationFrame();
@@ -408,7 +408,8 @@ Page({
     const isVerified = Boolean(user && user.role === 'student' && user.certificationStatus === 'approved' && user.schoolId);
     const raw = user && user.createdAt;
     const date = raw ? new Date(raw && typeof raw === 'object' && '$date' in raw ? raw.$date : raw) : null;
-    const joinedText = date && !Number.isNaN(date.getTime()) ? `${date.getFullYear()}年${date.getMonth() + 1}月 加入` : '';
+    const joinedText = user?.joinedMonth ? `${user.joinedMonth} 加入` :
+      date && !Number.isNaN(date.getTime()) ? `${date.getFullYear()}年${date.getMonth() + 1}月 加入` : '';
     this.setData({
       user, profileUser: user, identity: describeUser(user), isVerified, joinedText, authChecking: false, loginSheetOpen: !user,
       coverFileID: user ? user.coverFileID || '' : '', coverFailed: false, coverRetry: Boolean(this._pendingCover),
@@ -521,13 +522,12 @@ Page({
     });
   },
   stopMenuEvent() {},
-  prepareHomeReturn() {
+  prepareMenuSourceReturn() {
     if (this.data.isVisitor) return false;
-    if (this._homeReturnPrepared) return true;
-    const home = this._homePage;
-    if (!home || typeof home.prepareMenuReturn !== 'function') return false;
-    home.prepareMenuReturn();
-    this._homeReturnPrepared = true;
+    if (this._menuSourcePrepared) return true;
+    if (!this._menuSource || this._menuSource._unloaded) return false;
+    this._menuSource.prepareMenuReturn();
+    this._menuSourcePrepared = true;
     return true;
   },
   backToHome() {
@@ -535,23 +535,23 @@ Page({
     if (this._returningHome || this._unloaded) return;
     this._returningHome = true;
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
-    const homeIndex = pages.findIndex(page => page.route === 'pages/home/index');
-    if (homeIndex >= 0) this._homePage = pages[homeIndex];
-    const prepared = this.prepareHomeReturn();
+    const sourceIndex = this._menuSource ? pages.indexOf(this._menuSource) : -1;
+    const prepared = this.prepareMenuSourceReturn();
+    const fallbackUrl = this._menuSource?.route === 'pages/search/index' ? '/pages/search/index' : '/pages/home/index';
     const fallback = () => {
       if (this._unloaded) return;
-      wx.switchTab({ url: '/pages/home/index', fail: () => {
+      wx.switchTab({ url: fallbackUrl, fail: () => {
         this._returningHome = false;
-        if (!this._unloaded) wx.showToast({ title: '返回首页失败，请重试', icon: 'none' });
+        if (!this._unloaded) wx.showToast({ title: fallbackUrl === '/pages/search/index' ? '返回搜索页失败，请重试' : '返回首页失败，请重试', icon: 'none' });
       } });
     };
     const navigate = () => {
       if (this._unloaded) return;
-      const delta = pages.length - 1 - homeIndex;
-      if (homeIndex >= 0 && delta > 0) wx.navigateBack({ delta, fail: fallback });
+      const delta = sourceIndex >= 0 ? pages.length - 1 - sourceIndex : 1;
+      if (delta > 0 && pages.length > delta) wx.navigateBack({ delta, fail: fallback });
       else fallback();
     };
-    // 先恢复被个人主页覆盖的首页及底栏，再执行一次原生返回过渡。
+    // 先恢复被个人主页覆盖的来源页及底栏，再执行原生返回。
     if (prepared && typeof wx.nextTick === 'function') wx.nextTick(navigate);
     else navigate();
   },

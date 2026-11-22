@@ -15,6 +15,7 @@
     <view class="account-hero">
       <image class="account-avatar avatar-outline" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
       <view class="account-nickname">{{user.nickname}}</view>
+      <view wx:if="{{user.officialVerified}}" class="verified-badge"><image src="/images/verification/verified.png" mode="aspectFit" /><text>Cui官方</text></view>
     </view>
     <view class="account-details">
       <view class="detail-row account-id-row" bindtap="copyAccountId" aria-role="button" aria-label="复制ID账号">
@@ -41,8 +42,8 @@
       <view class="detail-row">
         <view class="detail-icon"><image src="/images/interface/at-sign.svg" mode="aspectFit" /></view>
         <view class="detail-content">
-          <view class="detail-label">{{changeCount === null ? '用户名更改记录' : changeCount + ' 次用户名更改'}}</view>
-          <view class="detail-value">{{changeCount === null || lastChangedText === '尚无更改记录' ? lastChangedText : '上次更改时间 ' + lastChangedText}}</view>
+          <view class="detail-label">{{changeCount === null || (user.officialVerified && changeCount === 0) ? '用户名更改记录' : changeCount + ' 次用户名更改'}}</view>
+          <view class="detail-value">{{user.officialVerified && changeCount === 0 ? '未修改过' : changeCount === null || lastChangedText === '尚无更改记录' ? lastChangedText : '上次更改时间 ' + lastChangedText}}</view>
         </view>
       </view>
     </view>

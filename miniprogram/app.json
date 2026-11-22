@@ -4,6 +4,7 @@
     "pages/inbox/index",
     "pages/messages/index",
     "pages/search/index",
+    "pages/search-entry/index",
     "pages/search-results/index",
     "pages/square-compose/index",
     "pages/square-detail/index",

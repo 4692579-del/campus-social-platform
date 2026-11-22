@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { aiError, messageFor } = require('./ai-errors');
 const { createAIUsage } = require('./ai-usage');
+const { requireOpenComments } = require('./square-comment-policy');
 const BOT_ID = 'bot_xiaocui';
 const BOT = { nickname: '小萃小萃', avatarFileID: '/images/ai/xiaocui.jpg', accountId: '', verified: false, isAI: true };
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -31,6 +32,7 @@ function createSquareAI(db, options) {
       job = (await jobRef(tx, targetId).get()).data;
       if (!job || job.requesterId !== user._id || job.postId !== postId) throw error('FORBIDDEN', '只能处理自己唤起的 AI 回复');
       if (!post || post.scope !== 'square' || post.status !== 'published' || !target || target.postId !== postId || target.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
+      await requireOpenComments(tx, post);
       if (target.askAI !== true) throw error('INVALID_POST', '请通过“问问小萃”按钮唤起 AI');
       if (job.status === 'done' || job.status === 'unavailable' || job.attempts >= 2 && job.status !== 'processing') return;
       if (job.status === 'processing' && job.leaseUntil > now()) return;
@@ -46,7 +48,7 @@ function createSquareAI(db, options) {
       await tx.collection(table(targetId)).doc(targetId).update({ data: { aiStatus: 'processing', aiAttempts: job.attempts, aiErrorCode: '' } });
       claimed = true;
     }); } catch (failure) {
-      if (['FORBIDDEN', 'ACCOUNT_DISABLED', 'POST_NOT_FOUND'].includes(failure.code)) throw failure;
+      if (['FORBIDDEN', 'ACCOUNT_DISABLED', 'POST_NOT_FOUND', 'COMMENTS_DISABLED'].includes(failure.code)) throw failure;
       const saved = (await jobRef(db, targetId).get()).data;
       if (!saved || saved.requesterId !== user._id || saved.postId !== postId || !['queued', 'failed'].includes(saved.status)) throw failure;
       await jobRef(db, targetId).update({ data: { status: 'failed', errorCode: 'AI_SAVE_FAILED', stage: 'claim',
@@ -62,6 +64,7 @@ function createSquareAI(db, options) {
       const post = (await db.collection('square_posts').doc(postId).get()).data;
       const target = (await db.collection(table(targetId)).doc(targetId).get()).data;
       if (!post || post.status !== 'published' || post.scope !== 'square' || !target || target.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
+      await requireOpenComments(db, post);
       const imageFiles = Array.isArray(post.images) ? [...post.images] : [];
       const commentFiles = Array.isArray(target.images) ? [...target.images] : [];
       const rootId = target.rootId || target._id;
@@ -124,6 +127,7 @@ function createSquareAI(db, options) {
         if (!latest || latest.lease !== lease || latest.status !== 'processing') return;
         if (!account || account.status !== 'active' || !latestPost || latestPost.scope !== 'square' || latestPost.status !== 'published' ||
           !latestTarget || latestTarget.status !== 'published' || !latestRoot || latestRoot.status !== 'published') throw error('POST_NOT_FOUND', '动态或评论已不可见');
+        await requireOpenComments(tx, latestPost);
         if (images.length && (JSON.stringify(latestPost.images || []) !== JSON.stringify(imageFiles) ||
           JSON.stringify(latestTarget.images || []) !== JSON.stringify(commentFiles))) throw error('POST_NOT_FOUND', '动态或评论配图已变更');
         if (!exists) {
@@ -145,7 +149,7 @@ function createSquareAI(db, options) {
       return { status: 'done', replyId, created };
     } catch (failure) {
       const code = messageFor(failure.code) !== messageFor('AI_UNAVAILABLE') ? failure.code : stage === 'save' ? 'AI_SAVE_FAILED' : 'AI_UNAVAILABLE';
-      const status = stage === 'usage' ? 'failed' : job.attempts >= 2 || ['AI_NOT_CONFIGURED', 'AI_CONTENT_REJECTED', 'POST_NOT_FOUND'].includes(failure.code) ? 'unavailable' : 'failed';
+      const status = stage === 'usage' ? 'failed' : job.attempts >= 2 || ['AI_NOT_CONFIGURED', 'AI_CONTENT_REJECTED', 'POST_NOT_FOUND', 'COMMENTS_DISABLED'].includes(failure.code) ? 'unavailable' : 'failed';
       await db.runTransaction(async tx => {
         const latest = (await jobRef(tx, targetId).get()).data;
         if (!latest || latest.lease !== lease || latest.status !== 'processing') return;
