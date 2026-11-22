@@ -10,6 +10,26 @@ const post = (extra = {}) => ({ _id: 'p_' + 'a'.repeat(40), content: '来自广�
   author: { nickname: '普通同学', avatarFileID: '', accountId: '12345678', verified: false },
   createdAt: '2026-11-17T06:00:00Z', likeCount: 0, replyCount: 0, repostCount: 0, liked: false, reposted: false, ...extra });
 
+test('视频发布回包丢失时只查询本人发布状态，未写入则保留明确的超时提示', async () => {
+  const requestId = 'post-video-client-00001';
+  const media = [{ type: 'video', fileID: 'cloud://test.bucket/square-uploads/alice/clip.video' }];
+  let committed = false;
+  const published = post({ media: [{ type: 'video', fileID: 'cloud://test.bucket/square-media/alice/post/clip.mp4' }] });
+  const f = client(data => {
+    if (data.action === 'publishSquarePost') throw { errCode: -504002, errMsg: 'cloud function timeout, internal trace' };
+    assert.equal(data.action, 'getSquarePublication'); assert.equal(data.requestId, requestId);
+    return { result: { success: true, square: { post: committed ? published : null } } };
+  });
+  await assert.rejects(f.service.publish('', requestId, [], 'none', '', media), error => {
+    assert.equal(error.code, 'VIDEO_PUBLICATION_UNCONFIRMED');
+    assert.match(error.message, /超时.*-504002/); assert.doesNotMatch(error.message, /internal trace/);
+    return true;
+  });
+  assert.deepEqual(f.calls.map(row => row.action), ['publishSquarePost', 'getSquarePublication']);
+  committed = true;
+  assert.equal((await f.service.publish('', requestId, [], 'none', '', media))._id, published._id);
+});
+
 test('搜索缓存按关键词、作者及类型隔离，合并读取和分页，返回缓存同步真实互动字段',async()=>{
   const ok=square=>({result:{success:true,square}}),one=post(),two=post({_id:'p_'+'b'.repeat(40)});
   const f=client(data=>data.action==='setSquareReaction'?ok({post:{...one,liked:true,likeCount:1}}):ok({keyword:data.keyword,accountId:data.accountId,kind:data.kind,items:data.kind==='users'?[{accountId:'87654321',nickname:'同学'}]:data.cursor?[two]:[one],hasMore:!data.cursor&&data.kind==='square',nextCursor:!data.cursor&&data.kind==='square'?'cursor':''}));

@@ -141,6 +141,7 @@ function fixture(options = {}) {
     generateAI: options.generateAI, resolveAIImages: options.resolveAIImages, resolveAICommentImages: options.resolveAICommentImages, resolveComposeImages: options.resolveComposeImages, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
     checkText: options.checkText || (async () => true),
     processSquareImages: options.processSquareImages,
+    processSquareVideo: options.processSquareVideo,
     randomAccountId: options.randomAccountId,
     proofStorageReady: options.ready !== false,
     uploadProof: async value => {

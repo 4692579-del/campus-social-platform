@@ -9,7 +9,7 @@ function fixture() {
   const patches = [], routes = [], events = [], toasts = [];
   vm.runInNewContext(fs.readFileSync(require.resolve('../miniprogram/components/quote-card/index.js'), 'utf-8'), {
     Component: value => { definition = value; },
-    require: name => name.includes('post-image-layout') ? require('../miniprogram/utils/post-image-layout') : require('../miniprogram/utils/post-view'),
+    require: name => require('../miniprogram/utils/' + name.split('/').pop()),
     wx: { navigateTo: args => routes.push(args.url), showToast: args => toasts.push(args.title) },
   });
   const c = { ...definition.methods, data: { ...structuredClone(definition.data), removable: false, disabled: false },

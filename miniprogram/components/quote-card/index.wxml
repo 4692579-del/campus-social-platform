@@ -8,8 +8,20 @@
       <text wx:if="{{item.content}}" class="quote-content" user-select>{{item.content}}</text>
       <view wx:if="{{item.images.length}}" class="quote-media-width" data-frame="{{index}}"><view class="quote-gallery" style="width: {{item.galleryWidth}}%; height: {{item.galleryHeight}}rpx;">
         <swiper wx:if="{{item.images.length > 1}}" current="{{item.imageIndex}}" duration="240" next-margin="44rpx" data-frame="{{index}}" bindchange="imageChanged" class="quote-swiper" indicator-dots="{{false}}">
-          <swiper-item wx:for="{{item.images}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="*this"><view class="quote-photo-frame"><media-image class="quote-slide-photo" src="{{file}}" data-frame="{{index}}" data-file="{{file}}" bindload="photoLoaded" mode="aspectFill" lazy-load /></view></swiper-item>
+          <swiper-item wx:for="{{item.mediaItems}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="fileID">
+            <view class="quote-photo-frame">
+              <block wx:if="{{file.type === 'video'}}">
+                <media-image wx:if="{{file.poster}}" class="quote-slide-photo" src="{{file.poster}}" mode="aspectFill" lazy-load />
+                <view class="post-play-badge" aria-label="原动态含视频"></view>
+              </block>
+              <media-image wx:else class="quote-slide-photo" src="{{file.fileID}}" data-frame="{{index}}" data-file="{{file.fileID}}" bindload="photoLoaded" mode="aspectFill" lazy-load />
+            </view>
+          </swiper-item>
         </swiper>
+        <view wx:elif="{{item.mediaItems[0].type === 'video'}}" class="quote-photo-frame">
+          <media-image wx:if="{{item.mediaItems[0].poster}}" class="quote-slide-photo" src="{{item.mediaItems[0].poster}}" mode="aspectFit" lazy-load />
+          <view class="post-play-badge" aria-label="原动态含视频"></view>
+        </view>
         <media-image wx:else class="quote-photo" src="{{item.images[0]}}" data-frame="{{index}}" data-file="{{item.images[0]}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
         <text wx:if="{{item.images.length > 1}}" class="quote-image-count">{{item.imageIndex + 1}} / {{item.images.length}}</text>
       </view></view>

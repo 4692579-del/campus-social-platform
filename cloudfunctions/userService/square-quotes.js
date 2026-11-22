@@ -21,7 +21,7 @@ function createQuoteReader(db, profilesFor, declarations) {
       const row = records.get(id);
       if (!row) return { _id: id, unavailable: true };
       const next = new Set([...seen, id]);
-      return { _id: id, author: authors.get(row.authorId), content: row.content || '', images: row.images || [],
+      return { _id: id, author: authors.get(row.authorId), content: row.content || '', images: row.images || [], ...(row.media ? { media: row.media } : {}),
         createdAt: row.createdAt, declaration: declarations.includes(row.declaration) ? row.declaration : 'none',
         ...(row.quotePostId ? { quote: view(row.quotePostId, next, depth + 1) } : {}) };
     }

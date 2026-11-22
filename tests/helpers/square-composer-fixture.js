@@ -13,12 +13,12 @@ function composerFixture(options = {}) {
     login: async () => { current = { ...user }; version++; return current; },
     logout: () => { current = null; version++; },
   };
-  const square = { cachedPost: () => options.cachedQuote || null, detail: async id => options.detail ? options.detail(id) : { _id: id, content: '真实被引用动态', images: [] }, optimizeContent: async (content, images = []) => { requests.push({ optimize: content, ...(images.length ? { images } : {}) }); return options.optimize ? options.optimize(content, images) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none', quotePostId = '') => {
-    calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}) });
+  const square = { cachedPost: () => options.cachedQuote || null, detail: async id => options.detail ? options.detail(id) : { _id: id, content: '真实被引用动态', images: [] }, optimizeContent: async (content, images = []) => { requests.push({ optimize: content, ...(images.length ? { images } : {}) }); return options.optimize ? options.optimize(content, images) : '优化后的内容'; }, publish: async (content, id, images = [], declaration = 'none', quotePostId = '', media) => {
+    calls.push({ content, id, ...(images.length ? { images } : {}), ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}), ...(media ? { media } : {}) });
     return options.publish ? options.publish(content, id, images, declaration, quotePostId) : { _id: 'p_' + 'a'.repeat(40), content, images, declaration, ...(quotePostId ? { quotePostId } : {}) };
   } };
   const media = {
-    chooseImages: async count => options.chooseImages ? options.chooseImages(count) : [],
+    chooseImages: async (count, mixed) => options.chooseImages ? options.chooseImages(count, mixed) : [],
     uploadImages: async (images, uploaded, progress) => {
       if (options.uploadImages) return options.uploadImages(images, uploaded, progress);
       return images.map((image, index) => {

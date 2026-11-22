@@ -1,4 +1,5 @@
 @import "../../styles/avatar.wxss";
+@import "../../styles/post-play-badge.wxss";
 :host { display: block; min-width: 0; }
 .quote-frame { position: relative; padding: 24rpx; color: #171b20; }
 .quote-border { position: absolute; top: 0; right: 0; bottom: 0; left: 0; box-sizing: border-box; border: 2rpx dashed #c7cdd6; border-radius: 22rpx; pointer-events: none; }
@@ -15,7 +16,8 @@
 .quote-media-width { width: 100%; margin-top: 16rpx; }
 .quote-gallery { position: relative; overflow: hidden; border-radius: 20rpx; }
 .quote-swiper, .quote-photo, .quote-photo-frame { display: block; width: 100%; height: 100%; }
-.quote-photo-frame { box-sizing: border-box; padding-right: 12rpx; }
+.quote-photo-frame { position: relative; box-sizing: border-box; padding-right: 12rpx; }
+.quote-gallery > .quote-photo-frame { padding-right: 0; }
 .quote-slide-photo { display: block; width: 100%; height: 100%; border-radius: 20rpx; }
 .quote-image-count { position: absolute; right: 10rpx; bottom: 10rpx; padding: 4rpx 12rpx; border-radius: 20rpx; color: white; background: rgba(20,25,32,.5); font-size: 20rpx; }
 .quote-declaration { display: flex; align-items: center; gap: 6rpx; margin-top: 12rpx; color: #939ba7; font-size: 21rpx; }

@@ -1,8 +1,9 @@
 const { rememberSize, imageLayout } = require('../../utils/post-image-layout');
+const { postMedia } = require('../../utils/post-media');
 Component({
   options: { multipleSlots: true },
   properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, followPreview: Object },
-  data: { expanded: false, imageIndex: 0, imageFiles: [], galleryWidth: 100, galleryHeight: 471, likeMotionClass: '',
+  data: { expanded: false, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, likeMotionClass: '',
     likeParticleRays: [
       { angle: 0, color: '#b39ad4', accent: '#94c8d1' }, { angle: 51.4, color: '#ad83b3', accent: '#c1a4bf' },
       { angle: 102.9, color: '#a9d2a2', accent: '#86c6bd' }, { angle: 154.3, color: '#d4b275', accent: '#aec58e' },
@@ -42,15 +43,19 @@ Component({
       this.playLikeMotion(target);
     },
     'post.images': function (images) {
-      if (this._unloaded) return;
-      const files = Array.isArray(images) ? images : [];
-      // 时间、点赞或页面恢复重新传入同一组图片时，不重写 src 和轮播列表。
-      if (files.length === this.data.imageFiles.length && files.every((file, index) => file === this.data.imageFiles[index])) return;
-      this.setData({ imageFiles: files.slice(), ...imageLayout(files, this.data.detail), ...(this.data.imageIndex >= files.length && this.data.imageIndex !== 0 ? { imageIndex: 0 } : {}) });
+      this.syncMedia({ ...this.data.post, images });
     },
+    'post.media': function (media) { this.syncMedia({ ...this.data.post, media }); },
     detail() { if (!this._unloaded) this.updateImageLayout(); },
   },
   methods: {
+    syncMedia(post) {
+      if (this._unloaded) return;
+      const items = postMedia(post), files = items.map(item => item.fileID);
+      // 点赞、时间等字段不重建媒体节点或改写轮播位置。
+      if (JSON.stringify(items) === JSON.stringify(this.data.mediaItems)) return;
+      this.setData({ imageFiles: files, mediaItems: items, ...imageLayout(files, this.data.detail), ...(this.data.imageIndex >= files.length && this.data.imageIndex !== 0 ? { imageIndex: 0 } : {}) });
+    },
     stopEvent() {},
     viewAuthor() { if (!this._unloaded && !this._pageHidden) this.triggerEvent('author', { author: this.data.post.author }); },
     isOwnAuthor() {
@@ -114,17 +119,21 @@ Component({
     },
     more() { this.triggerEvent('more', { id: this.data.post._id, profilePosts: this.data.profilePosts === true }); },
     imageChanged(event) {
-      const index = event.detail.current, images = this.data.post.images || [];
+      const index = event.detail.current, images = this.data.imageFiles;
       if (this._unloaded || this._pageHidden || !Number.isInteger(index) || index < 0 || index >= images.length || index === this.data.imageIndex) return;
       this.setData({ imageIndex: index });
     },
     async previewImage(event) {
-      if (this._previewing) return;
-      const files = this.data.post.images || [], current = files[Number(event.currentTarget.dataset.index)];
+      if (this._previewing || this._unloaded || this._pageHidden) return;
+      const index = Number(event.currentTarget.dataset.index), files = this.data.imageFiles, current = files[index];
       if (!current) return;
       this._previewing = true;
-      try { await require('../../services/post-images').previewImages(files, current); }
-      catch (error) { if (!this._unloaded && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '图片预览失败，请重试', icon: 'none' }); }
+      try {
+        const service = require('../../services/post-images');
+        if (this.data.mediaItems.some(item => item.type === 'video')) await service.previewMedia(this.data.mediaItems, index);
+        else await service.previewImages(files, current);
+      }
+      catch (error) { if (!this._unloaded && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '媒体预览失败，请重试', icon: 'none' }); }
       finally { this._previewing = false; }
     },
   },

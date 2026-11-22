@@ -40,7 +40,7 @@ test('无效尺寸不污染缓存，极端图片有可见边界，尺寸缓存�
 function fixture(files) {
   let definition; const writes=[];
   vm.runInNewContext(fs.readFileSync('miniprogram/components/square-post/index.js','utf8'), {
-    Component: value=>{definition=value;}, require:()=>layout, wx:{},
+    Component: value=>{definition=value;}, require:name=>name.endsWith('/post-media') ? require('../miniprogram/utils/post-media') : layout, wx:{},
   });
   const c={...definition.methods,data:{...structuredClone(definition.data),post:{_id:'test',images:files}},setData(value){writes.push(value);Object.assign(this.data,value);}};
   definition.observers['post.images'].call(c,files);

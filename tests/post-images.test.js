@@ -13,10 +13,10 @@ function fixture(options = {}) {
     deleteFile: async args => calls.push(['deleteFile', args]),
   } };
   const results = { showActionSheet: { tapIndex: options.camera ? 1 : 0 },
-    chooseMedia: { tempFiles: [{ tempFilePath: '/tmp/photo.jpg', size: 100 }] },
+    chooseMedia: { tempFiles: options.files || [{ tempFilePath: '/tmp/photo.jpg', size: 100 }] },
     getImageInfo: { type: 'jpeg', width: options.large ? 4000 : 1200, height: 1200 },
     compressImage: { tempFilePath: '/tmp/compressed.jpg' }, getFileInfo: { size: 100 } };
-  for (const name of [...Object.keys(results), 'previewImage']) wx[name] = args => {
+  for (const name of [...Object.keys(results), 'previewImage', 'previewMedia']) wx[name] = args => {
     calls.push([name, args]);
     if (name === 'previewImage') previews.push(args);
     args.success(results[name] || {});
@@ -37,6 +37,35 @@ test('原生选图明确支持相册和拍照，数量只使用剩余位置，�
     assert.equal(f.calls.find(([name]) => name === 'compressImage')[1].compressedWidth, 2048);
     assert.equal((await f.service.chooseImages(0)).length, 0);
   }
+});
+test('相册允许混合选择，云文件和封面解析后按原顺序打开原生混合预览', async () => {
+  const f = fixture({ files: [
+    { tempFilePath: '/tmp/photo.jpg', fileType: 'image' },
+    { tempFilePath: '/tmp/clip.mp4', fileType: 'video', thumbTempFilePath: '/tmp/cover.jpg' },
+  ] });
+  const [image, video] = await f.service.chooseImages(2, true);
+  const picker = f.calls.find(([name]) => name === 'chooseMedia')[1];
+  assert.equal(picker.mediaType[0], 'mix'); assert.equal(picker.count, 2);
+  assert.equal(video.type, 'mp4'); assert.equal(video.poster.path, '/tmp/cover.jpg');
+  const [photoID, videoID, poster] = await f.service.uploadImages([image, video, video.poster], () => {}, () => {}, true);
+  await f.service.previewMedia([{ type: 'image', fileID: photoID }, { type: 'video', fileID: videoID, poster }], 1);
+  const options = f.calls.find(([name]) => name === 'previewMedia')[1];
+  assert.equal(options.current, 1);
+  assert.equal(options.sources[0].type, 'image'); assert.match(options.sources[0].url, /\.jpg$/);
+  assert.equal(options.sources[1].type, 'video'); assert.match(options.sources[1].url, /\.video$/);
+  assert.match(options.sources[1].poster, /-poster\.jpg$/);
+});
+
+test('手机压缩两档后仍超过旧门槛时，保留较小可读版本交给云端继续处理', async () => {
+  const f = fixture({ files: [{ tempFilePath: '/tmp/source.mov', fileType: 'video' }] });
+  const calls = [];
+  f.wx.getFileInfo = ({ filePath, success }) => success({ size: (filePath.includes('low') ? 26 : filePath.includes('medium') ? 42 : 65) * 1024 * 1024 });
+  f.wx.compressVideo = ({ src, quality, success }) => {
+    calls.push({ src, quality }); success({ tempFilePath: `/tmp/${quality}.mov` });
+  };
+  const [video] = await f.service.chooseImages(1, true);
+  assert.deepEqual(calls, [{ src: '/tmp/source.mov', quality: 'medium' }, { src: '/tmp/source.mov', quality: 'low' }]);
+  assert.equal(video.path, '/tmp/low.mov');
 });
 
 test('部分上传失败保留完成结果，重试仅上传剩余图片，不超过九张', async () => {
@@ -73,21 +102,22 @@ test('图片轮播预览使用当前动态全部图片与点击位置，预览�
   let definition, finish;
   const previews = [], events = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), {
-    Component: value => { definition = value; }, require: name => name.includes('post-image-layout') ? require('../miniprogram/utils/post-image-layout') : ({ previewImages: (...args) => { previews.push(args); return new Promise(resolve => { finish = resolve; }); } }), wx: { showToast() {} },
+    Component: value => { definition = value; }, require: name => name.includes('/utils/') ? require('../miniprogram/utils/' + name.split('/').pop()) : ({ previewImages: (...args) => { previews.push(args); return new Promise(resolve => { finish = resolve; }); } }), wx: { showToast() {} },
   });
   const files = ['cloud://test.bucket/a.jpg', 'cloud://test.bucket/b.jpg'];
-  const component = { ...definition.methods, data: { post: { _id: 'post', images: files }, imageIndex: 0 }, setData(values) { Object.assign(this.data, values); }, triggerEvent: (...args) => events.push(args) };
+  const component = { ...definition.methods, data: { ...structuredClone(definition.data), post: { _id: 'post', images: files } }, setData(values) { Object.assign(this.data, values); }, triggerEvent: (...args) => events.push(args) };
+  definition.observers['post.images'].call(component, files);
   component.imageChanged({ detail: { current: 1 } }); assert.equal(component.data.imageIndex, 1);
   const event = { currentTarget: { dataset: { index: 1 } } };
   const pending = component.previewImage(event); await component.previewImage(event);
-  assert.equal(previews.length, 1); assert.equal(previews[0][0], files); assert.equal(previews[0][1], files[1]);
+  assert.equal(previews.length, 1); assert.equal(previews[0][0], component.data.imageFiles); assert.equal(previews[0][1], files[1]);
   assert.equal(events.length, 0); finish(); await pending;
 });
 
 test('图文卡片往返页面与大图预览时不重建图片，保留当前图片和展开正文，同组图片更新不复位', () => {
   let definition;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), {
-    Component: value => { definition = value; }, require: () => require('../miniprogram/utils/post-image-layout'), wx: {},
+    Component: value => { definition = value; }, require: name => require('../miniprogram/utils/' + name.split('/').pop()), wx: {},
   });
   const post = { _id: 'first', content: '真实正文', author: { nickname: '真实用户' }, images: ['one', 'two', 'three'] };
   const changes = [];

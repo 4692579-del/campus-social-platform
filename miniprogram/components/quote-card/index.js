@@ -1,5 +1,6 @@
 const { postView } = require('../../utils/post-view');
 const { imageLayout, rememberSize } = require('../../utils/post-image-layout');
+const { postMedia } = require('../../utils/post-media');
 const ID = /^p_[a-f0-9]{40}$/;
 Component({
   properties: { quote: Object, removable: Boolean, disabled: Boolean },
@@ -9,10 +10,11 @@ Component({
     const frames = [], seen = new Set();
     for (let item = value; item && ID.test(item._id || '') && !seen.has(item._id) && frames.length < 4; item = item.quote) {
       seen.add(item._id);
-      const previous = this.data.frames.find(row => row._id === item._id), images = Array.isArray(item.images) ? item.images : [];
+      const mediaItems = postMedia(item), images = mediaItems.map(media => media.fileID);
+      const previous = this.data.frames.find(row => row._id === item._id);
       const { quote: nested, ...body } = item;
       frames.push({ ...postView({ content: '', author: null, declaration: 'none', createdAt: '', ...body }),
-        unavailable: Boolean(item.unavailable), collapsed: Boolean(item.collapsed), loading: Boolean(item.loading), failed: Boolean(item.failed), images,
+        unavailable: Boolean(item.unavailable), collapsed: Boolean(item.collapsed), loading: Boolean(item.loading), failed: Boolean(item.failed), images, mediaItems,
         imageIndex: previous && previous.imageIndex < images.length ? previous.imageIndex : 0, ...imageLayout(images, false, this._imageWidths && this._imageWidths.get(item._id)) });
     }
     const patch = {};

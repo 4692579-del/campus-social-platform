@@ -326,7 +326,7 @@ test('存储失败不提示草稿成功、不收起面板，空草稿不会假�
   assert.equal(f.toasts.length, 0); assert.equal(f.timers.size, 0);
   f.component.cancel(); assert.equal(f.component.data.closing, false);
   const empty = composerFixture(); await empty.attach(); empty.component.saveAndClose();
-  assert.equal(empty.toasts.at(-1), '请先写点内容或选择图片'); assert.equal(empty.component.data.closing, false);
+  assert.equal(empty.toasts.at(-1), '请先写点内容或选择图片、视频'); assert.equal(empty.component.data.closing, false);
 });
 
 test('后台恢复不覆盖输入也不自动保存，新账号不继承未保存内容，迟到发布不关闭新账号', async () => {
@@ -490,13 +490,28 @@ test('账号已变更时点击发布，只切换到新账号草稿，不把旧�
 });
 
 const chosenImage = key => ({ key, path: `/tmp/${key}.jpg`, fileID: '', type: 'jpg' });
-test('图片可以独立发布、限制九张；取消原生选图不丢文字，移除最后一图恢复不可发布', async () => {
+test('纯视频草稿重开后可与图片混排发布，封面不占用媒体名额', async () => {
+  const video = { key: 'clip', path: '/tmp/clip.mp4', type: 'mp4', poster: chosenImage('cover') };
+  const draft = composerFixture({ chooseImages: async (_, mixed) => { assert.equal(mixed, true); return [video]; } });
+  await draft.attach(); await draft.component.choosePostImages();
+  assert.equal(draft.component.data.canPublish, true); assert.equal(draft.component.data.canOptimize, false);
+  await draft.component.saveAndClose();
+  const reopened = composerFixture({ storage: draft.storage, chooseImages: async count => {
+    assert.equal(count, 2); return [chosenImage('one'), chosenImage('two')];
+  } });
+  await reopened.attach(); await reopened.component.choosePostImages(); await reopened.component.publish();
+  const published = reopened.calls[0];
+  assert.equal(published.images, undefined); assert.equal(published.media.length, 3);
+  assert.equal(published.media[0].type, 'video'); assert.match(published.media[0].fileID, /\/clip\.mp4$/);
+  assert.match(published.media[0].poster, /\/cover\.jpg$/); assert.equal(published.media[2].type, 'image');
+});
+test('图片可以独立发布、限制三张；取消原生选图不丢文字，移除最后一图恢复不可发布', async () => {
   const remaining = [];
   const f = composerFixture({ chooseImages: async count => { remaining.push(count); return Array.from({ length: count }, (_, i) => chosenImage('image' + i)); } });
   await f.attach(); await f.component.choosePostImages();
-  assert.equal(f.component.data.images.length, 9); assert.equal(f.component.data.canPublish, true); assert.equal(remaining[0], 9);
+  assert.equal(f.component.data.images.length, 3); assert.equal(f.component.data.canPublish, true); assert.equal(remaining[0], 3);
   await f.component.choosePostImages(); assert.equal(remaining.length, 1);
-  await f.component.publish(); assert.equal(f.calls[0].content, ''); assert.equal(f.calls[0].images.length, 9);
+  await f.component.publish(); assert.equal(f.calls[0].content, ''); assert.equal(f.calls[0].images.length, 3);
   assert.equal(f.component.data.closing, true); assert.equal(f.storage.size, 0);
   const empty = composerFixture({ chooseImages: async () => [chosenImage('one')] }); await empty.attach(); await empty.component.choosePostImages();
   empty.component.removeImage({ currentTarget: { dataset: { index: 0 } } }); assert.equal(empty.component.data.canPublish, false);

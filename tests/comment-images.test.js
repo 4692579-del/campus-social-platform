@@ -13,13 +13,19 @@ async function setup(options = {}) {
     getTempFileURL: async args => ({ fileList: [...args.fileList].reverse().map(({ fileID }) => ({ fileID, status: 0,
       tempFileURL: 'https://test.bucket.tcb.qcloud.la/' + fileID.split('/').slice(3).join('/') + '?sign=synthetic' })) }),
   };
-  const f = fixture({ processSquareImages: createSquareImageProcessor(cloud),
+  const processSquareImages = createSquareImageProcessor(cloud);
+  const f = fixture({ processSquareImages,
     resolveAIImages: createAIImageResolver(cloud), resolveAICommentImages: createAICommentImageResolver(cloud), ...options });
   const user = await f.login(); await f.login(f.bob);
+  const files = Array.from({ length: options.postCount || 0 }, (_, i) => source(user, 'post_' + i));
   const post = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '动态正文与配图上下文',
-    images: Array.from({ length: options.postCount || 0 }, (_, i) => source(user, 'post_' + i)), requestId: 'comment-image-post001' } }, f.alice);
+    images: files.slice(0, 3), requestId: 'comment-image-post001' } }, f.alice);
   assert.equal(post.success, true, post.message);
   const postId = post.square.post._id;
+  if (files.length > 3) {
+    // 模拟收紧发布上限前的历史动态，保留对已有九图内容的识图覆盖。
+    f.squarePosts.get(postId).images = await processSquareImages(files, { userId: user._id, postId });
+  }
   const send = (content = '', images = [], extra = {}) => f.handle({ action: 'publishSquareReply', post: {
     scope: 'square', postId, content, images, requestId: 'comment-image-send01', ...extra } }, f.alice);
   const process = replyId => f.handle({ action: 'processSquareAIReply', postId, replyId }, f.alice);

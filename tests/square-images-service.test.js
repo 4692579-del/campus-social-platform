@@ -6,15 +6,15 @@ const source = (user, n = 0) => `cloud://test.bucket/square-uploads/${user._id}/
 const publish = (f, images, content = '图文动态', requestId = 'images-request-00001') => f.handle({ action: 'publishSquarePost', post: { scope: 'square', content, images, requestId } }, f.alice);
 const processor = async (files, { userId, postId }) => files.map((file, i) => `cloud://test.bucket/square-media/${userId}/${postId}/${i}.jpg`);
 
-test('未认证用户可发布九图及纯图片；图片顺序、归属、列表、详情与本人相册一致，不暴露私有原件', async () => {
+test('未认证用户可发布三张纯图片；图片顺序、归属、列表、详情与本人相册一致，不暴露私有原件', async () => {
   const calls = [];
   const f = fixture({ processSquareImages: async (...args) => { calls.push(args); return processor(...args); } });
   const user = await f.login();
-  const files = Array.from({ length: 9 }, (_, i) => source(user, i));
+  const files = Array.from({ length: 3 }, (_, i) => source(user, i));
   const result = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '', images: files, declaration: 'ai', requestId: 'images-request-00001' } }, f.alice);
   assert.equal(result.success, true, result.message);
   const post = result.square.post;
-  assert.equal(post.content, ''); assert.equal(post.images.length, 9);
+  assert.equal(post.content, ''); assert.equal(post.images.length, 3);
   assert.equal(post.declaration, 'ai');
   assert.deepEqual(calls[0][0], files); assert.equal(calls[0][1].userId, user._id);
   assert.equal(post.imageSources, undefined);
@@ -32,11 +32,11 @@ test('未认证用户可发布九图及纯图片；图片顺序、归属、列�
   assert.equal((await f.handle({ action: 'listSquareAlbum' }, f.alice)).square.items.length, 0);
 });
 
-test('拒绝十图、重复、外链、其他账号、其他环境和非图片目录；回复图片限制为三张', async () => {
+test('拒绝四图、重复、外链、其他账号、其他环境和非图片目录；回复图片限制为三张', async () => {
   let processed = 0;
   const f = fixture({ processSquareImages: async (...args) => { processed++; return processor(...args); } });
   const user = await f.login(), bob = await f.login(f.bob);
-  for (const files of [Array.from({ length: 10 }, (_, i) => source(user, i)), [source(user), source(user)],
+  for (const files of [Array.from({ length: 4 }, (_, i) => source(user, i)), [source(user), source(user)],
     ['https://example.com/photo.jpg'], [source(bob)], [source(user).replace('test.bucket', 'other.bucket')],
     [source(user).replace('square-uploads', 'certification-proofs')], ['cloud://test.bucket/square-uploads/../photo.jpg'], 'invalid']) {
     assert.equal((await publish(f, files)).code, 'INVALID_IMAGES');

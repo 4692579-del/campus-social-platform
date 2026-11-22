@@ -1,6 +1,7 @@
 const cloud = require('wx-server-sdk');
 const { createUserService } = require('./service');
 const { createSquareImageProcessor } = require('./square-images');
+const { createSquareVideoProcessor } = require('./square-videos');
 const { createDeepseek } = require('./deepseek');
 const { createAIImageResolver, createAICommentImageResolver } = require('./ai-images');
 const { createComposeImageResolver } = require('./ai-compose-images');
@@ -14,6 +15,7 @@ const service = createUserService(cloud.database({ throwOnNotFound: false }), {
   resolveComposeImages: createComposeImageResolver(cloud),
   optimizeAI: createDeepseek({ purpose: 'polish' }),
   processSquareImages: createSquareImageProcessor(cloud),
+  processSquareVideo: createSquareVideoProcessor(cloud),
   checkText: createTextChecker({ getEnv: () => process.env,
     getAppId: () => cloud.getWXContext().APPID, getSecret: () => process.env.WECHAT_APP_SECRET || '',
     cloudCheck: input => cloud.openapi.security.msgSecCheck(input) }),

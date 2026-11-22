@@ -1,0 +1,2 @@
+.post-play-badge { position: absolute; z-index: 1; top: 50%; left: 50%; display: flex; align-items: center; justify-content: center; width: 68rpx; height: 68rpx; transform: translate(-50%, -50%); border-radius: 50%; background: rgba(21, 29, 43, .72); pointer-events: none; }
+.post-play-badge::after { content: ''; margin-left: 5rpx; border-top: 12rpx solid transparent; border-bottom: 12rpx solid transparent; border-left: 18rpx solid #fff; }

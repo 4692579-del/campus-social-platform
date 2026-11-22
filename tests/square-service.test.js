@@ -12,7 +12,7 @@ const reaction = (f, id, active = true, kind = 'like', identity = f.alice) =>
 
 test('真实云函数入口兼容微信自动附带的userInfo，发帖回复仍使用可信上下文身份', async () => {
   const f = fixture(); const alice = await f.login(); await f.login(f.bob);
-  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name === './content-check' ? require('../cloudfunctions/userService/content-check') : name === './deepseek' ? require('../cloudfunctions/userService/deepseek') : name === './ai-images' ? require('../cloudfunctions/userService/ai-images') : name === './ai-compose-images' ? require('../cloudfunctions/userService/ai-compose-images') : name === './square-images' ? require('../cloudfunctions/userService/square-images') : {
+  const context = { exports: {}, process: { env: {} }, require: name => name === './service' ? { createUserService } : name.startsWith('./') ? require('../cloudfunctions/userService/' + name.slice(2)) : {
     init() {}, database: () => f.db, getWXContext: () => ({ OPENID: f.alice.openid, ENV: f.alice.env }),
     openapi: { security: { msgSecCheck: async () => ({ result: { suggest: 'pass' } }) } },
   } };

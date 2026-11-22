@@ -401,13 +401,30 @@ function removePost(id, knownOwn = false) {
     if (quote !== post.quote) updatePost({ ...post, quote });
   }
 }
+function publishConnectionError(error) {
+  const detail = String(error?.errMsg || error?.message || '');
+  const rawCode = error?.errCode ?? detail.match(/\berrCode:\s*(-\d+)/i)?.[1];
+  const match = String(rawCode ?? '').match(/^-\d{4,8}$/);
+  const code = match ? match[0] : '';
+  const suffix = code ? `（${code}）` : '';
+  let message = '未能确认视频是否发布，正文和附件已保留，请重试';
+  if (/timed?\s*out|timeout|超时/i.test(detail)) message = '视频处理或云函数等待超时，正文和附件已保留，请重试';
+  else if (/out of memory|memory limit|heap limit|内存/i.test(detail)) message = '云函数内存不足，请调高 userService 的运行内存后重试';
+  else if (/cannot find module|module_not_found|require stack|function not exist|invalid env/i.test(detail)) message = '发布云函数未就绪，请检查 userService 的部署及依赖';
+  return Object.assign(new Error(`${message}${suffix}`), { code: 'VIDEO_PUBLICATION_UNCONFIRMED' });
+}
 async function call(action, data = {}, authenticated = false) {
   session();
   if (authenticated && !users.getCachedUser()) throw Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' });
   const version = generation;
   let response;
   try { response = await wx.cloud.callFunction({ name: 'userService', data: { action, ...data, ...(!authenticated ? { personalize: Boolean(users.getCachedUser()) } : {}) } }); }
-  catch (error) { throw new Error('暂时无法连接广场，请稍后重试'); }
+  catch (error) {
+    session();
+    if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
+    if (action === 'publishSquarePost' && data.post?.media?.some(item => item.type === 'video')) throw publishConnectionError(error);
+    throw new Error('暂时无法连接广场，请稍后重试');
+  }
   session();
   if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
   const result = response.result;
@@ -586,10 +603,18 @@ function readComments(id, rootId, { offset, force }) {
     return value;
   });
 }
-async function publish(content, requestId, images = [], declaration = 'none', quotePostId = '') {
+async function publish(content, requestId, images = [], declaration = 'none', quotePostId = '', media) {
   if (quotePostId && !/^p_[a-f0-9]{40}$/.test(quotePostId)) throw new Error('引用的动态无效');
-  const result = await call('publishSquarePost', { post: { content, requestId, scope: 'square', ...(images.length ? { images } : {}),
-    ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}) } }, true);
+  let result;
+  try {
+    result = await call('publishSquarePost', { post: { content, requestId, scope: 'square', ...(images.length ? { images } : {}), ...(media ? { media } : {}),
+      ...(declaration !== 'none' ? { declaration } : {}), ...(quotePostId ? { quotePostId } : {}) } }, true);
+  } catch (error) {
+    if (error.code !== 'VIDEO_PUBLICATION_UNCONFIRMED') throw error;
+    try { result = await call('getSquarePublication', { requestId }, true); }
+    catch (statusError) { if (statusError.code === 'SESSION_CHANGED') throw statusError; }
+    if (!result?.post) throw error;
+  }
   revisions.set(result.post._id, ++mutation);
   updatePost(result.post, true);
   if (result.quotedPost) updatePost(result.quotedPost);

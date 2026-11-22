@@ -1,4 +1,5 @@
 @import "../../styles/avatar.wxss";
+@import "../../styles/post-play-badge.wxss";
 :host { display: block; }
 .post-pin { display: flex; align-items: center; gap: 8rpx; padding: 22rpx 16rpx 0 106rpx; color: #87919c; background: #fff; font-size: 23rpx; font-weight: 500; line-height: 30rpx; }
 .post-pin image { display: block; width: 24rpx; height: 24rpx; flex-shrink: 0; }

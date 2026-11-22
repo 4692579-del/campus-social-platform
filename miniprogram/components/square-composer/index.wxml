@@ -20,8 +20,18 @@
       <scroll-view class="compose-attachments {{quotePostId ? 'has-quote' : ''}}" scroll-y="{{!!quotePostId}}" enhanced show-scrollbar="{{false}}">
       <view wx:if="{{quotePostId}}" class="compose-inline-quote"><quote-card quote="{{quote}}" removable disabled="{{publishing || savingDraft || choosingImages}}" bind:remove="removeQuote" /><view wx:if="{{quoteError}}" class="compose-quote-error">{{quoteError}}<button bindtap="retryQuote">重试</button></view></view>
       <scroll-view wx:if="{{images.length}}" class="compose-selected-images" scroll-x enhanced show-scrollbar="{{false}}">
-        <view class="selected-image-strip"><view wx:for="{{images}}" wx:key="key" class="selected-image"><image src="{{item.fileID || item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewSelectedImage" /><button class="remove-image" data-index="{{index}}" bindtap="removeImage" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="移除第{{index + 1}}张图片"><image src="/images/interface/x.svg" /></button></view></view>
+        <view class="selected-image-strip">
+          <view wx:for="{{images}}" wx:key="key" class="selected-image">
+            <view wx:if="{{item.type === 'mp4'}}" class="selected-video" data-index="{{index}}" bindtap="previewSelectedImage" aria-role="button" aria-label="预览视频">
+              <image wx:if="{{item.poster}}" src="{{item.poster.fileID || item.poster.path}}" mode="aspectFill" />
+              <view class="post-play-badge"></view>
+            </view>
+            <image wx:else src="{{item.fileID || item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewSelectedImage" />
+            <button class="remove-image" data-index="{{index}}" bindtap="removeImage" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="移除第{{index + 1}}项媒体"><image src="/images/interface/x.svg" /></button>
+          </view>
+        </view>
       </scroll-view>
+      <view wx:if="{{images.length > 3}}" class="media-limit-hint">旧草稿含超过 3 个媒体，请移除多余项后发布。</view>
       </scroll-view>
     </view></view>
     <view class="compose-footer" catchtouchmove="stopMenuEvent">
@@ -54,8 +64,8 @@
       <view class="compose-tools" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
         <button class="post-options" data-panel="options" bindtap="openPanel" disabled="{{publishing || savingDraft || choosingImages}}"><image src="/images/interface/sliders.svg" mode="aspectFit" /><text>动态设置</text></button>
         <view class="compose-tools-divider" aria-hidden="true"></view>
-        <view class="compose-media"><button class="choose-image-button" bindtap="choosePostImages" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="从相册选择图片或拍照"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button><view><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></view><view><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view></view>
-        <view class="compose-submit"><view class="compose-progress-anchor"><view wx:if="{{limitHintVisible}}" class="compose-limit-hint" aria-role="alert">已达到输入上限</view><view class="compose-progress {{countWarning ? 'is-warning' : ''}}" style="background-image: conic-gradient({{countWarning ? '#e44646' : '#4775fa'}} 0deg, {{countWarning ? '#e44646' : '#4775fa'}} {{countProgress}}deg, #dce0e5 {{countProgress}}deg, #dce0e5 360deg);" aria-role="progressbar" aria-label="{{'剩余可输入' + remainingCount + '字，含空格和标点，上限150字'}}"><view><text class="compose-remaining">{{countWarning ? remainingCount : ''}}</text></view></view></view><button class="publish-button" bindtap="publish" loading="{{publishing}}" disabled="{{!canPublish || publishing || savingDraft || choosingImages || !user || loginSheetOpen}}">{{publishing ? (uploadDone < uploadTotal ? '上传中' : '发布中') : '发布'}}</button></view>
+        <view class="compose-media"><button class="choose-image-button" bindtap="choosePostImages" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="从相册选择图片或视频，也可拍照"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button><view><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></view><view><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view></view>
+        <view class="compose-submit"><view class="compose-progress-anchor"><view wx:if="{{limitHintVisible}}" class="compose-limit-hint" aria-role="alert">已达到输入上限</view><view class="compose-progress {{countWarning ? 'is-warning' : ''}}" style="background-image: conic-gradient({{countWarning ? '#e44646' : '#4775fa'}} 0deg, {{countWarning ? '#e44646' : '#4775fa'}} {{countProgress}}deg, #dce0e5 {{countProgress}}deg, #dce0e5 360deg);" aria-role="progressbar" aria-label="{{'剩余可输入' + remainingCount + '字，含空格和标点，上限150字'}}"><view><text class="compose-remaining">{{countWarning ? remainingCount : ''}}</text></view></view></view><button class="publish-button" bindtap="publish" loading="{{publishing}}" disabled="{{!canPublish || publishing || savingDraft || choosingImages || !user || loginSheetOpen}}">{{publishing ? (uploadDone < uploadTotal ? '上传中' : publishingVideo ? '处理中' : '发布中') : '发布'}}</button></view>
       </view>
     </view>
   </view>

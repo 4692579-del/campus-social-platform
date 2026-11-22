@@ -7,7 +7,7 @@ const { declarations, declarationKey } = require('../../utils/content-declaratio
 
 Component({
   properties: { initialQuote: Object, quoteOwnerId: String },
-  data: { editorReady: false, user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
+  data: { editorReady: false, user: null, content: '', images: [], count: 0, remainingCount: 150, countWarning: false, countProgress: 0, limitHintVisible: false, canPublish: false, publishing: false, publishingVideo: false, savingDraft: false, choosingImages: false, uploadDone: 0, uploadTotal: 0, error: '',
     optimizing: false, canOptimize: false, canUndoOptimization: false, optimizeError: '', noticeOrder: [], optimizeHelpUsed: false, optimizeHelpVisible: false,
     viewportHeight: 812, sheetTop: 104, settingsMaxHeight: 692, settingsRowHeight: 92, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, closing: false,
     panel: '', exitConfirmVisible: false, replyAudience: 'anyone', viewAudience: 'anyone', declaration: 'none',
@@ -104,10 +104,12 @@ Component({
       try {
         const draft = wx.getStorageSync(`square.draft.${user._id}`);
         if (draft && typeof draft.content === 'string') {
-          const images = Array.isArray(draft.images) ? draft.images.filter(image => image && typeof image.fileID === 'string' && image.fileID.includes(`/square-uploads/${user._id}/`)).slice(0, 9)
-            .map(image => ({ key: image.key || token(), path: '', fileID: image.fileID, type: image.type || 'jpg' })) : [];
+          const owned = fileID => typeof fileID === 'string' && fileID.startsWith('cloud://') && fileID.includes(`/square-uploads/${user._id}/`);
+          const images = Array.isArray(draft.images) ? draft.images.filter(image => image && owned(image.fileID)).slice(0, 9)
+            .map(image => ({ key: image.key || token(), path: '', fileID: image.fileID, type: image.type || 'jpg',
+              ...(image.type === 'mp4' && owned(image.poster?.fileID) ? { poster: { fileID: image.poster.fileID } } : {}) })) : [];
           this._savedImages = images.map(image => image.fileID);
-          this._knownUploads = new Set(this._savedImages);
+          this._knownUploads = new Set(images.flatMap(image => [image.fileID, ...(image.poster ? [image.poster.fileID] : [])]));
           this._savedDeclaration = declarationKey(draft.declaration);
           this._savedQuoteId = /^p_[a-f0-9]{40}$/.test(draft.quotePostId || '') ? draft.quotePostId : '';
           this.setData({ images, declaration: this._savedDeclaration, ...this.noticeState(false, this._savedDeclaration) });
@@ -125,7 +127,7 @@ Component({
       if (!this.data.editorReady) this.setData({ editorReady: true });
     },
     refreshQuotePublish() {
-      this.setData({ canPublish: Boolean(this.data.content.trim() || this.data.images.length || this.data.quotePostId) && this.data.count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
+      this.setData({ canPublish: Boolean(this.data.content.trim() || this.data.images.length || this.data.quotePostId) && this.data.images.length <= 3 && this.data.count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
     },
     async attachQuote(id, preview) {
       const version = users.getSessionVersion(), owner = this._editorOwnerId, sequence = this._quoteSequence = (this._quoteSequence || 0) + 1;
@@ -164,11 +166,11 @@ Component({
       if (changed) { this._editRevision = (this._editRevision || 0) + 1; this._optimizedOriginal = null; }
       const count = Array.from(content).length;
       const remainingCount = Math.max(0, 150 - count);
-      const canOptimize = Boolean(content.trim() || this.data.images.length) && count <= 150;
+      const canOptimize = Boolean(content.trim() || this.data.images.some(image => image.type !== 'mp4')) && count <= 150;
       this.setData({ content, count, remainingCount, countWarning: remainingCount <= 20,
         ...(!canOptimize ? { optimizeHelpVisible: false } : {}),
         canOptimize, ...this.noticeState(canOptimize), ...(changed ? { canUndoOptimization: false, optimizeError: '' } : {}),
-        countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length || this.data.quotePostId) && count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
+        countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length || this.data.quotePostId) && this.data.images.length <= 3 && count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
     },
     onInput(event) {
       if (this._unloaded || this._closing || this.data.publishing || this.data.savingDraft || this.data.exitConfirmVisible) return;
@@ -213,7 +215,7 @@ Component({
       try {
         let result, failure;
         try {
-          const images = this.data.images.length ? await this.uploadSelectedImages() : [];
+          const images = this.data.images.some(image => image.type !== 'mp4') ? await this.uploadSelectedImages(true) : [];
           if (!current() || revision !== this._editRevision) return;
           result = await square.optimizeContent(original, images);
         } catch (error) { failure = error; }
@@ -260,7 +262,8 @@ Component({
       try {
         const key = `square.draft.${user._id}`;
         if (this.data.content.trim() || this.data.images.length || this.data.quotePostId) wx.setStorageSync(key, { content: this.data.content, declaration: this.data.declaration, requestId: this._requestId || (this._requestId = token()), ...(this.data.quotePostId ? { quotePostId: this.data.quotePostId } : {}),
-          ...(this.data.images.length ? { images: this.data.images.map(image => ({ key: image.key, fileID: image.fileID, type: image.type })) } : {}) });
+          ...(this.data.images.length ? { images: this.data.images.map(image => ({ key: image.key, fileID: image.fileID, type: image.type,
+            ...(image.poster?.fileID ? { poster: { fileID: image.poster.fileID } } : {}) })) } : {}) });
         else wx.removeStorageSync(key);
         this._savedContent = this.data.content;
         this._savedImages = this.data.images.map(image => image.fileID);
@@ -271,7 +274,7 @@ Component({
     },
     async saveAndClose() {
       if (this.busy()) return;
-      if (!this.data.content.trim() && !this.data.images.length && !this.data.quotePostId) { wx.showToast({ title: '请先写点内容或选择图片', icon: 'none' }); return; }
+      if (!this.data.content.trim() && !this.data.images.length && !this.data.quotePostId) { wx.showToast({ title: '请先写点内容或选择图片、视频', icon: 'none' }); return; }
       this.cancelOptimization();
       this.setData({ savingDraft: true, error: '' });
       const version = users.getSessionVersion();
@@ -288,18 +291,18 @@ Component({
     async choosePostImages() {
       if (this.busy()) return;
       if (!users.getCachedUser()) { this.requestLogin(); return; }
-      if (this.data.images.length >= 9) { wx.showToast({ title: '一次最多发布 9 张图片', icon: 'none' }); return; }
+      if (this.data.images.length >= 3) { wx.showToast({ title: '图片和视频合计最多 3 个', icon: 'none' }); return; }
       this.cancelOptimization();
       const version = users.getSessionVersion();
       this.setData({ choosingImages: true, editorFocused: false, editorFocusRequested: false, error: '' });
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       try {
-        const selected = await media.chooseImages(9 - this.data.images.length);
+        const selected = await media.chooseImages(3 - this.data.images.length, true);
         if (this._unloaded || version !== users.getSessionVersion() || !selected.length) return;
-        this.setData({ images: [...this.data.images, ...selected].slice(0, 9) });
+        this.setData({ images: [...this.data.images, ...selected].slice(0, 3) });
         this.imagesDidChange();
         this._requestId = token(); this.setContent(this.data.content);
-      } catch (error) { if (!this._unloaded && version === users.getSessionVersion() && !/cancel/.test(error.errMsg || '')) this.setData({ error: error.message || '选图失败，请检查相册或相机权限' }); }
+      } catch (error) { if (!this._unloaded && version === users.getSessionVersion() && !/cancel/.test(error.errMsg || '')) this.setData({ error: error.message || '选择媒体失败，请检查相册或相机权限' }); }
       finally {
         if (!this._unloaded) {
           this.setData({ choosingImages: false });
@@ -316,10 +319,15 @@ Component({
       this._requestId = token(); this.setContent(this.data.content);
     },
     async previewSelectedImage(event) {
-      const files = this.data.images.map(image => image.fileID || image.path), current = files[event.currentTarget.dataset.index];
+      const index = Number(event.currentTarget.dataset.index);
+      const files = this.data.images.map(image => image.fileID || image.path), current = files[index];
       if (!current) return;
-      try { await media.previewImages(files, current); }
-      catch (error) { if (!this._unloaded && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '图片预览失败', icon: 'none' }); }
+      try {
+        if (this.data.images.some(image => image.type === 'mp4')) {
+          await media.previewMedia(this.data.images.map((item, at) => ({ fileID: files[at], type: item.type === 'mp4' ? 'video' : 'image', poster: item.poster?.fileID || item.poster?.path })), index);
+        } else await media.previewImages(files, current);
+      }
+      catch (error) { if (!this._unloaded && error.code !== 'SESSION_CHANGED') wx.showToast({ title: error.message || '媒体预览失败', icon: 'none' }); }
       finally { if (!this._unloaded) this.triggerEvent('resumenavigation'); }
     },
     imagesDidChange() {
@@ -328,19 +336,25 @@ Component({
       this._optimizedOriginal = null;
       this.setData({ canUndoOptimization: false, optimizeError: '' });
     },
-    async uploadSelectedImages() {
+    async uploadSelectedImages(imagesOnly = false) {
       const version = users.getSessionVersion();
-      const images = this.data.images.map(image => ({ ...image }));
-      this.setData({ uploadDone: 0, uploadTotal: images.length });
-      return media.uploadImages(images, (index, fileID) => {
+      const images = this.data.images.filter(image => !imagesOnly || image.type !== 'mp4');
+      const files = images.flatMap(image => [
+        { ...image, ownerKey: image.key },
+        ...(image.poster && !imagesOnly ? [{ ...image.poster, ownerKey: image.key, isPoster: true }] : []),
+      ]);
+      if (!files.length) return [];
+      this.setData({ uploadDone: 0, uploadTotal: files.length });
+      const uploaded = media.uploadImages(files, (index, fileID) => {
         if (this._unloaded || version !== users.getSessionVersion()) return;
         this._knownUploads = this._knownUploads || new Set(); this._knownUploads.add(fileID);
         // 上传期间允许继续编辑或删除图片，迟到结果不能写到已换位的下一张图。
-        const at = this.data.images.findIndex(image => image.key === images[index].key);
-        if (at >= 0 && this.data.images[at].fileID !== fileID) this.setData({ [`images[${at}].fileID`]: fileID });
+        const at = this.data.images.findIndex(image => image.key === files[index].ownerKey);
+        if (at >= 0) this.setData({ [`images[${at}].${files[index].isPoster ? 'poster.fileID' : 'fileID'}`]: fileID });
       }, (done, total) => {
         if (!this._unloaded && version === users.getSessionVersion()) this.setData({ uploadDone: done, uploadTotal: total });
-      });
+      }, !imagesOnly);
+      return files.some(file => file.isPoster) ? uploaded.then(ids => ids.filter((fileID, index) => !files[index].isPoster)) : uploaded;
     },
     focusEditor() {
       if (!this.data.user || this.busy() || this.data.panel || this.data.exitConfirmVisible) return;
@@ -416,11 +430,14 @@ Component({
       if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
       this._requestId = this._requestId || token();
       this.cancelOptimization();
-      this.setData({ publishing: true, error: '' });
+      const mixed = this.data.images.some(image => image.type === 'mp4');
+      this.setData({ publishing: true, publishingVideo: mixed, error: '' });
       try {
         const images = this.data.images.length ? await this.uploadSelectedImages() : [];
         if (this._unloaded || version !== users.getSessionVersion()) return;
-        await square.publish(this.data.content, this._requestId, images, this.data.declaration, this.data.quotePostId);
+        const attachments = mixed ? this.data.images.map((image, index) => ({ fileID: images[index], type: image.type === 'mp4' ? 'video' : 'image',
+          ...(image.poster?.fileID ? { poster: image.poster.fileID } : {}) })) : undefined;
+        await square.publish(this.data.content, this._requestId, mixed ? [] : images, this.data.declaration, this.data.quotePostId, attachments);
         if (this._unloaded || users.getSessionVersion() !== version) return;
         this._published = true;
         try { wx.removeStorageSync(`square.draft.${user._id}`); } catch (error) { /* 已发布的内容不会重复提交。 */ }
@@ -432,7 +449,7 @@ Component({
           if (version === users.getSessionVersion()) this.setData({ error: error.message || '发布未确认，请重试' });
           if (!users.getCachedUser()) this.requestLogin();
         }
-      } finally { if (!this._unloaded) this.setData({ publishing: false }); }
+      } finally { if (!this._unloaded) this.setData({ publishing: false, publishingVideo: false }); }
     },
     continueEditing() {
       if (this.busy() || !this.data.exitConfirmVisible) return;

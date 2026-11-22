@@ -1,6 +1,7 @@
 @import "../../styles/avatar.wxss";
 @import "../../styles/login-sheet.wxss";
 @import "../../styles/xiaocui-icon.wxss";
+@import "../../styles/post-play-badge.wxss";
 :host { display: block; }
 button::after { border: 0; }
 .composer-layer { position: fixed; z-index: 2700; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
@@ -74,6 +75,10 @@ button::after { border: 0; }
 .selected-image-strip { display: flex; gap: 14rpx; width: max-content; padding: 10rpx 4rpx 14rpx 0; }
 .selected-image { position: relative; flex-shrink: 0; width: 138rpx; height: 138rpx; }
 .selected-image > image { display: block; width: 100%; height: 100%; border-radius: 16rpx; background: #edf0f3; }
+.selected-video { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 16rpx; background: #edf0f3; }
+.selected-video image { display: block; width: 100%; height: 100%; }
+.selected-video .post-play-badge { width: 50rpx; height: 50rpx; }
+.media-limit-hint { margin: 0 16rpx 10rpx 92rpx; color: #b34a23; font-size: 22rpx; }
 .selected-image .remove-image { position: absolute; top: 5rpx; right: 5rpx; display: flex; align-items: center; justify-content: center; width: 40rpx; min-width: 0; height: 40rpx; margin: 0; padding: 0; border-radius: 50%; background: rgba(255, 255, 255, .94); }
 .remove-image image { width: 22rpx; height: 22rpx; }
 .compose-upload-status { padding: 10rpx 28rpx; color: #87919c; font-size: 24rpx; }

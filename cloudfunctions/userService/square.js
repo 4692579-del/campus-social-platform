@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { VIDEO_ERRORS } = require('./square-videos');
 const followsModule = require('./square-follows');
 const searchModule = require('./square-search');
 const { BOT_ID, BOT, createSquareAI } = require('./square-ai');
@@ -11,11 +12,12 @@ const { createAccountIdService } = require('./account-id');
 
 const SQUARE_ACTIONS = ['getSquareOwnStats', 'listSquarePosts', 'listSquareAlbum', 'getSquarePost', 'publishSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren', 'setSquareCommentState', 'publishSquareReply', 'processSquareAIReply', 'deleteSquarePost', 'reportSquarePost', 'deleteSquareReply', 'reportSquareReply', 'optimizeSquareContent'];
 const REPORT_REASONS = ['spam', 'illegal', 'sexual', 'abuse', 'other'];
-SQUARE_ACTIONS.push('listSquareOwnReplies', 'getSquareReplyContext');
+SQUARE_ACTIONS.push('listSquareOwnReplies', 'getSquareReplyContext', 'getSquarePublication');
 const DECLARATIONS = ['none', 'ai', 'opinion', 'repost', 'fiction', 'marketing'];
 const SQUARE_CODES = ['INVALID_POST', 'POST_NOT_FOUND', 'CONTENT_REJECTED', 'CONTENT_CHECK_UNAVAILABLE', 'REQUEST_CONFLICT', 'INVALID_IMAGES', 'IMAGE_UPLOAD_UNAVAILABLE', ...POLISH_CODES];
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 SQUARE_CODES.push('QUOTE_UNAVAILABLE');
+SQUARE_CODES.push('INVALID_MEDIA', 'VIDEO_UPLOAD_UNAVAILABLE', ...Object.keys(VIDEO_ERRORS));
 SQUARE_ACTIONS.push('setSquareProfilePin');
 SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
 SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
@@ -37,6 +39,7 @@ function requestId(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{16,64}$/.test(value)) fail('INVALID_POST', '提交标识无效，请重新打开发布页');
   return value;
 }
+function squarePostId(userId, token) { return `p_${hash(`${userId}:square:${token}`).slice(0, 40)}`; }
 function postId(value) {
   if (typeof value !== 'string' || !/^p_[a-f0-9]{40}$/.test(value)) fail('POST_NOT_FOUND', '动态不存在或已不可见');
   return value;
@@ -64,6 +67,30 @@ function imageFiles(value, user, identity, maximum = 9) {
     fail('INVALID_IMAGES', '请上传当前账号的图片，不能使用外链或其他账号的图片');
   }
   return value;
+}
+
+function postMedia(value, user, identity) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.length || value.length > 3) fail('INVALID_MEDIA', '图片和视频合计最多 3 个');
+  const videoPath = new RegExp(`^square-uploads/${user._id}/[A-Za-z0-9_-]+\\.(mp4|video)$`);
+  const files = new Set();
+  return value.map(item => {
+    if (!item || !['image', 'video'].includes(item.type) || Object.keys(item).some(key => !['type', 'fileID', 'poster'].includes(key))) fail('INVALID_MEDIA', '媒体参数不正确');
+    const { fileID, type, poster } = item;
+    if (typeof fileID !== 'string' || files.has(fileID)) fail('INVALID_MEDIA', '请选择不同的媒体文件');
+    files.add(fileID);
+    if (type === 'image') {
+      if (poster !== undefined) fail('INVALID_MEDIA', '图片参数不正确');
+      imageFiles([fileID], user, identity, 3);
+      return { type, fileID };
+    }
+    if (!identity.env || !fileID.startsWith(`cloud://${identity.env}.`) || fileID.length > 512 || !videoPath.test(fileID.slice(fileID.indexOf('/', 8) + 1))) fail('INVALID_MEDIA', '请上传当前账号的视频');
+    if (poster !== undefined) {
+      imageFiles([poster], user, identity, 3);
+      return { type, fileID, poster };
+    }
+    return { type, fileID };
+  });
 }
 
 function createSquareService(db, options = {}) {
@@ -134,7 +161,7 @@ function createSquareService(db, options = {}) {
       viewer ? posts.aggregate().match({ scope: 'square', status: 'published', authorId: viewer._id,
         quotePostId: db.command.in(rows.map(row => row._id)) }).group({ _id: '$quotePostId' }).end().then(result => new Set(result.list.map(row => row._id))) : Promise.resolve(new Set())]);
     return rows.map(row => ({ _id: row._id, content: preview ? Array.from(row.content).slice(0, 280).join('') : row.content,
-      ...(preview ? { fullContent: row.content } : {}), images: row.images || [], declaration: DECLARATIONS.includes(row.declaration) ? row.declaration : 'none',
+      ...(preview ? { fullContent: row.content } : {}), images: row.images || [], ...(row.media ? { media: row.media } : {}), declaration: DECLARATIONS.includes(row.declaration) ? row.declaration : 'none',
       truncated: preview && Array.from(row.content).length > 280, author: authors.get(row.authorId), createdAt: row.createdAt,
       ...(row.quotePostId ? { quotePostId: row.quotePostId, quote: quotes.get(row._id) } : {}), quoteCount: Math.max(0, row.quoteCount || 0), quoteVersion: row.quoteVersion || 0,
       likeCount: row.likeCount || 0, replyCount: row.replyCount || 0, repostCount: 0,
@@ -244,6 +271,14 @@ function createSquareService(db, options = {}) {
       return { items, hasMore: rows.length > 20, nextOffset: offset + items.length };
     }
     active(user);
+    if (action === 'getSquarePublication') {
+      const id = squarePostId(user._id, requestId(event.requestId));
+      const row = (await posts.doc(id).get()).data;
+      if (!row || row.authorId !== user._id || row.scope !== 'square' || row.status !== 'published') return { post: null };
+      const [shown] = await present([row], user);
+      const quotedPost = await optionalPost(row.quotePostId, user);
+      return { post: shown, ...(quotedPost ? { quotedPost } : {}) };
+    }
     if (action === 'setSquareProfilePin') {
       const id = postId(event.postId);
       if (typeof event.pinned !== 'boolean') fail('INVALID_POST', '置顶参数不正确');
@@ -399,7 +434,7 @@ function createSquareService(db, options = {}) {
       // 顶层 event 还会带有云平台的调用元数据，只校验独立的业务对象。
       const input = event.post;
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_POST', '发布页面需要更新，请重新编译后重试');
-      if (Object.keys(input).some(key => !['content', 'requestId', 'scope', 'images', ...(isReply ? ['postId', 'replyToId', 'askAI'] : ['declaration', 'quotePostId'])].includes(key))) fail('INVALID_POST', '发布参数不正确，请重新打开发布页');
+      if (Object.keys(input).some(key => !['content', 'requestId', 'scope', 'images', ...(isReply ? ['postId', 'replyToId', 'askAI'] : ['declaration', 'quotePostId', 'media'])].includes(key))) fail('INVALID_POST', '发布参数不正确，请重新打开发布页');
       if (isReply && input.askAI !== undefined && typeof input.askAI !== 'boolean') fail('INVALID_POST', 'AI 唤起参数不正确');
       const askAI = isReply && input.askAI === true;
       if (input.scope !== 'square') fail('INVALID_POST', '该发布入口仅支持动态广场');
@@ -412,16 +447,18 @@ function createSquareService(db, options = {}) {
         if (!row || row.scope !== 'square' || row.status !== 'published') fail('QUOTE_UNAVAILABLE', '被引用的动态已删除或不可见，请移除引用后重试');
         return row;
       }
-      const sources = imageFiles(input.images, user, identity, isReply ? 3 : 9);
+      if (input.media !== undefined && input.images !== undefined) fail('INVALID_MEDIA', '请使用同一组媒体文件发布');
+      const mediaSources = postMedia(input.media, user, identity);
+      const sources = mediaSources.length ? mediaSources.filter(item => item.type === 'image').map(item => item.fileID) : imageFiles(input.images, user, identity, 3);
       // 动态与回复都按原始 Unicode 码点计数，空格、换行和标点也占额度。
       const maximum = isReply ? 50 : 150;
       if (typeof input.content === 'string' && Array.from(input.content).length > maximum) fail('INVALID_POST', `最多输入${maximum}字（含空格和标点）`);
-      const content = (sources.length || quoteId) && typeof input.content === 'string' && !input.content.trim() ? '' : text(input.content, maximum);
+      const content = (sources.length || mediaSources.length || quoteId) && typeof input.content === 'string' && !input.content.trim() ? '' : text(input.content, maximum);
       const token = requestId(input.requestId);
       const parentId = isReply ? postId(input.postId) : '';
       if (isReply && input.replyToId !== undefined) commentId(input.replyToId);
       const child = isReply && Boolean(input.replyToId);
-      const id = `${child ? 'c' : isReply ? 'r' : 'p'}_${hash(`${user._id}:${isReply ? parentId : 'square'}:${token}`).slice(0, 40)}`;
+      const id = isReply ? `${child ? 'c' : 'r'}_${hash(`${user._id}:${parentId}:${token}`).slice(0, 40)}` : squarePostId(user._id, token);
       if (quoteId === id) fail('INVALID_POST', '不能引用本次发布的动态');
       const collectionName = child ? 'square_reply_children' : isReply ? 'square_replies' : 'square_posts';
       const [parent, target, previous] = await Promise.all([isReply ? getPost(parentId) : Promise.resolve(null),
@@ -431,7 +468,8 @@ function createSquareService(db, options = {}) {
       const existing = previous.data;
       const conflicts = saved => saved.content !== content || (saved.replyToId || '') !== (target ? target._id : '') ||
         isReply && Boolean(saved.askAI) !== askAI ||
-        JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && ((saved.declaration || 'none') !== declaration || (saved.quotePostId || '') !== quoteId);
+        JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && (
+          JSON.stringify(saved.mediaSources || []) !== JSON.stringify(mediaSources) || (saved.declaration || 'none') !== declaration || (saved.quotePostId || '') !== quoteId);
       if (existing && conflicts(existing)) fail('REQUEST_CONFLICT', '相同提交标识的内容或回复对象已变更，请重新提交');
       if (!existing) await quoted();
       if (!existing && content) await checked(content, identity);
@@ -444,6 +482,29 @@ function createSquareService(db, options = {}) {
           fail('IMAGE_UPLOAD_UNAVAILABLE', '图片保存失败，请稍后重试');
         }
         if (!Array.isArray(images) || images.length !== sources.length || images.some(file => typeof file !== 'string' || !file.startsWith(`cloud://${identity.env}.`))) fail('IMAGE_UPLOAD_UNAVAILABLE', '图片保存未确认，请重试');
+      }
+      const media = [];
+      if (!existing && mediaSources.length) {
+        let imageIndex = 0;
+        const context = { userId: user._id, postId: id, identity };
+        const deadline = Date.now() + 45000;
+        for (const [index, item] of mediaSources.entries()) {
+          if (item.type === 'image') {
+            media.push({ type: 'image', fileID: images[imageIndex++] });
+            continue;
+          }
+          if (!options.processSquareVideo) fail('VIDEO_UPLOAD_UNAVAILABLE', '视频发布服务尚未更新，请重新部署 userService');
+          try {
+            const video = await options.processSquareVideo(item.fileID, { ...context, index, deadline });
+            const [poster] = item.poster ? await options.processSquareImages([item.poster], context) : [];
+            const prefix = `cloud://${identity.env}.`;
+            if (!video || !video.fileID?.startsWith(prefix) || (item.poster && !poster?.startsWith(prefix))) fail('VIDEO_UPLOAD_UNAVAILABLE', '视频保存未确认，请重试');
+            media.push({ type: 'video', fileID: video.fileID, width: video.width, height: video.height, ...(poster ? { poster } : {}) });
+          } catch (error) {
+            if (SQUARE_CODES.includes(error.code)) throw error;
+            fail('VIDEO_UPLOAD_UNAVAILABLE', '视频保存失败，请稍后重试');
+          }
+        }
       }
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
@@ -464,7 +525,8 @@ function createSquareService(db, options = {}) {
           createdAt: db.serverDate(), sortKey: `${String(Date.now()).padStart(16, '0')}_${id}`,
           ...(isReply ? { postId: parent._id, likeCount: 0, replyCount: 0, askAI, images, imageSources: sources,
             ...(target ? { rootId, replyToId: target._id, replyToAuthorId: latestTarget.authorId, ancestorIds: [...(latestTarget.ancestorIds || []), latestTarget._id] } : {}) }
-            : { likeCount: 0, replyCount: 0, repostCount: 0, quoteCount: 0, quoteVersion: 0, images, imageSources: sources, hasImages: images.length > 0, declaration, ...(quoteId ? { quotePostId: quoteId } : {}) }) } });
+            : { likeCount: 0, replyCount: 0, repostCount: 0, quoteCount: 0, quoteVersion: 0, images, imageSources: sources, hasImages: images.length > 0, declaration,
+              ...(media.length ? { media, mediaSources } : {}), ...(quoteId ? { quotePostId: quoteId } : {}) }) } });
         if (parentRef) await parentRef.update({ data: { replyCount: (latestParent.replyCount || 0) + 1 } });
         if (root) await transaction.collection('square_replies').doc(rootId).update({ data: { replyCount: (root.replyCount || 0) + 1 } });
         if (latestQuote) await transaction.collection('square_posts').doc(quoteId).update({ data: { quoteCount: (latestQuote.quoteCount || 0) + 1, quoteVersion: (latestQuote.quoteVersion || 0) + 1 } });
