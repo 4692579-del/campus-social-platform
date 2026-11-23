@@ -14,8 +14,14 @@ module.exports = {
       const brand = this.selectComponent?.('#search-cui');
       brand?.setState(state);
     },
-    onSearchBrandReady() { this.paintSearchBrand(this._searchBrand || { phase: 'idle' }); },
-    beginSearchPull() { this._searchPullActive = this.canPullSearch() && !this.data.searchRefreshing; },
+    onSearchBrandReady() {
+      if (this.data.searchRefreshVisible) this.paintSearchBrand(this._searchBrand);
+    },
+    beginSearchPull() {
+      if (!this.canPullSearch() || this.data.searchRefreshing) return;
+      if (this.data.searchRefreshPhase === 'pulling') this.stopSearchRefresh();
+      this._searchPullActive = true;
+    },
     pullSearch(event) {
       if (!this._searchPullActive || !this.canPullSearch() || this.data.searchRefreshing) return;
       const progress = clamp((Number(event.detail?.dy) || 0) / THRESHOLD);
@@ -25,8 +31,21 @@ module.exports = {
       this.paintSearchBrand({ phase: 'pulling', progress });
     },
     releaseSearchPull() {
+      if (!this._searchPullActive) return;
       this._searchPullActive = false;
-      if (this._searchBrand?.progress < 1) this.cancelSearchPull();
+      if (this.data.searchRefreshPhase !== 'pulling') return;
+      if (this._searchBrand.progress < 1) { this.cancelSearchPull(); return; }
+      // 原生没有发出 refresh 或 restore 时，也不能把字标留在页面上。
+      this.deferSearchPullCancel();
+    },
+    deferSearchPullCancel() {
+      if (this.data.searchRefreshPhase !== 'pulling') return;
+      this._searchPullActive = false;
+      clearTimeout(this._searchRefreshTimer);
+      this._searchRefreshTimer = setTimeout(() => {
+        this._searchRefreshTimer = null;
+        this.cancelSearchPull();
+      }, 300);
     },
     cancelSearchPull() {
       this._searchPullActive = false;
@@ -36,6 +55,7 @@ module.exports = {
     refreshSearch() {
       if (this._searchRefresh) return this._searchRefresh.promise;
       if (this.data.searchRefreshPhase !== 'pulling' || !this.canPullSearch()) return;
+      clearTimeout(this._searchRefreshTimer);
       const refresh = this._searchRefresh = { startedAt: Date.now() };
       this._searchPullActive = false;
       this.setData({ searchRefreshPhase: 'loading', searchRefreshing: true, searchRefreshVisible: true });
@@ -50,7 +70,9 @@ module.exports = {
           if (this._searchRefresh !== refresh) return;
           this.setData({ searchRefreshPhase: 'refill' });
           this.paintSearchBrand({ phase: 'refill', duration: REFILL, startedAt: Date.now() });
-          this._searchRefreshTimer = setTimeout(() => this.stopSearchRefresh(), REFILL);
+          this._searchRefreshTimer = setTimeout(() => {
+            if (this._searchRefresh === refresh) this.stopSearchRefresh();
+          }, REFILL);
         }, finishAt - elapsed);
       });
       return refresh.promise;
@@ -60,8 +82,9 @@ module.exports = {
       this._searchRefreshTimer = null;
       this._searchRefresh = null;
       this._searchPullActive = false;
+      this._searchBrand = { phase: 'idle' };
+      // 先撤掉字标；组件卸载会取消 Canvas 帧，避免结束时切回静态字标。
       patchState(this, { searchRefreshPhase: 'idle', searchRefreshing: false, searchRefreshVisible: false });
-      this.paintSearchBrand({ phase: 'idle' });
     },
   },
 };

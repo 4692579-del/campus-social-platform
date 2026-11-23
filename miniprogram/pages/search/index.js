@@ -29,10 +29,11 @@ Page({
     cuiHotRows:[], cuiHotHasMore:false, cuiHotLoading:false, cuiHotError:'', cuiHotWarning:'', cuiHotUpdateText:'',
     boardMinHeight:300,
     cuiPromoSrc:'', cuiPromoError:false, cuiPromoLoading:false, cuiPromoMuted:true,
-    boardIndex:0, boardTabs:['Cui热榜','全网热榜','校园热榜'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
+    boardIndex:0, boardTabs:['Cui热榜','探索','校园热榜'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
   },
   onLoad() { base.onLoad.call(this); this._searchSession = users.searchSessionKey(); this.applyMenuUser(users.getCachedUser()); },
   onShow() {
+    this._openingNews = false;
     this._openingCuiPromoPost = false;
     const returningFromMenu = this._menuNavigating || this._menuReturning;
     const session = users.searchSessionKey(), entry = users.consumeSearchEntry();
@@ -371,6 +372,16 @@ Page({
     const cached = hotboard.cached(this.data.hotType);
     if (cached) this.showHotboard(cached);
     return this.loadHotboard();
+  },
+  exploreHotList() {
+    if (!this.data.searchActive || this.data.boardIndex !== HOT_BOARD_INDEX || this._openingNews || this._openingResults ||
+        this._openingSearchEntry || this._unloaded || this._visible === false || this.data.menuOpen || this.interactionBlocked()) return;
+    this.closePlatformMenu();
+    this._openingNews = true;
+    wx.navigateTo({ url: '/pages/global-news/index', fail: () => {
+      this._openingNews = false;
+      if (!this._unloaded && this._visible !== false) wx.showToast({ title: '全球新闻打开失败，请重试', icon: 'none' });
+    } });
   },
   togglePlatformMenu() {
     if (this.data.menuOpen || this.interactionBlocked()) return;

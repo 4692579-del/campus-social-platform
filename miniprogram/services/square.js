@@ -13,6 +13,7 @@ function historyChanged(invalidate = false) {
 let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutation = 0, removals = 0, published = false;
 const profileFeeds = new Map();
 const searchFeeds = new Map();
+const newsFeeds = new Map();
 const followStates = new Map(), followProfiles = new Map(), followWrites = new Map(), followListeners = new Set();
 let followRevision = 0, followingFeed = null, followWorker = null;
 const publicContent = new Map(), publicHistories = new Map(), publicEpoch = new Map();
@@ -50,7 +51,7 @@ function subscribeAI(listener) { aiListeners.add(listener); return () => aiListe
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; }
+  if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; newsFeeds.clear(); }
   if (key !== owner) { for (const write of followWrites.values()) write.reject(Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' })); followWorker = null; followStates.clear(); followProfiles.clear(); followWrites.clear(); followRevision++; followingFeed = null; owner = key; generation += 1; searchFeeds.clear(); profileFeeds.clear(); publicContent.clear(); publicHistories.clear(); publicEpoch.clear(); unavailablePublicAccounts.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
 }
@@ -326,6 +327,17 @@ function subscribePost(listener) { postListeners.add(listener); return () => pos
 function updatePost(post, prepend = false) {
   if (deleted.has(post._id)) return;
   post = pendingLike(post);
+  if (post.contentType === 'news') {
+    const previous = posts.get(post._id);
+    if (previous?.detailReady && !post.detailReady) post = { ...previous, liked: post.liked, bookmarked: post.bookmarked,
+      likeCount: post.likeCount, replyCount: post.replyCount };
+    posts.set(post._id, post);
+    postTimes.set(post._id, Date.now());
+    for (const listener of postListeners) {
+      try { listener(post); } catch (_) { /* 保存结果不受页面监听影响。 */ }
+    }
+    return;
+  }
   const firstPublication = prepend && !posts.has(post._id);
   for (const cached of searchFeeds.values()) { if (prepend) cached.time = 0; if (cached.value.kind === 'square') cached.value.items = cached.value.items.map(row => row._id === post._id ? previewPost(post) : row); }
   posts.set(post._id, post);
@@ -423,7 +435,7 @@ async function call(action, data = {}, authenticated = false) {
     session();
     if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
     if (action === 'publishSquarePost' && data.post?.media?.some(item => item.type === 'video')) throw publishConnectionError(error);
-    throw new Error('暂时无法连接广场，请稍后重试');
+    throw new Error(action === 'listNewsPosts' ? '暂时无法连接全球新闻，请稍后重试' : '暂时无法连接广场，请稍后重试');
   }
   session();
   if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
@@ -431,7 +443,8 @@ async function call(action, data = {}, authenticated = false) {
   if (!result || !result.success) {
     if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) users.logout();
     throw Object.assign(new Error(result && result.code !== 'INVALID_ACTION' ? result.message :
-      ['processSquareAIReply', 'optimizeSquareContent'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
+      action === 'listNewsPosts' ? '全球新闻服务尚未部署，请联系管理员' :
+        ['processSquareAIReply', 'optimizeSquareContent'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
         ['listSquareReplyChildren', 'setSquareCommentState', 'listSquareOwnReplies', 'getSquareReplyContext'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
@@ -442,6 +455,38 @@ function merged(key, request) {
   const promise = request().finally(() => { if (pending.get(key) === promise) pending.delete(key); });
   pending.set(key, promise);
   return promise;
+}
+function cachedNews(language = 'en') {
+  session();
+  const value = newsFeeds.get(language)?.value;
+  if (!value) return null;
+  return { ...value, items: value.items.filter(item => !deleted.has(item._id)).map(item => {
+    const current = posts.get(item._id);
+    return current ? { ...item, liked: current.liked, bookmarked: current.bookmarked, likeCount: current.likeCount, replyCount: current.replyCount } : item;
+  }) };
+}
+function listNews({ language = 'en', offset = 0, anchor = 0, force = false } = {}) {
+  session();
+  const cached = newsFeeds.get(language);
+  if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedNews(language));
+  return merged(`news:${language}:${offset ? anchor : 0}:${offset}`, async () => {
+    const before = new Map(revisions);
+    const result = await call('listNewsPosts', { language, offset, anchor });
+    const previous = newsFeeds.get(language)?.value;
+    if (offset && (previous?.anchor !== anchor || previous.nextOffset !== offset)) return cachedNews(language);
+    const ids = new Set(), urls = new Set(), items = [], received = new Set(result.items);
+    // 有效期内下拉可能返回同一个首屏快照，保留已加载的后续页。
+    const sameSnapshot = !offset && previous?.anchor === result.anchor;
+    const rows = offset ? [...previous.items, ...result.items] : sameSnapshot ? [...result.items, ...previous.items] : result.items;
+    for (const row of rows) {
+      if (deleted.has(row._id) || ids.has(row._id) || urls.has(row.newsUrlKey)) continue;
+      ids.add(row._id); urls.add(row.newsUrlKey); items.push(row);
+      if (received.has(row) && before.get(row._id) === revisions.get(row._id)) updatePost(row);
+    }
+    const pagination = sameSnapshot ? { nextOffset: previous.nextOffset, hasMore: previous.hasMore } : {};
+    newsFeeds.set(language, { time: offset ? newsFeeds.get(language).time : Date.now(), value: { ...result, ...pagination, items } });
+    return cachedNews(language);
+  });
 }
 function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}) {
   session();
@@ -557,14 +602,24 @@ function listPublicContent(accountId, kind, { force = false, offset = 0 } = {}) 
 function detail(id, force = false) {
   session();
   try { unavailable(id); } catch (error) { return Promise.reject(error); }
-  if (!force && posts.has(id) && Date.now() - postTimes.get(id) < TTL) return Promise.resolve(posts.get(id));
+  if (!force && posts.has(id) && (!id.startsWith('n_') || (posts.get(id).detailReady && !posts.get(id).bodyMissing)) && Date.now() - postTimes.get(id) < TTL) return Promise.resolve(posts.get(id));
   return merged(`post:${id}`, async () => {
     const revision = revisions.get(id);
     let result;
     try { result = await call('getSquarePost', { postId: id }); }
-    catch (error) { if (error.code === 'POST_NOT_FOUND') removePost(id); throw error; }
+    catch (error) {
+      if (error.code === 'POST_NOT_FOUND') {
+        if (id.startsWith('n_')) { deleted.add(id); posts.delete(id); postTimes.delete(id); }
+        else removePost(id);
+      }
+      throw error;
+    }
     unavailable(id);
-    if (revision !== revisions.get(id) && posts.has(id)) return posts.get(id);
+    if (revision !== revisions.get(id) && posts.has(id)) {
+      if (!id.startsWith('n_')) return posts.get(id);
+      const { liked, bookmarked, likeCount, replyCount } = posts.get(id);
+      result.post = { ...result.post, liked, bookmarked, likeCount, replyCount };
+    }
     updatePost(result.post);
     return posts.get(id);
   });
@@ -674,7 +729,7 @@ async function saveLike(id, write) {
       if (!valid()) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
       unavailable(id);
       if (!result.post || typeof result.post.liked !== 'boolean') throw new Error('点赞状态未确认，请重试');
-      invalidateOwnStats();
+      if (!id.startsWith('n_')) invalidateOwnStats();
       write.confirmed = merge(result.post);
       if (result.post.liked !== target) throw new Error('点赞状态未确认，请重试');
       revisions.set(id, ++mutation);
@@ -698,6 +753,18 @@ async function saveLike(id, write) {
     throw error;
   }
 }
+function bookmarkNews(id, active) {
+  session();
+  if (!/^n_[a-f0-9]{40}$/.test(id || '') || typeof active !== 'boolean') return Promise.reject(new Error('收藏参数不正确'));
+  return merged(`bookmark:${id}`, async () => {
+    const { post } = await call('setSquareReaction', { postId: id, kind: 'bookmark', active }, true);
+    unavailable(id);
+    if (post?.bookmarked !== active) throw new Error('收藏状态未确认，请重试');
+    revisions.set(id, ++mutation);
+    updatePost({ ...(posts.get(id) || post), bookmarked: active });
+    return posts.get(id);
+  });
+}
 async function reply(id, content, requestId, replyToId, askAI = false, images = []) {
   if (!Array.isArray(images) || images.length > 3 || new Set(images).size !== images.length || images.some(file => typeof file !== 'string' || !file.startsWith('cloud://')))
     throw Object.assign(new Error('一次最多发送3张已上传图片'), { code: 'INVALID_IMAGES' });
@@ -714,7 +781,7 @@ async function reply(id, content, requestId, replyToId, askAI = false, images = 
   result.reply = pendingComment(result.reply);
   saveComment(result.reply, true);
   if (result.root) { result.root = pendingComment(result.root); saveComment(result.root, true); }
-  historyChanged(true);
+  if (!id.startsWith('n_')) historyChanged(true);
   return result;
 }
 function processAIReply(id, replyId) {
@@ -853,9 +920,11 @@ async function deleteReply(id, replyId) {
   if (result.deletedId !== replyId || !result.post) throw new Error('删除未确认，请重试');
   unavailable(id);
   deletedComments.add(replyId); commentRemovals += 1;
-  for (const history of [ownHistory, ...publicHistories.values()].filter(Boolean)) history.value.items = history.value.items.filter(item => !commentGone(item.reply)).map(item =>
-    item.context._id === replyId ? { ...item, context: { unavailable: true } } : item);
-  historyChanged(true);
+  if (!id.startsWith('n_')) {
+    for (const history of [ownHistory, ...publicHistories.values()].filter(Boolean)) history.value.items = history.value.items.filter(item => !commentGone(item.reply)).map(item =>
+      item.context._id === replyId ? { ...item, context: { unavailable: true } } : item);
+    historyChanged(true);
+  }
   revisions.set(id, ++mutation);
   for (const [key, row] of comments) if (commentGone(row)) {
     comments.delete(key); commentWrites.delete(key); commentVersions.set(key, ++mutation);
@@ -893,4 +962,4 @@ async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };
+module.exports = { cachedNews, listNews, bookmarkNews, cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };

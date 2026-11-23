@@ -1,0 +1,12 @@
+{
+  "navigationStyle": "custom",
+  "navigationBarTitleText": "全球新闻",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#FFFFFF",
+  "disableScroll": true,
+  "usingComponents": {
+    "square-post": "/components/square-post/index",
+    "comments-sheet": "/components/comments-sheet/index",
+    "cui-refresh": "/components/cui-refresh/index"
+  }
+}

@@ -28,7 +28,7 @@ const popup = (name, options) => new Promise((resolve, reject) => wx[name]({ ...
 
 Component({
   options: { multipleSlots: true },
-  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean, commentsDisabled: Boolean },
+  properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean, commentsDisabled: Boolean, newsComments: Boolean },
   observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); },
     focusReplyId() { if (this._roots) this.locateReply(); },
     'postId, viewer._id': function (id, account) {
@@ -634,7 +634,7 @@ Component({
       this.setData(values);
     },
     askXiaocui() {
-      if (this.data.sending || this._dead) return;
+      if (this.data.newsComments || this.data.sending || this._dead) return;
       if (!users.getCachedUser()) { this.login(); return; }
       if (!this.data.askAI) this._requestId = token();
       this.setReplyInput(this.data.text, true);

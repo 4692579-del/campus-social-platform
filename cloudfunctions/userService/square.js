@@ -11,6 +11,12 @@ const { createQuoteReader } = require('./square-quotes');
 const { createAccountIdService } = require('./account-id');
 const { commentsDisabled, requireOpenComments } = require('./square-comment-policy');
 const { joinDateFields } = require('./profile-join-date');
+const { isNewsId, newsView } = require('./news-adapter');
+const { NEWS_CODES } = require('./world-news');
+
+const NEWS_ACTIONS = new Set(['getSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren',
+  'setSquareCommentState', 'publishSquareReply', 'deleteSquareReply', 'reportSquareReply', 'reportSquarePost', 'getSquareReplyContext']);
+const tableFor = (id, table) => isNewsId(id) ? table.replace(/^square_/, 'news_').replace('news_posts', 'news_articles') : table;
 
 const SQUARE_ACTIONS = ['getSquareOwnStats', 'listSquarePosts', 'listSquareAlbum', 'getSquarePost', 'publishSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren', 'setSquareCommentState', 'publishSquareReply', 'processSquareAIReply', 'deleteSquarePost', 'reportSquarePost', 'deleteSquareReply', 'reportSquareReply', 'optimizeSquareContent'];
 const REPORT_REASONS = ['spam', 'illegal', 'sexual', 'abuse', 'other'];
@@ -22,6 +28,8 @@ SQUARE_CODES.push('QUOTE_UNAVAILABLE');
 SQUARE_CODES.push('INVALID_MEDIA', 'VIDEO_UPLOAD_UNAVAILABLE', ...Object.keys(VIDEO_ERRORS));
 SQUARE_ACTIONS.push('setSquareProfilePin');
 SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
+SQUARE_ACTIONS.push('listNewsPosts');
+SQUARE_CODES.push(...NEWS_CODES);
 SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
 SQUARE_CODES.push(...searchModule.CODES);
 SQUARE_CODES.push(...followsModule.CODES);
@@ -43,7 +51,7 @@ function requestId(value) {
 }
 function squarePostId(userId, token) { return `p_${hash(`${userId}:square:${token}`).slice(0, 40)}`; }
 function postId(value) {
-  if (typeof value !== 'string' || !/^p_[a-f0-9]{40}$/.test(value)) fail('POST_NOT_FOUND', '动态不存在或已不可见');
+  if (!/^p_[a-f0-9]{40}$/.test(typeof value === 'string' ? value : '') && !isNewsId(value)) fail('POST_NOT_FOUND', '动态不存在或已不可见');
   return value;
 }
 function commentId(value) {
@@ -58,8 +66,9 @@ function author(user) {
     ...(commentsDisabled(user) ? { commentsDisabled: true } : {}) }
     : { nickname: '账号暂不可用', avatarFileID: '', accountId: '', verified: false };
 }
-function visible(post) {
-  if (!post || post.scope !== 'square' || post.status !== 'published') fail('POST_NOT_FOUND', '动态不存在或已不可见');
+function visible(post, id) {
+  const news = isNewsId(id);
+  if (!post || post.scope !== (news ? 'news' : 'square') || post.status !== 'published' || (news && post.contentType !== 'news')) fail('POST_NOT_FOUND', '动态不存在或已不可见');
   return post;
 }
 function imageFiles(value, user, identity, maximum = 9) {
@@ -126,18 +135,19 @@ function createSquareService(db, options = {}) {
     }
     return new Map(await Promise.all(ids.map(async id => [id, await profileReads.get(id)])));
   }
-  async function getPost(id) { return visible((await posts.doc(postId(id)).get()).data); }
+  const postRef = (source, id) => source.collection(tableFor(id, 'square_posts')).doc(id);
+  async function getPost(id) { return visible((await postRef(db, postId(id)).get()).data, id); }
   async function getComment(id, parentId, source = db) {
     commentId(id);
-    const row = (await source.collection(commentTable(id)).doc(id).get()).data;
-    if (!row || row.postId !== parentId || row.status !== 'published') fail('POST_NOT_FOUND', '评论不存在或已不可见');
+    const row = (await source.collection(tableFor(parentId, commentTable(id))).doc(id).get()).data;
+    if (!row || row.postId !== parentId || row.status !== 'published' || (isNewsId(parentId) && row.scope !== 'news')) fail('POST_NOT_FOUND', '评论不存在或已不可见');
     return row;
   }
   async function presentComments(rows, viewer, knownStates) {
     if (!rows.length) return [];
     const ids = [...new Set(rows.flatMap(row => [row.authorId, row.replyToAuthorId].filter(Boolean)))];
     // 使用主键批量读取本人状态，避免为仅个人可见的状态额外配置复合索引。
-    const [profiles, states] = await Promise.all([profilesFor(ids), knownStates ? Promise.resolve(knownStates) : viewer ? db.collection('square_comment_states').where({
+    const [profiles, states] = await Promise.all([profilesFor(ids), knownStates ? Promise.resolve(knownStates) : viewer ? db.collection(tableFor(rows[0].postId, 'square_comment_states')).where({
       _id: db.command.in(rows.map(row => hash(`comment:${viewer._id}:${row._id}`))) }).limit(20).get().then(result => result.data) : Promise.resolve([])]);
     return rows.map(row => {
       const state = states.find(value => value.replyId === row._id);
@@ -158,8 +168,16 @@ function createSquareService(db, options = {}) {
     if (!permitted) fail('CONTENT_REJECTED', '这段内容暂时无法发布，请修改后重试');
   }
   const quoteViews = createQuoteReader(db, profilesFor, DECLARATIONS);
+  async function presentNews(rows, viewer, detail = false) {
+    if (!rows.length) return [];
+    const states = viewer ? (await db.collection('news_interactions').where({ userId: viewer._id,
+      postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get()).data : [];
+    return rows.map(row => ({ ...newsView(row, detail), liked: states.some(state => state.postId === row._id && state.kind === 'like'),
+      bookmarked: states.some(state => state.postId === row._id && state.kind === 'bookmark') }));
+  }
   async function present(rows, viewer, preview = false) {
     if (!rows.length) return [];
+    if (isNewsId(rows[0]._id)) return presentNews(rows, viewer);
     const authorIds = [...new Set(rows.map(row => row.authorId))];
     const [authors, quotes, states, quoted] = await Promise.all([profilesFor(authorIds), quoteViews(rows), viewer ? reactions.where({ userId: viewer._id, postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get().then(result => result.data) : Promise.resolve([]),
       viewer ? posts.aggregate().match({ scope: 'square', status: 'published', authorId: viewer._id,
@@ -189,6 +207,15 @@ function createSquareService(db, options = {}) {
   return async function square(action, event, user, identity) {
     // 仅复用本次可信身份查询的资料，不跨请求缓存认证或账号状态。
     if (user) profileReads.set(user._id, Promise.resolve(author(user)));
+    const targetId = action === 'publishSquareReply' ? event.post?.postId : event.postId;
+    const newsTarget = isNewsId(targetId);
+    if (newsTarget && !NEWS_ACTIONS.has(action)) fail('INVALID_POST', '该操作不适用于全球新闻');
+    if (action === 'listNewsPosts') {
+      if (!options.news) fail('NEWS_KEY_MISSING', '全球新闻尚未配置，请联系管理员');
+      const page = await options.news.list(event);
+      return { items: await presentNews(page.rows, event.personalize === true ? user : null), nextOffset: page.nextOffset,
+        anchor: page.anchor, hasMore: page.hasMore, fetchedAt: page.fetchedAt, stale: Boolean(page.stale), warning: page.warning || '' };
+    }
     if (action === searchModule.ACTION) return search(event, user);
     if (followsModule.ACTIONS.includes(action)) return follows(action, event, user);
     if (action === 'getSquarePublicAccountInfo') {
@@ -263,19 +290,24 @@ function createSquareService(db, options = {}) {
       if (profile) await recheckProfile(profile);
       return { ...profilePin, ...(profile ? { profileAccountId: profile.accountId, postType } : {}), ...(mine ? { mine: true, postType } : {}), ...(count ? { total: count.total } : {}), ...(allCount ? { allTotal: allCount.total } : {}), items: presented, hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
     }
-    if (action === 'getSquarePost') return { post: (await present([await getPost(event.postId)], event.personalize === true ? user : null))[0] };
+    if (action === 'getSquarePost') {
+      const article = await getPost(event.postId);
+      const row = newsTarget && options.news ? visible(await options.news.enrich(article), targetId) : article;
+      const viewer = event.personalize === true ? user : null;
+      return { post: (await (newsTarget ? presentNews([row], viewer, true) : present([row], viewer)))[0] };
+    }
     if (action === 'listSquareReplies' || action === 'listSquareReplyChildren') {
       const id = postId(event.postId), offset = pagination(event);
       const children = action === 'listSquareReplyChildren';
       if (children) commentId(event.rootId);
       const [post, root, result] = await Promise.all([getPost(id), children ? getComment(event.rootId, id) : Promise.resolve(null),
-        db.collection(children ? 'square_reply_children' : 'square_replies').where({ postId: id, status: 'published',
+        db.collection(tableFor(id, children ? 'square_reply_children' : 'square_replies')).where({ postId: id, status: 'published',
           ...(children ? { rootId: event.rootId } : {}) }).orderBy('sortKey', children ? 'asc' : 'desc').skip(offset).limit(21).get()]);
       if (root && root.rootId) fail('INVALID_POST', '回复分组不正确');
       const rows = result.data;
       const [items, authors] = await Promise.all([
         presentComments(rows.slice(0, 20), event.personalize === true ? user : null),
-        children ? null : profilesFor([post.authorId]),
+        children || newsTarget ? null : profilesFor([post.authorId]),
       ]);
       return { items, hasMore: rows.length > 20, nextOffset: offset + items.length,
         ...(authors?.get(post.authorId)?.commentsDisabled ? { commentsDisabled: true } : {}) };
@@ -338,10 +370,10 @@ function createSquareService(db, options = {}) {
       await db.runTransaction(async transaction => {
         // 事务内部按顺序读取；不同 SDK 的事务返回包装也不作为业务依赖。
         active((await transaction.collection('users').doc(user._id).get()).data);
-        visible((await transaction.collection('square_posts').doc(id).get()).data);
+        visible((await postRef(transaction, id).get()).data, id);
         const row = await getComment(target, id, transaction);
         if (row.rootId) await getComment(row.rootId, id, transaction);
-        const ref = transaction.collection('square_comment_states').doc(key);
+        const ref = transaction.collection(tableFor(id, 'square_comment_states')).doc(key);
         const old = (await ref.get()).data;
         const field = kind === 'like' ? 'liked' : 'folded';
         const unfold = kind === 'like' && event.active && Boolean(old && old.folded);
@@ -351,7 +383,7 @@ function createSquareService(db, options = {}) {
         const likeCount = kind === 'like' && changed ? Math.max(0, (row.likeCount || 0) + (event.active ? 1 : -1)) : row.likeCount || 0;
         if (changed || unfold) {
           await ref.set({ data: { ...state, updatedAt: db.serverDate() } });
-          if (kind === 'like' && changed) await transaction.collection(commentTable(target)).doc(target).update({ data: { likeCount } });
+          if (kind === 'like' && changed) await transaction.collection(tableFor(id, commentTable(target))).doc(target).update({ data: { likeCount } });
         }
         committed = { row: { ...row, likeCount }, state };
       });
@@ -363,8 +395,8 @@ function createSquareService(db, options = {}) {
       let committed;
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
-        const postRef = transaction.collection('square_posts').doc(id), post = visible((await postRef.get()).data);
-        const ref = transaction.collection(commentTable(target)).doc(target), row = (await ref.get()).data;
+        const parentRef = postRef(transaction, id), post = visible((await parentRef.get()).data, id);
+        const ref = transaction.collection(tableFor(id, commentTable(target))).doc(target), row = (await ref.get()).data;
         if (!row || row.postId !== id) fail('POST_NOT_FOUND', '评论不存在或已不可见');
         if (row.authorId !== user._id) fail('FORBIDDEN', '只能删除自己的评论');
         const root = row.rootId ? await getComment(row.rootId, id, transaction) : null;
@@ -376,8 +408,8 @@ function createSquareService(db, options = {}) {
           updatedPost = { ...post, replyCount: Math.max(0, (post.replyCount || 0) - removedCount) };
           if (root) updatedRoot = { ...root, replyCount: Math.max(0, (root.replyCount || 0) - 1) };
           await ref.update({ data: { status: 'deleted', deletedAt: db.serverDate() } });
-          await postRef.update({ data: { replyCount: updatedPost.replyCount } });
-          if (root) await transaction.collection('square_replies').doc(root._id).update({ data: { replyCount: updatedRoot.replyCount } });
+          await parentRef.update({ data: { replyCount: updatedPost.replyCount } });
+          if (root) await transaction.collection(tableFor(id, 'square_replies')).doc(root._id).update({ data: { replyCount: updatedRoot.replyCount } });
         }
         committed = { post: updatedPost, root: updatedRoot, rootId: row.rootId || '' };
       });
@@ -391,11 +423,11 @@ function createSquareService(db, options = {}) {
       let alreadyReported = false;
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
-        visible((await transaction.collection('square_posts').doc(id).get()).data);
+        visible((await postRef(transaction, id).get()).data, id);
         const row = await getComment(target, id, transaction);
         if (row.rootId) await getComment(row.rootId, id, transaction);
         if (row.authorId === user._id) fail('FORBIDDEN', '不能举报自己的评论');
-        const ref = transaction.collection('square_reports').doc(reportId);
+        const ref = transaction.collection(tableFor(id, 'square_reports')).doc(reportId);
         if ((await ref.get()).data) { alreadyReported = true; return; }
         await ref.set({ data: { targetType: 'comment', postId: id, replyId: target, rootId: row.rootId || '',
           reporterId: user._id, authorId: row.authorId, reason, status: 'pending', createdAt: db.serverDate(), commentContent: row.content, commentImages: row.images || [] } });
@@ -430,9 +462,9 @@ function createSquareService(db, options = {}) {
       let alreadyReported = false;
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
-        const post = visible((await transaction.collection('square_posts').doc(id).get()).data);
+        const post = visible((await postRef(transaction, id).get()).data, id);
         if (post.authorId === user._id) fail('FORBIDDEN', '不能举报自己的动态');
-        const ref = transaction.collection('square_reports').doc(reportId);
+        const ref = transaction.collection(tableFor(id, 'square_reports')).doc(reportId);
         if ((await ref.get()).data) { alreadyReported = true; return; }
         await ref.set({ data: { postId: id, reporterId: user._id, authorId: post.authorId, reason,
           status: 'pending', createdAt: db.serverDate(), postContent: post.content } });
@@ -447,6 +479,7 @@ function createSquareService(db, options = {}) {
       if (Object.keys(input).some(key => !['content', 'requestId', 'scope', 'images', ...(isReply ? ['postId', 'replyToId', 'askAI'] : ['declaration', 'quotePostId', 'media'])].includes(key))) fail('INVALID_POST', '发布参数不正确，请重新打开发布页');
       if (isReply && input.askAI !== undefined && typeof input.askAI !== 'boolean') fail('INVALID_POST', 'AI 唤起参数不正确');
       const askAI = isReply && input.askAI === true;
+      if (newsTarget && askAI) fail('INVALID_POST', '新闻评论暂不支持问问小萃');
       if (input.scope !== 'square') fail('INVALID_POST', '该发布入口仅支持动态广场');
       const declaration = !isReply && input.declaration !== undefined ? input.declaration : 'none';
       if (!DECLARATIONS.includes(declaration)) fail('INVALID_POST', '请选择有效的内容声明');
@@ -470,7 +503,7 @@ function createSquareService(db, options = {}) {
       const child = isReply && Boolean(input.replyToId);
       const id = isReply ? `${child ? 'c' : 'r'}_${hash(`${user._id}:${parentId}:${token}`).slice(0, 40)}` : squarePostId(user._id, token);
       if (quoteId === id) fail('INVALID_POST', '不能引用本次发布的动态');
-      const collectionName = child ? 'square_reply_children' : isReply ? 'square_replies' : 'square_posts';
+      const collectionName = tableFor(parentId, child ? 'square_reply_children' : isReply ? 'square_replies' : 'square_posts');
       const [parent, target, previous] = await Promise.all([isReply ? getPost(parentId) : Promise.resolve(null),
         child ? getComment(input.replyToId, parentId) : Promise.resolve(null), db.collection(collectionName).doc(id).get()]);
       if (target && (target.ancestorIds || []).length >= 64) fail('INVALID_POST', '回复层级过多，请直接回复这条一级评论');
@@ -481,7 +514,7 @@ function createSquareService(db, options = {}) {
         JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && (
           JSON.stringify(saved.mediaSources || []) !== JSON.stringify(mediaSources) || (saved.declaration || 'none') !== declaration || (saved.quotePostId || '') !== quoteId);
       if (existing && conflicts(existing)) fail('REQUEST_CONFLICT', '相同提交标识的内容或回复对象已变更，请重新提交');
-      if (!existing && parent) await requireOpenComments(db, parent);
+      if (!existing && parent && !newsTarget) await requireOpenComments(db, parent);
       if (!existing) await quoted();
       if (!existing && content) await checked(content, identity);
       let images = existing && existing.images || [];
@@ -520,9 +553,9 @@ function createSquareService(db, options = {}) {
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
         const ref = transaction.collection(collectionName).doc(id);
-        const parentRef = parent && transaction.collection('square_posts').doc(parent._id);
+        const parentRef = parent && postRef(transaction, parent._id);
         const saved = (await ref.get()).data;
-        const latestParent = parentRef ? visible((await parentRef.get()).data) : null;
+        const latestParent = parentRef ? visible((await parentRef.get()).data, parent._id) : null;
         const latestTarget = target ? await getComment(target._id, parent._id, transaction) : null;
         const root = target && (rootId === target._id ? latestTarget : await getComment(rootId, parent._id, transaction));
         const latestQuote = saved ? null : await quoted(transaction);
@@ -530,17 +563,17 @@ function createSquareService(db, options = {}) {
           if (conflicts(saved)) fail('REQUEST_CONFLICT', '本次内容已提交，请勿重复修改请求');
           return;
         }
-        if (latestParent) await requireOpenComments(transaction, latestParent);
-        const aiFields = isReply ? await ai.enqueue(transaction, { _id: id, authorId: user._id, postId: parent._id, content, askAI,
+        if (latestParent && !newsTarget) await requireOpenComments(transaction, latestParent);
+        const aiFields = isReply && !newsTarget ? await ai.enqueue(transaction, { _id: id, authorId: user._id, postId: parent._id, content, askAI,
           ancestorIds: target ? [...(latestTarget.ancestorIds || []), latestTarget._id] : [] }) : {};
-        await ref.set({ data: { scope: 'square', status: 'published', authorId: user._id, content, ...aiFields,
+        await ref.set({ data: { scope: newsTarget ? 'news' : 'square', status: 'published', authorId: user._id, content, ...aiFields,
           createdAt: db.serverDate(), sortKey: `${String(Date.now()).padStart(16, '0')}_${id}`,
           ...(isReply ? { postId: parent._id, likeCount: 0, replyCount: 0, askAI, images, imageSources: sources,
             ...(target ? { rootId, replyToId: target._id, replyToAuthorId: latestTarget.authorId, ancestorIds: [...(latestTarget.ancestorIds || []), latestTarget._id] } : {}) }
             : { likeCount: 0, replyCount: 0, repostCount: 0, quoteCount: 0, quoteVersion: 0, images, imageSources: sources, hasImages: images.length > 0, declaration,
               ...(media.length ? { media, mediaSources } : {}), ...(quoteId ? { quotePostId: quoteId } : {}) }) } });
         if (parentRef) await parentRef.update({ data: { replyCount: (latestParent.replyCount || 0) + 1 } });
-        if (root) await transaction.collection('square_replies').doc(rootId).update({ data: { replyCount: (root.replyCount || 0) + 1 } });
+        if (root) await transaction.collection(tableFor(parentId, 'square_replies')).doc(rootId).update({ data: { replyCount: (root.replyCount || 0) + 1 } });
         if (latestQuote) await transaction.collection('square_posts').doc(quoteId).update({ data: { quoteCount: (latestQuote.quoteCount || 0) + 1, quoteVersion: (latestQuote.quoteVersion || 0) + 1 } });
       });
       if (isReply) {
@@ -554,15 +587,15 @@ function createSquareService(db, options = {}) {
     }
     if (action === 'setSquareReaction') {
       const id = postId(event.postId), kind = event.kind;
-      if (kind !== 'like' || typeof event.active !== 'boolean') fail('INVALID_POST', '当前仅支持点赞互动');
+      if ((kind !== 'like' && !(newsTarget && kind === 'bookmark')) || typeof event.active !== 'boolean') fail('INVALID_POST', '不支持此互动操作');
       const key = hash(`${id}:${user._id}:${kind}`);
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
-        const postRef = transaction.collection('square_posts').doc(id), post = visible((await postRef.get()).data);
-        const stateRef = transaction.collection('square_interactions').doc(key), state = (await stateRef.get()).data;
+        const parentRef = postRef(transaction, id), post = visible((await parentRef.get()).data, id);
+        const stateRef = transaction.collection(tableFor(id, 'square_interactions')).doc(key), state = (await stateRef.get()).data;
         if (Boolean(state && state.active) === event.active) return;
         await stateRef.set({ data: { userId: user._id, postId: id, kind, active: event.active } });
-        await postRef.update({ data: { likeCount: Math.max(0, (post.likeCount || 0) + (event.active ? 1 : -1)) } });
+        if (kind === 'like') await parentRef.update({ data: { likeCount: Math.max(0, (post.likeCount || 0) + (event.active ? 1 : -1)) } });
       });
       return { post: (await present([await getPost(id)], user))[0] };
     }

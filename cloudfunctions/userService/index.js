@@ -6,9 +6,12 @@ const { createDeepseek } = require('./deepseek');
 const { createAIImageResolver, createAICommentImageResolver } = require('./ai-images');
 const { createComposeImageResolver } = require('./ai-compose-images');
 const { createTextChecker } = require('./content-check');
+const { createNewsService } = require('./news-service');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
-const service = createUserService(cloud.database({ throwOnNotFound: false }), {
+const db = cloud.database({ throwOnNotFound: false });
+const service = createUserService(db, {
+  news: createNewsService(db),
   generateAI: createDeepseek(),
   resolveAIImages: createAIImageResolver(cloud),
   resolveAICommentImages: createAICommentImageResolver(cloud),

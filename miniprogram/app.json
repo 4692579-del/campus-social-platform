@@ -6,6 +6,7 @@
     "pages/search/index",
     "pages/search-entry/index",
     "pages/search-results/index",
+    "pages/global-news/index",
     "pages/square-compose/index",
     "pages/square-detail/index",
     "pages/profile/index",

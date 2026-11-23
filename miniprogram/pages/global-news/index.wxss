@@ -1,0 +1,8 @@
+@import "../../styles/square-pages.wxss";
+@import "../../styles/feed-states.wxss";
+
+.news-feed { position:fixed; right:0; bottom:0; left:0; width:100%; }
+.news-feed-bottom { height:calc(32rpx + env(safe-area-inset-bottom)); }
+.news-refresh-logo { position:absolute; right:120rpx; left:120rpx; display:flex; align-items:center; justify-content:center; background:#fff; pointer-events:none; }
+.news-refresh-logo cui-refresh { display:block; width:104rpx; height:54rpx; }
+.news-page .news-more { display:flex; width:max-content; margin:20rpx auto; }

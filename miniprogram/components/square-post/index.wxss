@@ -29,6 +29,8 @@
 .post-more image { display: block; width: 36rpx; height: 36rpx; }
 .post-handle { flex-shrink: 0; color: #87919c; font-size: 23rpx; line-height: 1.6; white-space: nowrap; }
 .post-text { display: block; margin-top: 6rpx; font-size: 29rpx; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.news-post-title { font-weight: 700; }
+.news-post-source { margin-top: 12rpx; color: #4775fa; font-size: 25rpx; line-height: 1.6; }
 .post-text-seven-lines { line-height: 45rpx; }
 .post-text-clip { max-height: 321rpx; overflow: hidden; }
 .expand-post { margin-top: 8rpx; color: #4775fa; font-size: 27rpx; line-height: 1.6; }

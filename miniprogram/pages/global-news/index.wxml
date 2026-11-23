@@ -1,0 +1,34 @@
+<import src="../../templates/login-sheet.wxml" />
+<view class="square-page news-page">
+  <view class="square-nav" style="height:{{navHeight}}px;">
+    <button class="square-back" style="top:{{navTop}}px; height:{{navButtonHeight}}px;" bindtap="back" aria-label="返回"><image src="/images/interface/chevron-left.svg" mode="aspectFit" /></button>
+    <view class="square-nav-title" style="top:{{navTop}}px; line-height:{{navButtonHeight}}px;">全球新闻</view>
+    <view wx:if="{{brandRefreshPhase !== 'idle'}}" class="news-refresh-logo" style="top:{{navTop}}px; height:{{navButtonHeight}}px;">
+      <cui-refresh id="home-cui" bind:ready="onHomeBrandReady" />
+    </view>
+  </view>
+  <scroll-view class="news-feed" style="top:{{navHeight}}px;" scroll-y="{{!commentPostId && !loginSheetOpen}}" enhanced show-scrollbar="{{false}}"
+    refresher-enabled="{{!commentPostId && !loginSheetOpen}}" refresher-triggered="{{nativeRefreshing}}" refresher-threshold="{{refreshThreshold}}"
+    refresher-default-style="none" refresher-background="#FFFFFF" bindrefresherpulling="pullHomeFeed" bindrefresherrefresh="refreshFeed"
+    bindrefresherrestore="restoreHomePull" bindrefresherabort="cancelHomePull" bindtouchend="releaseHomePull" bindtouchcancel="cancelHomePull"
+    bindscrolltolower="loadMoreFeed" lower-threshold="160">
+    <view wx:if="{{feedError}}" class="feed-error"><text>{{feedError}}</text><button size="mini" bindtap="retryFeed">重试</button></view>
+    <view wx:if="{{feedWarning}}" class="square-notice">{{feedWarning}}</view>
+    <block wx:if="{{feedLoading && !posts.length}}">
+      <view wx:for="{{skeletons}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view>
+    </block>
+    <block wx:else>
+      <square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" like-motion="{{true}}"
+        bind:open="openPost" bind:author="viewAuthorProfile" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" />
+      <view wx:if="{{!posts.length && !feedError && !feedHasMore}}" class="feed-empty"><view class="empty-heading">暂时没有新闻</view><view class="empty-caption">下拉刷新看看最新动态</view></view>
+      <view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view>
+      <view wx:elif="{{posts.length && !feedHasMore && !feedError}}" class="feed-end">已经看到这里了</view>
+      <button wx:elif="{{feedHasMore && !feedError}}" size="mini" class="news-more retry-link" bindtap="loadMoreFeed">加载更多</button>
+    </block>
+    <view class="news-feed-bottom" aria-hidden="true"></view>
+    <view slot="refresher" style="height:{{refreshThreshold}}px;" aria-hidden="true"></view>
+  </scroll-view>
+  <template is="login-sheet" data="{{loginSheetOpen, loading:loginLoading, error:loginError, cancelText:'暂不登录'}}" />
+  <comments-sheet id="active-comments" wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" news-comments
+    bind:author="viewAuthorProfile" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
+</view>

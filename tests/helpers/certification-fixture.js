@@ -7,7 +7,7 @@ const application = (extra = {}) => ({ schoolName: '测试大学', realName: '�
   proofBase64, requestId: 'test-request-00000001', ...extra });
 
 function fixture(options = {}) {
-  const tables = new Map(['user_follows', 'users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states', 'square_ai_jobs'].map(name => [name, new Map()]));
+  const tables = new Map(['user_follows', 'users', 'account_ids', 'certification_applications', 'certification_reviews', 'square_posts', 'square_replies', 'square_interactions', 'square_reports', 'square_reply_children', 'square_comment_states', 'square_ai_jobs', ...(options.tables || [])].map(name => [name, new Map()]));
   const uploads = [], proofRequests = [], queries = [], docReads = [];
   const hooks = { beforeTransaction: options.beforeTransaction };
   let tail = Promise.resolve(), transactionReads = 0;
@@ -138,6 +138,7 @@ function fixture(options = {}) {
     },
   };
   const handle = createUserService(db, {
+    news: options.news && options.news(db),
     generateAI: options.generateAI, resolveAIImages: options.resolveAIImages, resolveAICommentImages: options.resolveAICommentImages, resolveComposeImages: options.resolveComposeImages, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
     checkText: options.checkText || (async () => true),
     processSquareImages: options.processSquareImages,

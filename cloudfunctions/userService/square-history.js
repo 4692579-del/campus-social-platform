@@ -9,10 +9,10 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
     }
     return result;
   }
-  async function commentsById(ids) {
+  async function commentsById(ids, prefix = 'square') {
     const [roots, children] = await Promise.all([
-      readIds('square_replies', ids.filter(id => id.startsWith('r_'))),
-      readIds('square_reply_children', ids.filter(id => id.startsWith('c_'))),
+      readIds(`${prefix}_replies`, ids.filter(id => id.startsWith('r_'))),
+      readIds(`${prefix}_reply_children`, ids.filter(id => id.startsWith('c_'))),
     ]);
     return new Map([...roots, ...children]);
   }
@@ -61,23 +61,25 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
       return { ...(profileAuthorId ? { profileAccountId: event.profileAccountId } : {}), items, hasMore: all.length > 20, nextCursor: page.length ? page[page.length - 1].sortKey : cursor };
     }
     const id = postId(event.postId), targetId = commentId(event.replyId);
-    await getPost(id);
+    const post = await getPost(id);
+    const prefix = post.scope;
+    const publishedComment = row => row?.status === 'published' && row.scope === prefix;
     const target = await getComment(targetId, id), root = target.rootId ? await getComment(target.rootId, id) : target;
-    if (!published(root) || !published(target)) fail('POST_NOT_FOUND', '评论不存在或已不可见');
+    if (!publishedComment(root) || !publishedComment(target)) fail('POST_NOT_FOUND', '评论不存在或已不可见');
     if (root.rootId) fail('POST_NOT_FOUND', '评论不存在或已不可见');
-    const ancestors = await commentsById(target.ancestorIds || []);
-    const contextViews = await views([root, target, ...[...ancestors.values()].filter(row => published(row) && row.postId === id)], user);
+    const ancestors = await commentsById(target.ancestorIds || [], prefix);
+    const contextViews = await views([root, target, ...[...ancestors.values()].filter(row => publishedComment(row) && row.postId === id)], user);
     const blocked = [...(target.ancestorIds || []), root._id].find(key => key !== targetId && contextViews.get(key)?.folded);
     if (blocked) return { root: contextViews.get(root._id), targetId: blocked,
       items: blocked === root._id ? [] : [contextViews.get(blocked)], startOffset: 0, nextOffset: 0, hasMore: true, blocked: true };
     if (!target.rootId) return { root: contextViews.get(root._id), targetId, items: [], startOffset: 0, nextOffset: 0, hasMore: false };
-    const table = db.collection('square_reply_children'), condition = { postId: id, rootId: root._id, status: 'published' };
+    const table = db.collection(`${prefix}_reply_children`), condition = { postId: id, rootId: root._id, status: 'published' };
     const before = await table.where({ ...condition, sortKey: db.command.lt(target.sortKey) }).count();
     const startOffset = Math.floor(before.total / 20) * 20;
     const rows = (await table.where(condition).orderBy('sortKey', 'asc').skip(startOffset).limit(21).get()).data;
-    const window = rows.slice(0, 20).filter(published);
-    const windowAncestors = await commentsById(window.flatMap(row => row.ancestorIds || []));
-    const ancestorViews = await views([...windowAncestors.values()].filter(row => published(row) && row.postId === id), user);
+    const window = rows.slice(0, 20).filter(publishedComment);
+    const windowAncestors = await commentsById(window.flatMap(row => row.ancestorIds || []), prefix);
+    const ancestorViews = await views([...windowAncestors.values()].filter(row => publishedComment(row) && row.postId === id), user);
     const presented = await views(window, user);
     for (const row of window) if ((row.ancestorIds || []).some(key => ancestorViews.get(key)?.folded))
       presented.set(row._id, { ...presented.get(row._id), content: '', images: [], folded: true, hiddenByAncestor: true });

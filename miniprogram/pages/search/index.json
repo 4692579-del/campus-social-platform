@@ -7,6 +7,7 @@
   "disableScroll": true,
   "usingComponents": {
     "search-box": "/components/search-box/index",
-    "cui-refresh": "/components/cui-refresh/index"
+    "cui-refresh": "/components/cui-refresh/index",
+    "orbit-stars": "/components/orbit-stars/index"
   }
 }

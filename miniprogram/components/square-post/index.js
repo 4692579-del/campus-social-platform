@@ -300,6 +300,10 @@ Component({
       this.triggerEvent('reply', { id: post._id });
     },
     quote() { this.triggerEvent('quote', { id: this.data.post._id }); },
+    copyNewsSource() {
+      const post = this.data.post;
+      if (post.contentType === 'news' && /^https?:\/\//i.test(post.sourceUrl || '')) wx.setClipboardData({ data: post.sourceUrl });
+    },
     like() {
       if (this._unloaded || this._pageHidden) return;
       this._likeIntent = this.data.likeMotion && this.data.viewer ? { id: this.data.post._id, from: Boolean(this.data.post.liked), expires: Date.now() + 750 } : null;

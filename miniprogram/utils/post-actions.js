@@ -37,6 +37,7 @@ function syncCommentsTabBar(page) {
 }
 function sync(page, id, removed = false) {
   const latest = removed ? null : square.cachedPost(id), values = {};
+  if (latest?.contentType === 'news') { paintLike(page, id, latest); return; }
   for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(page.data[key])) {
     const found = page.data[key].some(post => post._id === id);
     values[key] = removed ? page.data[key].filter(post => post._id !== id) : page.data[key].map(post => post._id === id && latest ? postPreview(latest) : post);
@@ -62,6 +63,9 @@ function paintLike(page, id, post) {
     const row = page.data[key][index];
     if (Boolean(row.liked) !== liked) values[`${key}[${index}].liked`] = liked;
     if ((Number(row.likeCount) || 0) !== count) values[`${key}[${index}].likeCount`] = count;
+    if (post.contentType === 'news') {
+      if (Number.isSafeInteger(post.replyCount) && row.replyCount !== post.replyCount) values[`${key}[${index}].replyCount`] = post.replyCount;
+    }
     if (Number.isSafeInteger(post.quoteCount) && row.quoteCount !== post.quoteCount) values[`${key}[${index}].quoteCount`] = post.quoteCount;
     if (typeof post.quoted === 'boolean' && row.quoted !== post.quoted) values[`${key}[${index}].quoted`] = post.quoted;
     if (post.quote && JSON.stringify(row.quote) !== JSON.stringify(post.quote)) values[`${key}[${index}].quote`] = post.quote;
@@ -229,7 +233,7 @@ module.exports = {
   openPost(event) {
     if (this._openingPost || this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
     const id = event.detail.id;
-    if (!/^p_[a-f0-9]{40}$/.test(id || '')) return;
+    if (!/^[pn]_[a-f0-9]{40}$/.test(id || '')) return;
     this._openingPost = true;
     wx.navigateTo({ url: `/pages/square-detail/index?id=${encodeURIComponent(id)}`, fail: () => {
       this._openingPost = false;

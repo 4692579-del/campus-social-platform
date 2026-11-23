@@ -10,7 +10,7 @@ Page({
   data: {
     unfollowTarget: null, unfollowClosing: false, unfollowBusy: false,
     followByAccount: {}, followKnown: false, profileFollowing: false, followBusy: false, followError: '',
-    user: null, postId: '', posts: [], commentMounts: [], focusReplyId: '', loading: false, error: '', unavailable: false, composerOpen: false,
+    user: null, postId: '', isNews: false, posts: [], commentMounts: [], focusReplyId: '', loading: false, error: '', unavailable: false, composerOpen: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72,
     loginSheetOpen: false, loginLoading: false, loginError: '',
   },
@@ -18,11 +18,11 @@ Page({
     nav(this);
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
     this._returnPage = pages[pages.length - 2];
-    if (!/^p_[a-f0-9]{40}$/.test(options.id || '')) {
+    if (!/^[pn]_[a-f0-9]{40}$/.test(options.id || '')) {
       this.setData({ unavailable: true });
       return;
     }
-    this.setData({ postId: options.id, focusReplyId: /^[rc]_[a-f0-9]{40}$/.test(options.replyId || '') ? options.replyId : '' });
+    this.setData({ postId: options.id, isNews: options.id.startsWith('n_'), focusReplyId: /^[rc]_[a-f0-9]{40}$/.test(options.replyId || '') ? options.replyId : '' });
     this.syncViewer();
   },
   onShow() {
@@ -114,7 +114,7 @@ Page({
     if (this._returning) return;
     this._returning = true;
     this.prepareReturn();
-    const leave = () => wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/index', fail: () => { this._returning = false; } }) });
+    const leave = () => wx.navigateBack({ fail: () => wx.switchTab({ url: this.data.isNews ? '/pages/search/index' : '/pages/home/index', fail: () => { this._returning = false; } }) });
     if (typeof wx.nextTick === 'function') wx.nextTick(leave);
     else leave();
   },

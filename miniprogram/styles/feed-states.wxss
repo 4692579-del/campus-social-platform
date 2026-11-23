@@ -1,0 +1,13 @@
+.feed-empty { padding: 110rpx 40rpx; text-align: center; }
+.empty-heading { font-size: 36rpx; font-weight: 700; color: #171b20; }
+.empty-caption { margin-top: 18rpx; font-size: 27rpx; line-height: 1.7; color: #98a1ad; }
+.feed-error { display: flex; align-items: center; gap: 20rpx; margin: 24rpx; padding: 20rpx; border-radius: 16rpx; background: #fff4f1; color: #a44130; font-size: 25rpx; }
+.feed-error text { flex: 1; }
+.feed-error button { flex-shrink: 0; margin: 0; padding: 0 8rpx; background: transparent; color: #4775fa; font-size: 25rpx; line-height: 1.8; }
+.feed-end { padding: 32rpx; text-align: center; color: #a5adb7; font-size: 24rpx; }
+.feed-skeleton { display: flex; gap: 20rpx; padding: 30rpx 28rpx; border-bottom: 1rpx solid #edf0f3; }
+.skeleton-avatar { width: 76rpx; height: 76rpx; border-radius: 50%; background: #f1f3f5; }
+.skeleton-body { flex: 1; }
+.skeleton-body view { height: 22rpx; margin: 8rpx 0 22rpx; border-radius: 8rpx; background: #f1f3f5; }
+.skeleton-body view:first-child { width: 45%; }
+.skeleton-body view:last-child { width: 75%; }

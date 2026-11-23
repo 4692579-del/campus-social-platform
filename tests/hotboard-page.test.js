@@ -27,10 +27,28 @@ function pageFixture(read, api = {}, pendingIndex = () => null, account = {}){
     Page:value=>{definition=value;},require:name=>name === './refresh' ? refresh : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('services/square') ? account.square || {} : name.includes('services/hotboard')?hot:name.includes('services/user')?{getCachedUser:()=>null,restore:async()=>null,searchSessionKey:()=> 'viewer:0',consumeSearchEntry:()=>null,...account.users}:name.includes('tab-selection')?{pendingIndex}:name.includes('search-query')?queryTools:()=>base,
     wx:{hideKeyboard(){},navigateTo:value=>routes.push(value.url),showToast(){},...api},
   });
-  const page={...definition,data:structuredClone(definition.data),setData(value){Object.assign(this.data,value);}};page.onLoad();
+  const page={...definition,data:structuredClone(definition.data),setData(value, done){Object.assign(this.data,value);done?.();}};page.onLoad();
   const openHotboard = () => page.selectBoardTab({currentTarget:{dataset:{index:1}}});
   return {page,cache,calls,routes,openHotboard,options};
 }
+
+test('探索标签的全球热点横幅位于榜单前，探索按钮只导航一次到独立新闻页', async () => {
+  const f = pageFixture();
+  f.page.onShow();
+  f.page.exploreHotList();
+  assert.equal(f.routes.length, 0);
+  f.openHotboard();
+  await flush();
+  const rows = f.page.data.hotRows;
+  const requests = f.calls.length;
+  f.page.exploreHotList();
+  f.page.exploreHotList();
+  assert.deepEqual(f.routes, ['/pages/global-news/index']);
+  assert.equal(f.page.data.hotRows, rows);
+  assert.equal(f.calls.length, requests);
+  const markup = fs.readFileSync('miniprogram/pages/search/index.wxml', 'utf8');
+  assert.match(markup, /class="global-trends-banner [^"]+"[\s\S]*?全球热点[\s\S]*?最受欢迎的动态[\s\S]*?catchtap="exploreHotList"[\s\S]*?wx:for="{{hotRows}}"/);
+});
 
 test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在字标回蓝后收起缺口', async () => {
   let now = 0, complete, deferred = false;
@@ -51,21 +69,33 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   };
   const f = pageFixture(type => deferred ? new Promise(resolve => { complete = resolve; }) : makeBoard(type, 30),
     {}, () => null, { refresh: context.module.exports });
+  const frames = [];
+  f.page.selectComponent = () => ({ setState: state => frames.push(state.phase) });
   f.page.onShow(); f.openHotboard(); await flush();
   f.page.showMoreHotwords();
   const previous = f.page.data.hotRows;
   f.page.beginSearchPull();
-  f.page.pullSearch({ detail: { dy: 36 } });
-  assert.equal(f.page._searchBrand.progress, 0.5);
-  assert.equal(f.page.data.searchRefreshVisible, false);
+  f.page.pullSearch({ detail: { dy: 66 } });
+  assert.equal(f.page.data.searchRefreshVisible, true);
   f.page.releaseSearchPull();
   assert.equal(f.page.data.searchRefreshPhase, 'idle');
+  f.page.pullSearch({ detail: { dy: 70 } });
+  f.page.onSearchBrandReady();
+  assert.equal(f.page.data.searchRefreshVisible, false);
+  assert.deepEqual(frames, ['pulling']);
   assert.deepEqual(f.calls, ['toutiao', 'weibo']);
+
+  f.page.beginSearchPull();
+  f.page.pullSearch({ detail: { dy: 72 } });
+  f.page.releaseSearchPull();
+  runTimer(300);
+  assert.equal(f.page.data.searchRefreshVisible, false);
+
   deferred = true;
   f.page.beginSearchPull();
   f.page.pullSearch({ detail: { dy: 72 } });
   assert.equal(f.page.data.searchRefreshVisible, true);
-  f.page.releaseSearchPull();
+  f.page.deferSearchPullCancel();
   const refresh = f.page.refreshSearch();
   assert.equal(f.page.refreshSearch(), refresh);
   assert.equal(f.options.at(-1).force, true);
@@ -82,6 +112,7 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   runTimer(600);
   assert.equal(f.page.data.searchRefreshing, false);
   assert.equal(f.page.data.searchRefreshVisible, false);
+  assert.equal(frames.at(-1), 'refill');
   f.page.pullSearch({ detail: { dy: 72 } });
   assert.equal(f.page.refreshSearch(), undefined);
   assert.equal(f.page.data.searchRefreshVisible, false);
@@ -100,11 +131,11 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   const logo = markup.indexOf('id="search-cui"');
   const scroll = markup.indexOf('<scroll-view class="search-discovery"');
   assert.ok(logo >= 0 && logo < scroll);
-  assert.match(markup, /search-refresh-anchor {{searchRefreshVisible \? 'is-visible'/);
+  assert.match(markup, /wx:if="{{searchRefreshVisible}}" class="search-refresh-anchor"/);
 });
 test('热榜完整展示原排名，预填和平台切换复用缓存',async()=>{
   const f=pageFixture();f.cache.set('weibo',makeBoard('weibo',12));f.page.onShow();
-  assert.deepEqual([...f.page.data.boardTabs],['Cui热榜','全网热榜','校园热榜']);
+  assert.deepEqual([...f.page.data.boardTabs],['Cui热榜','探索','校园热榜']);
   assert.equal(f.page.data.boardIndex,0);assert.deepEqual(f.calls,['toutiao']);
   f.openHotboard();assert.equal(f.page.data.hotRows[0].rank,11);
   assert.equal(f.page.data.hotRows.length,12);assert.equal(f.page.data.hotHasMore,false);
@@ -191,7 +222,7 @@ test('Cui 热榜在宣传片下读取今日头条缓存和真实排名，点击�
   f.page.searchHotword({currentTarget:{dataset:{rank:12}}});
   assert.equal(queryTools.fromOptions({query:f.routes[0].split('?query=')[1]}).keyword,'仅用于自动测试的词条1');
   const markup=fs.readFileSync('miniprogram/pages/search/index.wxml','utf8');
-  assert.ok(markup.indexOf('class="cui-hotboard"') > markup.indexOf('</video>'));
+  assert.ok(markup.indexOf('class="cui-hotboard"') > markup.indexOf('id="cui-promo"'));
   assert.doesNotMatch(markup,/今日头条热搜/);
 });
 
@@ -227,16 +258,18 @@ test('从底栏进入搜索时显示并播放宣传片，切走时暂停并复�
   assert.deepEqual(playback.at(-1), ['pause', 'cui-promo']);
 
   const markup = fs.readFileSync('miniprogram/pages/search/index.wxml', 'utf8');
-  const video = markup.match(/<video\b[\s\S]*?<\/video>/)[0];
+  const promo = markup.match(/<view class="cui-promo-frame">\s*<block wx:if="{{cuiPromoSrc}}">([\s\S]*?)<\/block>/)[1];
+  const video = promo.match(/<video\b[\s\S]*?\/>/)[0];
   assert.match(video, /autoplay="{{searchActive && boardIndex === 0 && !menuOpen && !loginSheetOpen && !authChecking}}"/);
   assert.match(video, /loop="{{true}}"/);
   assert.match(video, /muted="{{cuiPromoMuted}}"/);
-  assert.match(video, /<cover-view class="cui-promo-sound" catchtap="toggleCuiPromoSound"/);
   for (const attribute of ['controls', 'show-play-btn', 'show-center-play-btn', 'show-fullscreen-btn', 'play-gesture', 'enable-progress-gesture']) {
     assert.ok(video.includes(`${attribute}="{{false}}"`));
   }
-  assert.match(video, /<cover-view class="cui-promo-credit">由「Cui · 萃」官方推荐<\/cover-view>/);
-  assert.match(video, /<cover-view class="cui-promo-link" catchtap="openCuiPromoPost"/);
+  assert.doesNotMatch(promo, /<cover-(view|image)\b/);
+  assert.match(promo, /\/>\s*<view class="cui-promo-link" catchtap="openCuiPromoPost"/);
+  assert.match(promo, /<text class="cui-promo-credit">由「Cui · 萃」官方推荐<\/text>/);
+  assert.match(promo, /<\/view>\s*<view class="cui-promo-sound" catchtap="toggleCuiPromoSound"/);
   f.page.onShow();
   f.page.openCuiPromoPost();
   f.page.openCuiPromoPost();
