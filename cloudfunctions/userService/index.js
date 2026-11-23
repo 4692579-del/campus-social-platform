@@ -17,6 +17,7 @@ const service = createUserService(db, {
   resolveAICommentImages: createAICommentImageResolver(cloud),
   resolveComposeImages: createComposeImageResolver(cloud),
   optimizeAI: createDeepseek({ purpose: 'polish' }),
+  translateAI: createDeepseek({ purpose: 'translate', timeoutMs: 40000 }),
   processSquareImages: createSquareImageProcessor(cloud),
   processSquareVideo: createSquareVideoProcessor(cloud),
   checkText: createTextChecker({ getEnv: () => process.env,

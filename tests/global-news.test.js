@@ -7,6 +7,7 @@ const { fixture } = require('./helpers/certification-fixture');
 const { loadPostActions, applyPageData } = require('./helpers/post-actions-fixture');
 const { createNewsService, TTL } = require('../cloudfunctions/userService/news-service');
 const { createWorldNewsClient, newsError } = require('../cloudfunctions/userService/world-news');
+const { articleOf, newsView } = require('../cloudfunctions/userService/news-adapter');
 
 const tables = ['news_articles', 'news_cache', 'news_interactions', 'news_replies', 'news_reply_children', 'news_comment_states', 'news_reports'];
 function upstreamArticle(id, fields = {}) {
@@ -15,6 +16,56 @@ function upstreamArticle(id, fields = {}) {
     summary: 'Short summary.', image: 'https://images.example.com/cover.jpg', authors: ['Test author'],
     category: 'science', language: 'en', source_country: 'au', ...fields };
 }
+
+test('小萃按可见新闻原文翻译标题和分段正文，合并并发任务，跨账号读取已有译文时不再生成或扣额', async () => {
+  let finish, started, calls = 0;
+  const ready = new Promise(resolve => { started = resolve; });
+  const checked = [];
+  const f = fixture({ tables, async translateAI(input) {
+    calls++;
+    assert.deepEqual(input, { title: 'A & B', lines: ['First.', 'Second.'] });
+    return new Promise(resolve => { finish = resolve; started(); });
+  }, checkText: async text => { checked.push(text); return true; } });
+  f.hooks.serialTransactionReads = true;
+  await f.login(); await f.login(f.bob);
+  const { _id: id, ...row } = articleOf(upstreamArticle(8, { title: 'A &amp; B', text: 'First.\n\nSecond.' }));
+  const article = f.db.collection('news_articles').doc(id);
+  await article.set({ data: row });
+  const version = newsView({ _id: id, ...row }, true).translationVersion;
+  const request = (who = f.alice, key = version) => f.handle({ action: 'translateNews', postId: id, version: key, title: 'untrusted input' }, who);
+  assert.equal((await request({ openid: 'guest' })).code, 'NOT_REGISTERED');
+  assert.equal((await request(f.alice, 'a'.repeat(40))).code, 'NEWS_TRANSLATION_CHANGED');
+  const first = request(); await ready;
+  assert.equal((await request(f.bob)).code, 'NEWS_TRANSLATION_BUSY');
+  finish(JSON.stringify({ title: '甲和乙', lines: ['第一段。', '第二段。'] }));
+  const translation = { version, title: '甲和乙', content: '第一段。\n\n第二段。' };
+  assert.deepEqual((await first).square.translation, translation);
+  assert.deepEqual((await request(f.bob)).square.translation, translation);
+  assert.equal(calls, 1);
+  assert.deepEqual(checked, ['甲和乙\n第一段。\n\n第二段。']);
+  assert.equal((await article.get()).data.content, 'First.\n\nSecond.');
+  assert.deepEqual([...f.aiJobs.values()].map(row => row.usedChars), [13, 13]);
+});
+
+test('译文缺段、审核拒绝与原文更新均不缓存、不扣额，释放租约后可重试', async () => {
+  let mode = 'incomplete';
+  const { _id: id, ...row } = articleOf(upstreamArticle(9, { title: 'News', text: 'First.\n\nSecond.' }));
+  const f = fixture({ tables, async translateAI() {
+    if (mode === 'changed') await article.update({ data: { title: 'Updated' } });
+    return JSON.stringify({ title: '新闻', lines: mode === 'incomplete' ? ['第一段。'] : ['第一段。', '第二段。'] });
+  }, checkText: async () => mode !== 'blocked' });
+  const article = f.db.collection('news_articles').doc(id);
+  await article.set({ data: row });
+  await f.login();
+  const version = newsView({ _id: id, ...row }, true).translationVersion;
+  const request = () => f.handle({ action: 'translateNews', postId: id, version }, f.alice);
+  assert.equal((await request()).code, 'NEWS_TRANSLATION_FAILED');
+  mode = 'blocked'; assert.equal((await request()).code, 'CONTENT_REJECTED');
+  mode = 'changed'; assert.equal((await request()).code, 'NEWS_TRANSLATION_CHANGED');
+  assert.ok([...f.aiJobs.values()].every(job => job.usedChars === 0 && !Object.keys(job.reservations).length));
+  await article.update({ data: { title: row.title } });
+  mode = 'success'; assert.equal((await request()).square.translation.content, '第一段。\n\n第二段。');
+});
 
 test('全球新闻使用真实接口形状、固定分页时间窗和共享缓存；额度用完回退到旧榜单', async () => {
   let now = Date.parse('2026-11-23T02:00:00Z'), quota = false;
@@ -30,7 +81,7 @@ test('全球新闻使用真实接口形状、固定分页时间窗和共享缓�
   const initial = (await list()).square;
   assert.equal(initial.items.length, 9);
   assert.equal(initial.items[0].contentType, 'news');
-  assert.equal(initial.items[0].content, 'Short summary.');
+  assert.equal(initial.items[0].content, upstreamArticle(1).text);
   assert.equal(initial.items[0].fullContent, undefined);
   assert.equal(initial.items[0].author.nickname, 'publisher.example.com');
   assert.equal(initial.items[0].author.accountId, '');
@@ -58,16 +109,17 @@ test('全球新闻使用真实接口形状、固定分页时间窗和共享缓�
   assert.equal(f.squarePosts.size, 0);
 });
 
-test('新闻详情按需取多图并保留完整正文；点赞、收藏和分层评论走独立集合', async () => {
+test('新闻详情按需取多图并保留完整正文；关闭动态点赞和新评论，保留旧评论与收藏隔离', async () => {
   let now = Date.parse('2026-11-23T02:00:00Z');
-  const raw = upstreamArticle(1);
+  const raw = upstreamArticle(1, { text: 'First paragraph.&#13;&#13;Second &amp; third.' });
+  const originals = Array.from({ length: 12 }, (_, i) => ({ url: `https://images.example.com/article-${i}.jpg` }));
   const paths = [];
   const f = fixture({ tables, news: db => createNewsService(db, { now: () => now, async request(path, params) {
     paths.push(path);
     if (path === 'search-news') return { news: [raw], available: 1 };
     assert.equal(path, 'extract-news');
     assert.equal(params.url, raw.url);
-    return { text: 'Alternative article text.', images: [{ url: raw.image }, { url: 'https://images.example.com/more.jpg' },
+    return { text: 'Alternative article text.', images: [{ url: raw.image }, ...originals,
       { url: 'https://images.example.com/pixel.png', width: 1, height: 1 }, { url: 'http://127.0.0.1/a.png' }] };
   } }) });
   await f.login(); await f.login(f.bob);
@@ -75,21 +127,42 @@ test('新闻详情按需取多图并保留完整正文；点赞、收藏和分�
   const { _id: id } = (await call('listNewsPosts')).square.items[0];
   now += 1000;
   const detail = (await call('getSquarePost', { postId: id, url: 'https://wrong.example.com' })).square.post;
-  assert.equal(detail.content, raw.text);
+  assert.equal(detail.content, 'First paragraph.\n\nSecond & third.');
   assert.equal(detail.sourceUrl, raw.url);
-  assert.equal(detail.images.length, 2);
-  assert.equal((await call('getSquarePost', { postId: id })).square.post.images.length, 2);
+  assert.deepEqual(detail.images, [raw.image, ...originals.map(image => image.url)]);
+  const refreshed = (await call('listNewsPosts')).square.items[0];
+  assert.equal(refreshed.content, detail.content);
+  assert.deepEqual(refreshed.images, detail.images);
+  assert.deepEqual((await call('getSquarePost', { postId: id })).square.post.images, detail.images);
   assert.deepEqual(paths, ['search-news', 'extract-news']);
   const reaction = (kind, active, who) => call('setSquareReaction', { postId: id, kind, active }, who);
-  assert.equal((await reaction('like', true)).square.post.likeCount, 1);
-  assert.equal((await reaction('like', true)).square.post.likeCount, 1);
+  for (const active of [true, false]) {
+    const result = await reaction('like', active);
+    assert.equal(result.code, 'NEWS_LIKES_DISABLED');
+    assert.equal(result.message, '全球动态暂不支持点赞');
+  }
+  assert.equal((await call('getSquarePost', { postId: id })).square.post.likeCount, 0);
   assert.equal((await reaction('bookmark', true)).square.post.bookmarked, true);
   assert.equal((await call('getSquarePost', { postId: id }, f.bob)).square.post.bookmarked, false);
   assert.equal((await reaction('bookmark', false)).square.post.bookmarked, false);
   const reply = (text, requestId, replyToId, who, askAI) => call('publishSquareReply', { post: { postId: id, scope: 'square',
     content: text, requestId, ...(replyToId ? { replyToId } : {}), ...(askAI ? { askAI } : {}) } }, who);
-  const root = (await reply('新闻评论', 'news-root-test-0001')).square.reply;
-  const nested = (await reply('新闻楼中楼', 'news-child-test-001', root._id, f.bob)).square.reply;
+  const alice = (await f.login())._id, bob = (await f.login(f.bob))._id;
+  const root = { _id: 'r_' + 'a'.repeat(40) }, nested = { _id: 'c_' + 'b'.repeat(40) };
+  await f.db.collection('news_replies').doc(root._id).set({ data: { postId: id, scope: 'news', status: 'published', authorId: alice,
+    content: '已有新闻评论', sortKey: '01', replyCount: 1 } });
+  await f.db.collection('news_reply_children').doc(nested._id).set({ data: { postId: id, scope: 'news', status: 'published', authorId: bob,
+    content: '已有楼中回复', sortKey: '02', rootId: root._id, replyToId: root._id, replyToAuthorId: alice, ancestorIds: [root._id] } });
+  await f.db.collection('news_articles').doc(id).update({ data: { replyCount: 2 } });
+  const roots = (await call('listSquareReplies', { postId: id })).square;
+  assert.equal(roots.commentsDisabled, true);
+  assert.equal(roots.items[0]._id, root._id);
+  for (const [key, target] of [['news-root-test-0001', ''], ['news-child-test-001', root._id]]) {
+    const result = await reply('关闭后的新留言', key, target);
+    assert.equal(result.code, 'COMMENTS_DISABLED');
+    assert.equal(result.message, '全球动态暂不支持评论');
+  }
+  assert.equal((await call('getSquarePost', { postId: id })).square.post.replyCount, 2);
   assert.equal((await call('getSquareReplyContext', { postId: id, replyId: nested._id }, f.bob)).square.targetId, nested._id);
   assert.equal((await call('setSquareCommentState', { postId: id, replyId: nested._id, kind: 'like', active: true })).square.reply.likeCount, 1);
   assert.equal((await call('listSquareReplyChildren', { postId: id, rootId: root._id })).square.items.length, 1);

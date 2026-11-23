@@ -8,6 +8,7 @@
   "enablePullDownRefresh": false,
   "disableScroll": true,
   "usingComponents": {
+    "membership-sheet": "/components/membership-sheet/index",
     "cui-refresh": "/components/cui-refresh/index",
     "square-post": "/components/square-post/index",
     "comments-sheet": "/components/comments-sheet/index",

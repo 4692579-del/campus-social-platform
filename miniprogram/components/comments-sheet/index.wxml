@@ -1,9 +1,10 @@
 <import src="../../templates/xiaocui-icon.wxml" />
+<import src="../../templates/emoji-picker.wxml" />
 <template name="comment">
   <view id="comment-{{row._id}}" class="comment-row {{row.motionLikeClass}} {{row.motionFoldClass}} {{row.folded ? 'is-personally-folded' : ''}} {{child ? 'is-child' : ''}} {{row.highlighted ? 'is-located' : ''}}" data-id="{{row._id}}" bindtap="{{history ? 'openComment' : 'selectReply'}}">
     <image data-id="{{row._id}}" catchtap="viewCommentAuthor" class="comment-avatar avatar-outline {{row.author.isAI ? 'is-ai' : ''}}" src="{{row.author.isAI ? '/images/ai/xiaocui.jpg' : (row.author.avatarFileID || '/images/avatar.png')}}" mode="aspectFill" />
     <view class="comment-main">
-      <view class="comment-heading"><text>{{row.author.nickname}}</text><text wx:if="{{row.author.isAI}}" class="comment-ai-badge">AI</text><image wx:if="{{row.author.verified || row.author.officialVerified}}" class="comment-badge" src="/images/verification/verified.png" /><text wx:if="{{row.addressed}}" class="comment-address">回复 {{row.replyToName}}</text><button wx:if="{{!row.pending && !historyReadOnly}}" class="comment-more" data-id="{{row._id}}" catchtap="manageComment" aria-label="评论更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view>
+      <view class="comment-heading"><text>{{row.author.nickname}}</text><text wx:if="{{row.author.isAI}}" class="comment-ai-badge">AI</text><image wx:if="{{row.author.verified || row.author.officialVerified}}" class="comment-badge {{row.author.officialVerified ? '' : 'is-student'}}" src="/images/verification/{{row.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{row.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text wx:if="{{row.addressed}}" class="comment-address">回复 {{row.replyToName}}</text><button wx:if="{{!row.pending && !historyReadOnly}}" class="comment-more" data-id="{{row._id}}" catchtap="manageComment" aria-label="评论更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view>
       <view class="comment-content-grid {{row.folded ? 'is-folded' : ''}}" aria-hidden="{{row.folded}}"><view class="comment-content-inner">
         <text wx:if="{{row.content}}" class="comment-text">{{row.content}}</text>
         <view wx:if="{{row.images.length}}" class="comment-image-grid">
@@ -36,15 +37,15 @@
         <view wx:if="{{error}}" class="comments-error">{{error}}<button bindtap="retry">重试</button></view>
         <view wx:if="{{locateError}}" class="comments-error">{{locateError}}<button bindtap="retryLocate">重新定位</button></view>
         <view wx:if="{{loading}}" class="comments-status">正在读取评论…</view>
-        <view wx:elif="{{!items.length && !error && !commentsDisabled && !commentsClosed}}" class="comments-status">还没有评论，说说你的想法吧</view>
+        <view wx:elif="{{!items.length && !error && !newsComments && !commentsDisabled && !commentsClosed}}" class="comments-status">还没有评论，说说你的想法吧</view>
         <view wx:for="{{items}}" wx:key="_id" class="comment-group">
-          <template is="comment" data="{{row: item, child: false, closed: commentsDisabled || commentsClosed}}" />
+          <template is="comment" data="{{row: item, child: false, closed: newsComments || commentsDisabled || commentsClosed}}" />
           <view class="comment-thread-grid {{item.folded ? 'is-folded' : ''}} {{item.motionFoldClass}}" aria-hidden="{{item.folded}}"><view class="comment-thread-clip"><view class="comment-thread">
-            <block wx:if="{{!item.threadOpen}}"><view wx:for="{{item.motionFreshChildren}}" wx:for-item="fresh" wx:key="_id" class="comment-nested-grid {{fresh.motionAncestorFolded ? 'is-hidden' : ''}} {{fresh.motionAncestorClass}}" aria-hidden="{{fresh.motionAncestorFolded}}"><view class="comment-nested-clip"><template is="comment" data="{{row: fresh, child: true, closed: commentsDisabled || commentsClosed}}" /></view></view></block>
+            <block wx:if="{{!item.threadOpen}}"><view wx:for="{{item.motionFreshChildren}}" wx:for-item="fresh" wx:key="_id" class="comment-nested-grid {{fresh.motionAncestorFolded ? 'is-hidden' : ''}} {{fresh.motionAncestorClass}}" aria-hidden="{{fresh.motionAncestorFolded}}"><view class="comment-nested-clip"><template is="comment" data="{{row: fresh, child: true, closed: newsComments || commentsDisabled || commentsClosed}}" /></view></view></block>
             <button wx:if="{{item.motionShowExpand}}" class="thread-toggle" data-id="{{item._id}}" bindtap="toggleThread"><view class="thread-line"></view><text>展开 {{item.remainingCount}} 条回复</text><image src="/images/interface/chevron-down.svg" /></button>
             <block wx:if="{{item.threadOpen}}">
               <button wx:if="{{item.threadEarlier}}" class="thread-toggle" data-id="{{item._id}}" bindtap="earlierChildren" disabled="{{item.threadLoading}}"><view class="thread-line"></view><text>查看更早的回复</text></button>
-              <view wx:for="{{item.motionVisibleChildren}}" wx:for-item="child" wx:key="_id" class="comment-nested-grid {{child.motionAncestorFolded ? 'is-hidden' : ''}} {{child.motionAncestorClass}}" aria-hidden="{{child.motionAncestorFolded}}"><view class="comment-nested-clip"><template is="comment" data="{{row: child, child: true, closed: commentsDisabled || commentsClosed}}" /></view></view>
+              <view wx:for="{{item.motionVisibleChildren}}" wx:for-item="child" wx:key="_id" class="comment-nested-grid {{child.motionAncestorFolded ? 'is-hidden' : ''}} {{child.motionAncestorClass}}" aria-hidden="{{child.motionAncestorFolded}}"><view class="comment-nested-clip"><template is="comment" data="{{row: child, child: true, closed: newsComments || commentsDisabled || commentsClosed}}" /></view></view>
               <view wx:if="{{item.threadLoading}}" class="thread-status">正在读取回复…</view>
               <view wx:elif="{{item.threadError}}" class="thread-error">{{item.threadError}}<button data-id="{{item._id}}" bindtap="retryChildren">重试</button></view>
               <button wx:elif="{{item.threadHasMore}}" class="thread-toggle" data-id="{{item._id}}" bindtap="moreChildren"><view class="thread-line"></view><text>展开更多回复</text><image src="/images/interface/chevron-down.svg" /></button>
@@ -56,7 +57,7 @@
         <button wx:elif="{{hasMore}}" class="comments-more" bindtap="loadMore">查看更多评论</button>
       </scroll-view>
     </view>
-    <view wx:if="{{commentsDisabled || commentsClosed}}" class="comments-footer comments-closed">该账号已关闭评论</view>
+    <view wx:if="{{newsComments || commentsDisabled || commentsClosed}}" class="comments-footer comments-closed">{{newsComments ? '全球动态暂不支持评论' : '该账号已关闭评论'}}</view>
     <view wx:else class="comments-footer">
       <view wx:if="{{sendError}}" class="comments-send-error">{{sendError}}</view>
       <view wx:if="{{replyTarget}}" class="comment-target"><text>回复 {{replyTarget.nickname}}</text><button bindtap="cancelReply" disabled="{{sending}}" aria-label="取消回复，改为评论动态"><image src="/images/interface/x.svg" /></button></view>
@@ -69,17 +70,19 @@
           </view>
         </view>
       </view>
-      <view class="comment-composer {{count || selectedImages.length || sending ? 'has-content' : ''}} {{count || sending ? 'has-text' : ''}}" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
+      <view class="comment-composer {{count || selectedImages.length || sending ? 'has-content' : ''}} {{count || sending ? 'has-text' : ''}}" style="padding-bottom: {{keyboardHeight || emojiOpen ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
         <block wx:if="{{viewer}}">
           <view class="comment-input-pill">
             <image wx:if="{{!inputFocused && !count && !selectedImages.length && !sending}}" class="composer-avatar avatar-outline" src="{{viewer.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" aria-hidden="true" />
             <view class="comment-entry"><view class="comment-input-content"><textarea class="comment-textarea" fixed hold-keyboard disable-default-padding="{{true}}" auto-height bindlinechange="traceInputLines" show-confirm-bar="{{false}}" value="{{nativeInputValue}}" cursor="{{inputCursor}}" focus="{{inputFocusRequested}}" bindfocus="focusInput" bindblur="blurInput" bindinput="input" bindkeyboardheightchange="keyboard" maxlength="-1" disabled="{{sending}}" placeholder="{{askAI ? '' : '添加回复...'}}" placeholder-class="composer-placeholder" aria-label="评论输入框" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" /><view wx:if="{{askAI}}" class="composer-ai-chip composer-ai-mention" aria-label="已选择小萃，退格可删除">@小萃</view></view></view>
-            <view class="composer-tools" aria-hidden="{{count > 0 || sending}}">
-              <view class="composer-tool-icons">
-              <button wx:if="{{!newsComments}}" class="composer-ai-chip composer-ask-ai" catchtap="askXiaocui" disabled="{{sending}}" aria-label="问问小萃"><template is="xiaocui-icon" /><text>问问小萃</text></button>
-              <button class="composer-tool composer-image-trigger" aria-label="从相册或拍照添加图片，最多3张" catchtap="chooseCommentImages" disabled="{{count > 0 || sending || choosingImages}}"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button>
-              <view class="composer-tool" aria-label="贴纸，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></view>
-              <view class="composer-tool" aria-label="GIF，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view>
+            <view class="composer-tools">
+              <view class="composer-tool-group composer-tool-left" aria-hidden="{{count > 0 || sending}}">
+                <button wx:if="{{!newsComments}}" class="composer-ai-chip composer-ask-ai" catchtap="askXiaocui" disabled="{{count > 0 || sending}}" aria-label="问问小萃"><template is="xiaocui-icon" /><text>问问小萃</text></button>
+                <button class="composer-tool composer-image-trigger" aria-label="从相册或拍照添加图片，最多3张" catchtap="chooseCommentImages" disabled="{{count > 0 || sending || choosingImages}}"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button>
+              </view>
+              <button class="composer-tool composer-emoji {{emojiOpen ? 'is-active' : ''}}" catchtap="toggleEmoji" disabled="{{sending || choosingImages}}" aria-label="表情" aria-expanded="{{emojiOpen}}"><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></button>
+              <view class="composer-tool-group composer-tool-right" aria-hidden="{{count > 0 || sending}}">
+                <view class="composer-tool" aria-label="GIF，暂未开放" catchtap="stopEvent"><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view>
               </view>
             </view>
             <view class="comment-counter-slot {{count ? 'is-visible' : ''}}" aria-hidden="{{!count}}"><view class="comment-counter-divider"></view><view class="comment-progress-anchor"><view wx:if="{{limitHintVisible}}" class="comment-limit-hint" aria-role="alert">已达到输入上限</view><view class="comment-progress {{countWarning ? 'is-warning' : ''}}" style="background-image: conic-gradient({{countWarning ? '#e44646' : '#4775fa'}} 0deg, {{countWarning ? '#e44646' : '#4775fa'}} {{countProgress}}deg, #dce0e5 {{countProgress}}deg, #dce0e5 360deg);" aria-role="progressbar" aria-label="{{'剩余可输入' + remainingCount + '字，上限50字'}}"><view><text>{{countWarning ? remainingCount : ''}}</text></view></view></view></view>
@@ -87,6 +90,9 @@
           <view class="composer-send-slot" aria-hidden="{{!count && !selectedImages.length && !sending}}"><button class="comment-send" bindtap="send" loading="{{sending}}" disabled="{{sending || choosingImages || !canSend}}" aria-label="{{sending ? '正在发送评论' : '发送评论'}}"><image wx:if="{{!sending}}" src="/images/interface/arrow-up-white.svg" mode="aspectFit" /></button></view>
         </block>
         <button wx:else class="comment-login" bindtap="login">登录后发表评论</button>
+      </view>
+      <view wx:if="{{viewer && emojiOpen}}" class="comment-emoji-panel" style="padding-bottom: {{keyboardHeight ? '0' : 'env(safe-area-inset-bottom)'}};">
+        <template is="emoji-picker" data="{{choices: emojiChoices}}" />
       </view>
     </view>
   </view>

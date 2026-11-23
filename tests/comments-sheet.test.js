@@ -39,9 +39,10 @@ function fixture(options = {}) {
       setClipboardData: args => { requests.push({ type: 'clipboard', text: args.data }); if (options.copyFail) args.fail({ errMsg: 'setClipboardData:fail' }); else args.success({}); },
       showModal: args => { requests.push({ type: 'modal', title: args.title }); args.success({ confirm: options.confirm !== false }); },
       getDeviceInfo: () => ({ platform: options.platform || 'devtools' }),
+      getSelectedTextRange: options.getSelectedTextRange,
       getWindowInfo: () => options.window || { windowHeight: 812, statusBarHeight: 44 },
       getMenuButtonBoundingClientRect: () => options.capsule || { top: 52, height: 32 } },
-    require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('services/post-images') ? media : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : require('../miniprogram/utils/post-view'),
+    require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('services/post-images') ? media : name.includes('comment-state') ? require('../miniprogram/utils/comment-state') : name.includes('comment-threads') ? require('../miniprogram/utils/comment-threads') : name.includes('emoji-input') ? require('../miniprogram/utils/emoji-input') : require('../miniprogram/utils/post-view'),
   });
   const component = { ...definition.methods, data: { ...structuredClone(definition.data), postId: id, viewer: current, focusReplyId: options.focusReplyId || '', focusReplyInput: Boolean(options.focusReplyInput) },
     setData(value) { applyPageData(this.data, value);    }, triggerEvent(name, detail) { events.push({ name, detail }); } };
@@ -50,6 +51,29 @@ function fixture(options = {}) {
     logout() { current = null; version++; },
   };
 }
+
+test('评论面板插入标准 Emoji，保留小萃胶囊与光标并按码点限制发送', async () => {
+  const f = fixture(); await f.attach();
+  const c = f.component, emoji = { currentTarget: { dataset: { emoji: '👍' } } };
+  c.askXiaocui();
+  const prefix = c.data.inputValue;
+  c.input({ detail: { value: prefix + '你好', cursor: prefix.length + 1 } });
+  c.toggleEmoji(); c.chooseEmoji(emoji); c.chooseEmoji(emoji);
+  assert.equal(c.data.text, '你👍👍好');
+  assert.equal(c.data.inputCursor, prefix.length + 5);
+  assert.equal(c.data.nativeInputValue, prefix + '你👍👍好');
+  assert.equal(c.data.count, 8);
+  assert.equal(c.data.inputFocusRequested, false);
+  assert.equal(c.data.emojiOpen, true);
+  await c.send();
+  assert.equal(c.data.emojiOpen, false);
+  assert.equal(f.requests.find(x => x.type === 'send').content, '@小萃 你👍👍好');
+  c.input({ detail: { value: '字'.repeat(50), cursor: 1 } });
+  c.toggleEmoji(); c.chooseEmoji(emoji);
+  assert.equal(c.data.text, '字'.repeat(50));
+  assert.equal(c.data.limitHintVisible, true);
+  f.hide(); assert.equal(c.data.emojiOpen, false); f.detach();
+});
 
 test('历史回复定位展开目标窗口和更早分页，仅明确点击回复才聚焦输入框', async () => {
   const rootId = 'r_' + 'b'.repeat(40), targetId = 'c_' + 'c'.repeat(40);
@@ -608,6 +632,7 @@ test('胶囊属于首行内容，原生输入自然增减高度；计数器始�
   const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
   const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
   assert.match(markup, /class="comment-input-content"><textarea[^>]*auto-height[^>]*\/>\s*<view[^>]*class="composer-ai-chip composer-ai-mention"/);
+  assert.match(markup, /class="composer-tool composer-emoji/);
   assert.match(markup, /<\/view>\s*<\/view>\s*<view class="comment-counter-slot/);
   assert.match(css, /\.composer-ai-mention[^}]*position: absolute[^}]*top: 3rpx[^}]*left: 0[^}]*width: 84rpx/);
   assert.match(css, /\.comment-counter-slot[^}]*align-self: flex-end[^}]*margin-bottom: 6rpx/);
@@ -617,6 +642,17 @@ test('胶囊属于首行内容，原生输入自然增减高度；计数器始�
   const f = fixture(); await f.attach(); const c = f.component;
   c.setReplyInput('', false); assert.equal(c.data.inputValue, '');
   f.detach();
+});
+
+test('评论工具按小萃、图片、表情、GIF 排列，保留独立安全区与固定按钮宽度', () => {
+  const markup = fs.readFileSync('miniprogram/components/comments-sheet/index.wxml', 'utf8');
+  const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
+  const tools = markup.slice(markup.indexOf('class="composer-tools"'), markup.indexOf('class="comment-counter-slot'));
+  assert.match(tools, /composer-ask-ai[\s\S]*composer-image-trigger[\s\S]*composer-emoji[\s\S]*comment-gif\.svg/);
+  assert.match(css, /\.composer-tools \.composer-tool \{[^}]*flex: 0 0 52rpx[^}]*width: 52rpx[^}]*margin: 0[^}]*padding: 0/);
+  assert.match(css, /\.has-text \.composer-tool-group \{[^}]*width: 0[^}]*pointer-events: none/);
+  assert.match(markup, /class="comment-emoji-panel"[^>]*env\(safe-area-inset-bottom\)/);
+  assert.match(markup, /class="comment-composer[^>]*keyboardHeight \|\| emojiOpen/);
 });
 
 
@@ -810,7 +846,7 @@ test('立即收键盘的API失败仍继续提交评论，不误报发送失败',
 });
 
 
-test('评论单行文字/胶囊/竖线圆环共用垂直中线，真机基线补偿不用于开发工具', async () => {
+test('评论单行文字和胶囊居中，多行时表情按钮与字数圆环对齐末行', async () => {
   const css = fs.readFileSync('miniprogram/components/comments-sheet/index.wxss', 'utf8');
   const rule = name => css.slice(css.indexOf(name + ' {') + name.length + 2).split('}')[0];
   const dimension = (selector, key) => Number(rule(selector).match(new RegExp('(?:^|[;\\s])' + key + ': ([0-9.]+)rpx'))[1]);
@@ -819,11 +855,14 @@ test('评论单行文字/胶囊/竖线圆环共用垂直中线，真机基线补
   const baseline = dimension('.has-native-textarea-metrics .comment-textarea', 'top');
   const chip = dimension('.composer-ai-mention', 'top') + dimension('.composer-ai-chip', 'height') / 2;
   assert.equal(baseline, (line - font) / 2);
+  assert.match(rule('.composer-tools'), /align-self: flex-end/);
   for (const lines of [1, 2, 5]) {
     const contentHeight = inset * 2 + line * lines;
     const lastTextCenter = inset + baseline + font / 2 + line * (lines - 1);
     const counterCenter = contentHeight - dimension('.comment-counter-slot', 'margin-bottom') - dimension('.comment-progress-anchor', 'height') / 2;
+    const emojiCenter = contentHeight - dimension('.composer-tools', 'height') / 2;
     assert.equal(lastTextCenter, counterCenter);
+    assert.equal(emojiCenter, counterCenter);
     assert.equal(chip, inset + baseline + font / 2);
   }
   assert.equal(dimension('.comment-input-content', 'min-height'), line + inset * 2);

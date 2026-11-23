@@ -9,7 +9,7 @@
       </view>
       <scroll-view class="menu-scroll" scroll-y="{{menuOpen}}">
         <view class="menu-items">
-          <button size="mini" wx:for="{{menuItems}}" wx:key="key" class="menu-item" data-key="{{item.key}}" bindtap="selectMenuItem"><image wx:if="{{item.key === 'certification'}}" class="menu-item-icon" src="/images/verification/black.svg" mode="aspectFit" /><image wx:else class="menu-item-icon" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" /><text>{{item.label}}</text></button>
+          <button size="mini" wx:for="{{menuItems}}" wx:key="key" class="menu-item" data-key="{{item.key}}" bindtap="selectMenuItem"><view wx:if="{{item.key === 'certification'}}" class="menu-item-icon menu-student-icon"><image src="/images/verification/student.svg" mode="aspectFit" /></view><image wx:else class="menu-item-icon" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" /><text>{{item.label}}</text></button>
         </view>
         <view class="menu-utilities">
           <view wx:for="{{utilityMenuItems}}" wx:key="key" class="menu-utility-section"><button size="mini" class="menu-item menu-utility-item" data-key="{{item.key}}" bindtap="selectMenuItem"><image class="menu-item-icon" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" /><text>{{item.label}}</text></button></view>

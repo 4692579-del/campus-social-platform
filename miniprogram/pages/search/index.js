@@ -22,7 +22,7 @@ Page({
   ...searchRefresh.methods,
   data: { ...base.data, ...searchRefresh.data,
     user:null, avatarSource:DEFAULT_AVATAR, avatarReady:true, loading:false, accountError:'', accountHint:'未登录',
-    menuOpen:false, menuInstant:false, authChecking:false, loginSheetOpen:false, confirmingLogout:false,
+    menuOpen:false, menuInstant:false, authChecking:false, loginSheetOpen:false, confirmingLogout:false, membershipOpen:false,
     menuLikeCount:'—', followerCount:'—', followingCount:'—', menuItems, utilityMenuItems,
     hotPlatforms: [{ key:'weibo', label:'微博' }, { key:'zhihu', label:'知乎' }, { key:'bilibili', label:'B站' }, { key:'baidu', label:'百度' }],
     hotType:'weibo', hotRows:[], hotHasMore:false, hotLoading:false, hotError:'', hotWarning:'', hotUpdateText:'',
@@ -57,6 +57,7 @@ Page({
   onReady() { base.onReady?.call(this); this.measureSearchLayout(); },
   onResize() { base.onResize?.call(this); this.measureSearchLayout(); },
   onHide() {
+    this.closeMembership();
     this.stopSearchRefresh();
     this.pauseCuiPromo();
     this._hotView = (this._hotView || 0) + 1;
@@ -70,6 +71,7 @@ Page({
     base.onHide.call(this);
   },
   onUnload() {
+    this.closeMembership();
     this.stopSearchRefresh();
     this.pauseCuiPromo();
     this._hotView = (this._hotView || 0) + 1;
@@ -107,7 +109,7 @@ Page({
     if (event.currentTarget.dataset.source === this.data.avatarSource && this.data.avatarSource !== DEFAULT_AVATAR)
       patchState(this, { avatarSource:DEFAULT_AVATAR, avatarReady:true });
   },
-  interactionBlocked() { return this.data.authChecking || this.data.loginSheetOpen; },
+  interactionBlocked() { return this.data.authChecking || this.data.loginSheetOpen || this.data.membershipOpen === true; },
   stopMenuEvent() {},
   openMenu() {
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.interactionBlocked() || this._openingSearchEntry || this._openingResults || this._openingCuiPromoPost) return;

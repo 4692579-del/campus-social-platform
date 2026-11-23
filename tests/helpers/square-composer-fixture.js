@@ -36,6 +36,7 @@ function composerFixture(options = {}) {
     setStorageSync(key, value) { if (options.failStorage) throw new Error('storage full'); storage.set(key, value); },
     removeStorageSync(key) { if (options.failRemoveStorage) throw new Error('storage unavailable'); storage.delete(key); }, hideKeyboard() { requests.push('hideKeyboard'); },
     showToast: args => toasts.push(args.title),
+    getSelectedTextRange: options.getSelectedTextRange,
   };
   const gate = { module: { exports: {} }, require: () => users, wx };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../miniprogram/utils/login-gate.js'), 'utf8'), gate);
@@ -43,7 +44,7 @@ function composerFixture(options = {}) {
     Component: value => { definition = value; }, wx,
     setTimeout(fn, delay) { if (delay > 2500 && !options.manualOptimizationDelay) { queueMicrotask(fn); return ++timerId; } const id = ++timerId; timers.set(id, fn); delays.set(id, delay); return id; }, clearTimeout(id) { timers.delete(id); delays.delete(id); },
     require: name => name.includes('services/user') ? users : name.includes('services/square') ? square :
-      name.includes('services/post-images') ? media : name.includes('login-gate') ? gate.module.exports : name.includes('content-declaration') ? require('../../miniprogram/utils/content-declaration') : require('../../miniprogram/utils/post-view'),
+      name.includes('services/post-images') ? media : name.includes('login-gate') ? gate.module.exports : name.includes('content-declaration') ? require('../../miniprogram/utils/content-declaration') : name.includes('emoji-input') ? require('../../miniprogram/utils/emoji-input') : require('../../miniprogram/utils/post-view'),
   });
   const component = { ...definition.methods, data: { ...structuredClone(definition.data), initialQuote: options.initialQuote || null, quoteOwnerId: options.quoteOwnerId || 'alice' },
     setData(values) { applyPageData(this.data, values); }, triggerEvent(name, detail) { events.push({ name, detail }); } };

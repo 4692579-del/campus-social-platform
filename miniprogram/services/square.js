@@ -3,6 +3,7 @@ const { projectComment, reactComment } = require('../utils/comment-state');
 const { newestComments, oldestComments } = require('../utils/comment-order');
 const TTL = 60000;
 let ownStats = null, statsRevision = 0;
+const ownStatsListeners = new Set();
 let ownHistory = null, historyRevision = 0;
 const historyListeners = new Set();
 function subscribeHistory(listener) { historyListeners.add(listener); return () => historyListeners.delete(listener); }
@@ -14,15 +15,19 @@ let owner, generation = 0, feed = null, ownFeed = null, albumFeed = null, mutati
 const profileFeeds = new Map();
 const searchFeeds = new Map();
 const newsFeeds = new Map();
+const newsTranslations = new Map();
 const followStates = new Map(), followProfiles = new Map(), followWrites = new Map(), followListeners = new Set();
 let followRevision = 0, followingFeed = null, followWorker = null;
 const publicContent = new Map(), publicHistories = new Map(), publicEpoch = new Map();
+const profileVideos = new Map();
+let videosRevision = 0;
 const unavailablePublicAccounts = new Set();
 function clearPublicAccount(accountId) {
   unavailablePublicAccounts.add(accountId);
   publicEpoch.set(accountId, (publicEpoch.get(accountId) || 0) + 1); historyRevision++;
   for (const key of publicContent.keys()) if (key.startsWith(accountId + ':')) publicContent.delete(key);
   publicHistories.delete(accountId);
+  profileVideos.delete(accountId);
   for (const [key, cached] of searchFeeds) if (cached.value.accountId === accountId) searchFeeds.delete(key);
 }
 let profilePin = null, pinRevision = 0, pinWrite = null;
@@ -51,7 +56,7 @@ function subscribeAI(listener) { aiListeners.add(listener); return () => aiListe
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
-  if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; newsFeeds.clear(); }
+  if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; newsFeeds.clear(); newsTranslations.clear(); profileVideos.clear(); videosRevision++; }
   if (key !== owner) { for (const write of followWrites.values()) write.reject(Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' })); followWorker = null; followStates.clear(); followProfiles.clear(); followWrites.clear(); followRevision++; followingFeed = null; owner = key; generation += 1; searchFeeds.clear(); profileFeeds.clear(); publicContent.clear(); publicHistories.clear(); publicEpoch.clear(); unavailablePublicAccounts.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
 }
@@ -189,11 +194,18 @@ function listFollowing({ force = false, cursor = '' } = {}) {
 }
 
 function cachedOwnStats() { session(); return ownStats && ownStats.value; }
-function invalidateOwnStats() { statsRevision += 1; if (ownStats) ownStats.time = 0; }
-function getOwnStats() {
+function subscribeOwnStats(listener) { ownStatsListeners.add(listener); return () => ownStatsListeners.delete(listener); }
+function invalidateOwnStats() {
+  statsRevision += 1;
+  if (ownStats) ownStats.time = 0;
+  for (const listener of ownStatsListeners) {
+    try { listener(); } catch (error) { /* 展示刷新不影响已确认操作。 */ }
+  }
+}
+function getOwnStats({ force = false } = {}) {
   session();
   if (!users.getCachedUser()) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
-  if (ownStats && Date.now() - ownStats.time < TTL) return Promise.resolve(ownStats.value);
+  if (!force && ownStats && Date.now() - ownStats.time < TTL) return Promise.resolve(ownStats.value);
   const revision = statsRevision;
   return merged(`own-stats:${revision}`, async () => {
     const result = await call('getSquareOwnStats', {}, true);
@@ -329,8 +341,15 @@ function updatePost(post, prepend = false) {
   post = pendingLike(post);
   if (post.contentType === 'news') {
     const previous = posts.get(post._id);
-    if (previous?.detailReady && !post.detailReady) post = { ...previous, liked: post.liked, bookmarked: post.bookmarked,
-      likeCount: post.likeCount, replyCount: post.replyCount };
+    if (previous) {
+      const keepBody = !previous.bodyMissing && (post.bodyMissing || (!post.detailReady && post.bodyMissing === undefined));
+      const images = [...new Set(post.detailReady ? [...(post.images || []), ...(previous.images || [])] :
+        [...(previous.images || []), ...(post.images || [])])];
+      const { sourceUrl, authors } = previous;
+      post = { ...post, images,
+        ...(previous.detailReady && !post.detailReady ? { sourceUrl, authors, detailReady: true } : {}),
+        ...(keepBody ? { title: previous.title, content: previous.content, bodyMissing: previous.bodyMissing, translationVersion: previous.translationVersion } : {}) };
+    }
     posts.set(post._id, post);
     postTimes.set(post._id, Date.now());
     for (const listener of postListeners) {
@@ -396,6 +415,10 @@ function removePost(id, knownOwn = false) {
     albumFeed.value.items = albumFeed.value.items.filter(item => item.postId !== id);
     albumFeed.time = 0;
   }
+  for (const cached of profileVideos.values()) {
+    cached.value.items = cached.value.items.filter(item => item.postId !== id);
+    cached.time = 0;
+  }
   revisions.set(id, ++mutation);
   posts.delete(id); postTimes.delete(id); replies.delete(id);
   if (newlyRemoved && own && ownFeed && Number.isSafeInteger(ownFeed.value.total)) ownFeed.value.total = Math.max(0, ownFeed.value.total - 1);
@@ -435,7 +458,8 @@ async function call(action, data = {}, authenticated = false) {
     session();
     if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
     if (action === 'publishSquarePost' && data.post?.media?.some(item => item.type === 'video')) throw publishConnectionError(error);
-    throw new Error(action === 'listNewsPosts' ? '暂时无法连接全球新闻，请稍后重试' : '暂时无法连接广场，请稍后重试');
+    throw new Error(action === 'translateNews' ? '小萃翻译暂时无法连接，请稍后重试' :
+      action === 'listNewsPosts' ? '暂时无法连接全球新闻，请稍后重试' : '暂时无法连接广场，请稍后重试');
   }
   session();
   if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
@@ -444,7 +468,8 @@ async function call(action, data = {}, authenticated = false) {
     if (result && ['ACCOUNT_DISABLED', 'NOT_REGISTERED', 'UNAUTHENTICATED', 'INVALID_ROLE'].includes(result.code)) users.logout();
     throw Object.assign(new Error(result && result.code !== 'INVALID_ACTION' ? result.message :
       action === 'listNewsPosts' ? '全球新闻服务尚未部署，请联系管理员' :
-        ['processSquareAIReply', 'optimizeSquareContent'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
+        ['processSquareAIReply', 'optimizeSquareContent', 'translateNews'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
+        action === 'listSquareVideos' ? '视频服务需要更新，请重新部署 userService 云函数' :
         ['listSquareReplyChildren', 'setSquareCommentState', 'listSquareOwnReplies', 'getSquareReplyContext'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
@@ -456,13 +481,38 @@ function merged(key, request) {
   pending.set(key, promise);
   return promise;
 }
+function cachedNewsTranslation(id, version) {
+  session();
+  return newsTranslations.get(`${id}:${version}`) || null;
+}
+function translateNews(id, version) {
+  const cached = cachedNewsTranslation(id, version);
+  if (cached) return Promise.resolve(cached);
+  const current = generation;
+  const key = `${id}:${version}`;
+  return merged(`translation:${key}`, async () => {
+    try {
+      const { translation } = await call('translateNews', { postId: id, version }, true);
+      if (translation?.version !== version || typeof translation.title !== 'string' || !translation.title.trim() ||
+          typeof translation.content !== 'string') throw new Error('小萃未能返回完整译文，请重试');
+      newsTranslations.set(key, translation);
+      if (newsTranslations.size > 32) newsTranslations.delete(newsTranslations.keys().next().value);
+      return translation;
+    } finally {
+      session();
+      if (generation === current && users.invalidateAIUsage) users.invalidateAIUsage();
+    }
+  });
+}
 function cachedNews(language = 'en') {
   session();
   const value = newsFeeds.get(language)?.value;
   if (!value) return null;
   return { ...value, items: value.items.filter(item => !deleted.has(item._id)).map(item => {
     const current = posts.get(item._id);
-    return current ? { ...item, liked: current.liked, bookmarked: current.bookmarked, likeCount: current.likeCount, replyCount: current.replyCount } : item;
+    if (!current) return item;
+    const { title, content, images, bodyMissing, translationVersion, liked, bookmarked, likeCount, replyCount } = current;
+    return { ...item, title, content, images, bodyMissing, translationVersion, liked, bookmarked, likeCount, replyCount };
   }) };
 }
 function listNews({ language = 'en', offset = 0, anchor = 0, force = false } = {}) {
@@ -679,6 +729,11 @@ async function publish(content, requestId, images = [], declaration = 'none', qu
     albumFeed = { time: 0, value: { items: [...added, ...(previous ? previous.items.filter(item => item.postId !== result.post._id) : [])],
       hasMore: previous ? previous.hasMore : true, nextOffset: previous ? previous.nextOffset + (previous.items.some(item => item.postId === result.post._id) ? 0 : 1) : 0 } };
   }
+  if (result.post.media?.some(item => item.type === 'video')) {
+    videosRevision++;
+    const cached = profileVideos.get('');
+    if (cached) cached.time = 0;
+  }
   published = true;
   return result.post;
 }
@@ -698,6 +753,39 @@ function album({ force = false, offset = 0 } = {}) {
     const items = (offset || revision !== mutation) && previous ? [...new Map([...previous.items, ...incoming].map(item => [item._id, item])).values()] : incoming;
     albumFeed = { time: Date.now(), value: { ...result, items } };
     return albumFeed.value;
+  });
+}
+function cachedProfileVideos(accountId = '') {
+  session();
+  return unavailablePublicAccounts.has(accountId) ? null : profileVideos.get(accountId)?.value || null;
+}
+function listProfileVideos(accountId = '', { force = false, cursor = '' } = {}) {
+  session();
+  const cached = profileVideos.get(accountId);
+  if (!force && !cursor && cached && Date.now() - cached.time < TTL) return Promise.resolve(cached.value);
+  const epoch = publicEpoch.get(accountId), revision = videosRevision;
+  return merged(`profile-videos:${accountId}:${cursor}:${epoch}:${revision}`, async () => {
+    let result;
+    try { result = await call('listSquareVideos', { cursor, ...(accountId ? { profileAccountId: accountId } : {}) }, true); }
+    catch (error) {
+      if (accountId && error.code === 'PROFILE_NOT_FOUND' && epoch === publicEpoch.get(accountId)) clearPublicAccount(accountId);
+      throw error;
+    }
+    if (epoch !== publicEpoch.get(accountId) || !accountId && revision !== videosRevision) {
+      throw Object.assign(new Error('视频列表已变化，请刷新'), { code: 'PROFILE_CHANGED' });
+    }
+    if ((accountId && result.profileAccountId !== accountId) || !Array.isArray(result.items) ||
+        typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' ||
+        result.hasMore !== Boolean(result.nextCursor) || (cursor && result.nextCursor === cursor)) throw new Error('视频列表暂不可用');
+    const previous = profileVideos.get(accountId)?.value;
+    if (cursor && previous?.nextCursor !== cursor) return previous;
+    const incoming = result.items.filter(item => !deleted.has(item.postId));
+    const items = cursor ? [...new Map([...previous.items, ...incoming].map(item => [item._id, item])).values()] : incoming;
+    const value = { items, hasMore: result.hasMore, nextCursor: result.nextCursor };
+    unavailablePublicAccounts.delete(accountId);
+    profileVideos.set(accountId, { time: cursor ? profileVideos.get(accountId).time : Date.now(), value });
+    if (profileVideos.size > 64) profileVideos.delete(profileVideos.keys().next().value);
+    return value;
   });
 }
 function react(id, kind, active, sourcePost) {
@@ -962,4 +1050,4 @@ async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedNews, listNews, bookmarkNews, cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };
+module.exports = { cachedNews, listNews, bookmarkNews, cachedNewsTranslation, translateNews, cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, subscribeOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedProfileVideos, listProfileVideos, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };

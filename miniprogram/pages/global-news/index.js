@@ -30,9 +30,10 @@ Page({
       const index = this.data.posts.findIndex(item => item._id === post._id);
       if (index >= 0) {
         const patch = {};
-        for (const field of ['liked', 'likeCount', 'replyCount']) {
+        for (const field of ['title', 'content', 'liked', 'likeCount', 'replyCount']) {
           if (this.data.posts[index][field] !== post[field]) patch[`posts[${index}].${field}`] = post[field];
         }
+        if (JSON.stringify(this.data.posts[index].images) !== JSON.stringify(post.images)) patch[`posts[${index}].images`] = post.images;
         if (Object.keys(patch).length) this.setData(patch);
       }
     });

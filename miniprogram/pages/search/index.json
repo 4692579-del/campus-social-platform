@@ -6,6 +6,7 @@
   "navigationStyle": "custom",
   "disableScroll": true,
   "usingComponents": {
+    "membership-sheet": "/components/membership-sheet/index",
     "search-box": "/components/search-box/index",
     "cui-refresh": "/components/cui-refresh/index",
     "orbit-stars": "/components/orbit-stars/index"

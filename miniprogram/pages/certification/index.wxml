@@ -77,7 +77,7 @@
       <view class="status-card">
         <view class="status-symbol">
           <view wx:if="{{stateText === '审核中'}}" class="review-dots" aria-label="等待审核"><view class="review-dot"></view><view class="review-dot"></view><view class="review-dot"></view></view>
-          <image wx:else class="status-certified-icon" src="/images/verification/verified.png" mode="aspectFit" />
+          <image wx:else class="status-certified-icon" src="/images/verification/student.svg" mode="aspectFit" />
         </view>
         <view class="status-title">{{stateText}}</view>
         <view class="status-description">{{stateText === '审核中' ? '申请已保存，请等待管理员审核。需要修改时，可先取消申请再重新提交。' : '学校身份已认证，需要更换认证信息时，可先撤回当前认证。'}}</view>

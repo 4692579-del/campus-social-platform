@@ -22,6 +22,7 @@
 .post-heading { display: flex; align-items: center; gap: 8rpx; min-height: 40rpx; height: 40rpx; }
 .post-name { max-width: 330rpx; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 29rpx; font-weight: 700; }
 .author-badge { display: block; width: 24rpx; height: 24rpx; flex-shrink: 0; }
+.author-badge.is-student { width: 28rpx; height: 28rpx; }
 .post-time { flex-shrink: 0; font-size: 23rpx; color: #87919c; white-space: nowrap; }
 .post-header-actions { display: flex; align-items: center; gap: 16rpx; flex-shrink: 0; height: 40rpx; margin-left: auto; }
 .post-header-actions .post-more { display: flex; align-items: center; justify-content: center; flex: 0 0 48rpx; width: 48rpx; min-width: 0; height: 52rpx; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; line-height: 1; }
@@ -30,6 +31,10 @@
 .post-handle { flex-shrink: 0; color: #87919c; font-size: 23rpx; line-height: 1.6; white-space: nowrap; }
 .post-text { display: block; margin-top: 6rpx; font-size: 29rpx; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .news-post-title { font-weight: 700; }
+.post-news-preview { line-height: 45rpx; }
+.post-news-preview .post-text { margin-top: 0; line-height: inherit; }
+.post-news-body { padding-top: 6rpx; box-sizing: border-box; }
+.post-news-clip { max-height: 321rpx; overflow: hidden; }
 .news-post-source { margin-top: 12rpx; color: #4775fa; font-size: 25rpx; line-height: 1.6; }
 .post-text-seven-lines { line-height: 45rpx; }
 .post-text-clip { max-height: 321rpx; overflow: hidden; }

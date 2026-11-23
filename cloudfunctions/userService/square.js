@@ -13,9 +13,10 @@ const { commentsDisabled, requireOpenComments } = require('./square-comment-poli
 const { joinDateFields } = require('./profile-join-date');
 const { isNewsId, newsView } = require('./news-adapter');
 const { NEWS_CODES } = require('./world-news');
+const { translateNews, CODES: TRANSLATION_CODES } = require('./news-translation');
 
 const NEWS_ACTIONS = new Set(['getSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren',
-  'setSquareCommentState', 'publishSquareReply', 'deleteSquareReply', 'reportSquareReply', 'reportSquarePost', 'getSquareReplyContext']);
+  'setSquareCommentState', 'publishSquareReply', 'deleteSquareReply', 'reportSquareReply', 'reportSquarePost', 'getSquareReplyContext', 'translateNews']);
 const tableFor = (id, table) => isNewsId(id) ? table.replace(/^square_/, 'news_').replace('news_posts', 'news_articles') : table;
 
 const SQUARE_ACTIONS = ['getSquareOwnStats', 'listSquarePosts', 'listSquareAlbum', 'getSquarePost', 'publishSquarePost', 'setSquareReaction', 'listSquareReplies', 'listSquareReplyChildren', 'setSquareCommentState', 'publishSquareReply', 'processSquareAIReply', 'deleteSquarePost', 'reportSquarePost', 'deleteSquareReply', 'reportSquareReply', 'optimizeSquareContent'];
@@ -28,12 +29,12 @@ SQUARE_CODES.push('QUOTE_UNAVAILABLE');
 SQUARE_CODES.push('INVALID_MEDIA', 'VIDEO_UPLOAD_UNAVAILABLE', ...Object.keys(VIDEO_ERRORS));
 SQUARE_ACTIONS.push('setSquareProfilePin');
 SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
-SQUARE_ACTIONS.push('listNewsPosts');
-SQUARE_CODES.push(...NEWS_CODES);
+SQUARE_ACTIONS.push('listNewsPosts', 'translateNews', 'listSquareVideos');
+SQUARE_CODES.push(...NEWS_CODES, ...TRANSLATION_CODES);
 SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
 SQUARE_CODES.push(...searchModule.CODES);
 SQUARE_CODES.push(...followsModule.CODES);
-SQUARE_CODES.push('PIN_EXISTS', 'PIN_CHANGED', 'PROFILE_NOT_FOUND', 'COMMENTS_DISABLED');
+SQUARE_CODES.push('PIN_EXISTS', 'PIN_CHANGED', 'PROFILE_NOT_FOUND', 'COMMENTS_DISABLED', 'NEWS_LIKES_DISABLED');
 function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function active(user) {
   if (!user) fail('NOT_REGISTERED', '请先登录');
@@ -210,6 +211,10 @@ function createSquareService(db, options = {}) {
     const targetId = action === 'publishSquareReply' ? event.post?.postId : event.postId;
     const newsTarget = isNewsId(targetId);
     if (newsTarget && !NEWS_ACTIONS.has(action)) fail('INVALID_POST', '该操作不适用于全球新闻');
+    if (action === 'translateNews') {
+      if (!newsTarget || typeof event.version !== 'string' || !/^[a-f0-9]{40}$/.test(event.version)) fail('INVALID_POST', '新闻翻译参数不正确');
+      return { translation: await translateNews(db, options, active, targetId, event.version, user, identity) };
+    }
     if (action === 'listNewsPosts') {
       if (!options.news) fail('NEWS_KEY_MISSING', '全球新闻尚未配置，请联系管理员');
       const page = await options.news.list(event);
@@ -255,6 +260,27 @@ function createSquareService(db, options = {}) {
       return { ...(event.profileAccountId !== undefined ? { profileAccountId: owner.accountId } : {}), items: rows.slice(0, 20).flatMap(row => (row.images || []).map((fileID, index) => ({
         _id: `${row._id}_${index}`, postId: row._id, fileID, createdAt: row.createdAt, index,
       }))), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
+    }
+    if (action === 'listSquareVideos') {
+      active(user);
+      const profile = event.profileAccountId !== undefined;
+      const owner = profile ? await profileOwner(event.profileAccountId, user) : user;
+      const { cursor = '' } = event;
+      if (typeof cursor !== 'string' || cursor.length > 100 || /[\u0000-\u0020]/.test(cursor)) fail('INVALID_POST', '视频分页参数不正确');
+      const filter = { scope: 'square', status: 'published', authorId: owner._id, media: db.command.elemMatch({ type: 'video' }),
+        ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
+      const rows = (await posts.where(filter).orderBy('sortKey', 'desc').limit(21).get()).data;
+      await recheckProfile(owner);
+      const publicMedia = file => typeof file === 'string' && file.startsWith(`cloud://${identity.env}.`) &&
+        Boolean(identity.env) && file.slice(file.indexOf('/', 8) + 1).startsWith('square-media/');
+      const items = rows.slice(0, 20).flatMap(row => row.media.flatMap((item, index) => {
+        if (item?.type !== 'video' || !publicMedia(item.fileID)) return [];
+        const content = typeof row.content === 'string' ? Array.from(row.content.trim()).slice(0, 120).join('') : '';
+        return [{ _id: `${row._id}_${index}`, postId: row._id, fileID: item.fileID, content, createdAt: row.createdAt,
+          poster: publicMedia(item.poster) ? item.poster : '' }];
+      }));
+      const nextCursor = rows.length > 20 ? rows[19].sortKey : '';
+      return { ...(profile ? { profileAccountId: owner.accountId } : {}), items, nextCursor, hasMore: Boolean(nextCursor) };
     }
     if (action === 'listSquarePosts') {
       const offset = pagination(event);
@@ -310,7 +336,7 @@ function createSquareService(db, options = {}) {
         children || newsTarget ? null : profilesFor([post.authorId]),
       ]);
       return { items, hasMore: rows.length > 20, nextOffset: offset + items.length,
-        ...(authors?.get(post.authorId)?.commentsDisabled ? { commentsDisabled: true } : {}) };
+        ...(newsTarget || authors?.get(post.authorId)?.commentsDisabled ? { commentsDisabled: true } : {}) };
     }
     active(user);
     if (action === 'getSquarePublication') {
@@ -514,7 +540,7 @@ function createSquareService(db, options = {}) {
         JSON.stringify(saved.imageSources || []) !== JSON.stringify(sources) || !isReply && (
           JSON.stringify(saved.mediaSources || []) !== JSON.stringify(mediaSources) || (saved.declaration || 'none') !== declaration || (saved.quotePostId || '') !== quoteId);
       if (existing && conflicts(existing)) fail('REQUEST_CONFLICT', '相同提交标识的内容或回复对象已变更，请重新提交');
-      if (!existing && parent && !newsTarget) await requireOpenComments(db, parent);
+      if (!existing && parent) await requireOpenComments(db, parent);
       if (!existing) await quoted();
       if (!existing && content) await checked(content, identity);
       let images = existing && existing.images || [];
@@ -563,7 +589,7 @@ function createSquareService(db, options = {}) {
           if (conflicts(saved)) fail('REQUEST_CONFLICT', '本次内容已提交，请勿重复修改请求');
           return;
         }
-        if (latestParent && !newsTarget) await requireOpenComments(transaction, latestParent);
+        if (latestParent) await requireOpenComments(transaction, latestParent);
         const aiFields = isReply && !newsTarget ? await ai.enqueue(transaction, { _id: id, authorId: user._id, postId: parent._id, content, askAI,
           ancestorIds: target ? [...(latestTarget.ancestorIds || []), latestTarget._id] : [] }) : {};
         await ref.set({ data: { scope: newsTarget ? 'news' : 'square', status: 'published', authorId: user._id, content, ...aiFields,
@@ -588,6 +614,7 @@ function createSquareService(db, options = {}) {
     if (action === 'setSquareReaction') {
       const id = postId(event.postId), kind = event.kind;
       if ((kind !== 'like' && !(newsTarget && kind === 'bookmark')) || typeof event.active !== 'boolean') fail('INVALID_POST', '不支持此互动操作');
+      if (newsTarget && kind === 'like') fail('NEWS_LIKES_DISABLED', '全球动态暂不支持点赞');
       const key = hash(`${id}:${user._id}:${kind}`);
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);

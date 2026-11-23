@@ -1,6 +1,8 @@
 @import "../../styles/avatar.wxss";
 @import "../../styles/login-sheet.wxss";
 @import "../../styles/xiaocui-icon.wxss";
+@import "../../styles/xiaocui-ai-glow.wxss";
+@import "../../styles/emoji-picker.wxss";
 @import "../../styles/post-play-badge.wxss";
 :host { display: block; }
 button::after { border: 0; }
@@ -53,9 +55,7 @@ button::after { border: 0; }
 .compose-optimize-help-bubble .compose-optimize-help-close { position: absolute; top: 6rpx; right: 6rpx; display: flex; align-items: center; justify-content: center; width: 44rpx; min-width: 0; height: 44rpx; margin: 0; padding: 0; background: transparent; line-height: 1; }
 .compose-optimize-help-close image { display: block; width: 26rpx; height: 26rpx; filter: brightness(0) invert(1); }
 .compose-notices .compose-optimize.is-optimizing[disabled] { opacity: 1; background: #e2edff; color: #4775fa; }
-.compose-optimize-rim, .compose-optimize-glow { position: absolute; top: -3rpx; right: -3rpx; bottom: -3rpx; left: -3rpx; border-radius: 31rpx; pointer-events: none; background: linear-gradient(115deg, #4e8eff 0%, #57d9f3 14%, #ad78f1 30%, #f58abd 46%, #ffb37c 61%, #ed9ae5 77%, #678aff 90%, #4e8eff 100%); background-size: 350% 180%; animation: compose-ai-colors 4s ease-in-out infinite alternate; }
-.compose-optimize-glow { top: -6rpx; right: -6rpx; bottom: -6rpx; left: -6rpx; opacity: .6; filter: blur(6rpx); }
-@keyframes compose-ai-colors { 0% { background-position: 0% 20%; } 50% { background-position: 55% 80%; } 100% { background-position: 100% 30%; } }
+.compose-optimize-shell .xiaocui-ai-rim, .compose-optimize-shell .xiaocui-ai-glow { border-radius: 31rpx; }
 .compose-undo-slot { position: relative; flex: 0 0 auto; width: 0; height: 52rpx; overflow: hidden; pointer-events: none; transition: width .28s cubic-bezier(.22, .68, .2, 1); }
 .compose-undo-slot.has-undo { width: 108rpx; pointer-events: auto; }
 .compose-notices .compose-optimize-undo { position: absolute; top: 0; left: 16rpx; width: 92rpx; min-width: 0; height: 52rpx; margin: 0; padding: 0; background: transparent; color: #8d949d; font-size: 23rpx; line-height: 52rpx; white-space: nowrap; opacity: 0; transform: translateX(-10rpx); transition: opacity .2s ease, transform .28s cubic-bezier(.22, .68, .2, 1); }
@@ -71,6 +71,7 @@ button::after { border: 0; }
 .compose-media > view { display: flex; align-items: center; justify-content: center; width: 52rpx; height: 76rpx; }
 .compose-media .choose-image-button { display: flex; align-items: center; justify-content: center; width: 52rpx; min-width: 0; height: 76rpx; margin: 0; padding: 0; background: transparent; }
 .choose-image-button[disabled] { opacity: .45; }
+.compose-media .emoji-trigger.is-active { background: #e2edff; }
 .compose-selected-images { flex: 0 0 170rpx; width: auto; height: 170rpx; margin-left: 92rpx; }
 .selected-image-strip { display: flex; gap: 14rpx; width: max-content; padding: 10rpx 4rpx 14rpx 0; }
 .selected-image { position: relative; flex-shrink: 0; width: 138rpx; height: 138rpx; }

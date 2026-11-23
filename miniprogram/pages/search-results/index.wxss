@@ -23,6 +23,7 @@ page { height:100%; overflow:hidden; background:#fff; }
 .result-user-avatar { display:block; flex-shrink:0; width:84rpx; height:84rpx; background:#f1f3f5; }
 .result-user-content { flex:1; min-width:0; }.result-user-heading { display:flex; align-items:center; gap:8rpx; color:#171b20; font-size:30rpx; font-weight:650; line-height:1.45; overflow-wrap:break-word; }
 .result-user-badge { flex-shrink:0; width:24rpx; height:24rpx; }.result-user-id { margin-top:3rpx; color:#8b949e; font-size:25rpx; }
+.result-user-badge.is-student { width: 28rpx; height: 28rpx; }
 .result-user-bio { margin-top:12rpx; color:#4b5058; font-size:27rpx; line-height:1.6; overflow-wrap:break-word; }
 .result-user-arrow { flex-shrink:0; width:28rpx; height:28rpx; margin-top:23rpx; }
 @media (prefers-reduced-motion:reduce) { .results-panels,.results-indicator { transition:none; } }

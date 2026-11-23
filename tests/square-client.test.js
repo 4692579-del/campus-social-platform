@@ -192,6 +192,42 @@ function client(handler, clock = Date) {
   return { service: context.module.exports, users, calls, login(value = user) { current = { ...value }; version++; } };
 }
 
+test('新闻详情补充的正文和多图回填列表，后续旧回包不能覆盖', async () => {
+  const short = post({ _id: 'n_' + 'a'.repeat(40), contentType: 'news', content: '旧摘要', bodyMissing: true,
+    newsUrlKey: 'example.com/news', images: ['https://example.com/cover.jpg'] });
+  const full = { ...short, content: '第一段\n\n第二段', bodyMissing: false, detailReady: true,
+    images: ['https://example.com/inside.jpg', ...short.images] };
+  const f = client(({ action }) => ({ result: { success: true, square: action === 'getSquarePost' ?
+    { post: full } : { items: [short], anchor: 1, nextOffset: 10 } } }));
+  await f.service.listNews();
+  await f.service.detail(short._id);
+  assert.equal(f.service.cachedNews().items[0].content, full.content);
+  assert.deepEqual([...f.service.cachedNews().items[0].images], full.images);
+  const refreshed = await f.service.listNews({ force: true });
+  assert.equal(refreshed.items[0].content, full.content);
+  assert.deepEqual([...refreshed.items[0].images], full.images);
+});
+
+test('新闻译文按原文版本和登录会话复用，合并同版本请求，忽略换账号后的迟到结果', async () => {
+  const id = 'n_' + 'c'.repeat(40), firstVersion = '1'.repeat(40), updatedVersion = '2'.repeat(40);
+  let finish;
+  const f = client(({ postId, version }) => new Promise(resolve => {
+    assert.equal(postId, id);
+    finish = () => resolve({ result: { success: true, square: { translation: { version, title: '标题', content: '正文' } } } });
+  }));
+  const first = f.service.translateNews(id, firstVersion);
+  assert.equal(f.service.translateNews(id, firstVersion), first);
+  finish(); const result = await first;
+  assert.equal(await f.service.translateNews(id, firstVersion), result);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.service.cachedNewsTranslation(id, updatedVersion), null);
+  const late = f.service.translateNews(id, updatedVersion);
+  f.login({ ...user, _id: 'bob' });
+  finish(); await assert.rejects(late, error => error.code === 'SESSION_CHANGED');
+  assert.equal(f.service.cachedNewsTranslation(id, firstVersion), null);
+  assert.equal(f.service.cachedNewsTranslation(id, updatedVersion), null);
+});
+
 test('置顶保存后仅重排个人普通动态缓存，迟到列表不回退，取消后恢复时间顺序', async () => {
   const older = post({ createdAt: '2026-11-01T00:00:00Z' }), newer = post({ _id: 'p_' + 'b'.repeat(40), createdAt: '2026-11-20T00:00:00Z' });
   const ok = square => ({ result: { success: true, square } });
@@ -849,6 +885,30 @@ test('评论服务在调用云端前拒绝51个码点和空内容，保留emoji�
 });
 
 
+test('主页视频缓存按目标隔离，合并分页并忽略删除与换账号前的旧回包', async () => {
+  const accountId = '87654321', postId = post()._id;
+  const row = { _id: `${postId}_0`, postId }, other = { _id: 'other_0', postId: 'p_' + 'b'.repeat(40) };
+  const ok = square => ({ result: { success: true, square } });
+  const completions = [];
+  const f = client(data => {
+    if (data.action === 'deleteSquarePost') return ok({ deletedId: data.postId });
+    return new Promise(resolve => completions.push(value => resolve(ok({ ...value, profileAccountId: data.profileAccountId }))));
+  });
+  const first = f.service.listProfileVideos(accountId);
+  assert.equal(f.service.listProfileVideos(accountId), first);
+  completions.shift()({ items: [row], hasMore: true, nextCursor: 'page-2' }); await first;
+  assert.equal(f.service.cachedProfileVideos(), null);
+  const more = f.service.listProfileVideos(accountId, { cursor: 'page-2' });
+  assert.equal(f.calls.at(-1).cursor, 'page-2');
+  await f.service.deletePost(postId);
+  completions.shift()({ items: [row, other], hasMore: false, nextCursor: '' });
+  assert.deepEqual(Array.from((await more).items), [other]);
+  const late = f.service.listProfileVideos(accountId, { force: true }); f.login({ _id: 'bob' });
+  completions.shift()({ items: [row], hasMore: false, nextCursor: '' });
+  await assert.rejects(late, { code: 'SESSION_CHANGED' });
+  assert.equal(f.service.cachedProfileVideos(accountId), null);
+});
+
 test('获赞统计合并请求、复用会话缓存，删除及点赞确认后重新读取', async () => {
   let finish, likes = 38;
   const f = client(data => {
@@ -860,10 +920,18 @@ test('获赞统计合并请求、复用会话缓存，删除及点赞确认后�
   const first = f.service.getOwnStats(), same = f.service.getOwnStats();
   assert.equal(first, same); finish(); assert.equal((await first).receivedLikes, 38);
   assert.equal((await f.service.getOwnStats()).receivedLikes, 38); assert.equal(f.calls.length, 1);
+  let invalidations = 0;
+  const unsubscribe = f.service.subscribeOwnStats(() => { invalidations++; });
   await f.service.react(post()._id, 'like', true, post());
+  assert.equal(invalidations, 1);
   const refreshed = f.service.getOwnStats(); likes = 39; finish(); assert.equal((await refreshed).receivedLikes, 39);
   await f.service.deletePost(post()._id);
+  assert.equal(invalidations, 2);
+  unsubscribe();
   const deleted = f.service.getOwnStats(); likes = 0; finish(); assert.equal((await deleted).receivedLikes, 0);
+  const forced = f.service.getOwnStats({ force: true });
+  assert.equal(forced, f.service.getOwnStats({ force: true }));
+  likes = 3; finish(); assert.equal((await forced).receivedLikes, 3);
 });
 
 test('获赞迟到读取不能覆盖切换账号或删除后的数据，失败仍保留真实缓存', async () => {

@@ -14,18 +14,31 @@ test('头像菜单事件仅首页启用，详情及其他列表不改变头像�
 });
 function fixture(options = {}) {
   let definition, now = 1000, timerId = 0;
-  const timers = new Map(), writes = [], events = [];
+  const timers = new Map(), writes = [], events = [], toasts = [];
   vm.runInNewContext(source, { Component: value => { definition = value; },
     require: () => require('../miniprogram/utils/post-image-layout'),
     Date: { now: () => now }, setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
     clearTimeout: id => timers.delete(id),
+    wx: { showToast: value => toasts.push(value.title) },
   });
   const c = { ...definition.methods, data: { ...structuredClone(definition.data), likeMotion: options.enabled !== false,
     viewer: options.guest ? null : { _id: 'alice' }, post: { _id: 'post', liked: false, images: ['one', 'two'] } },
     setData(value) { writes.push(value); Object.assign(this.data, value); }, triggerEvent(name, detail) { events.push({ name, ...detail }); } };
   const state = liked => { c.data.post = { ...c.data.post, liked }; definition.observers['post.liked'].call(c, liked); };
-  return { c, definition, timers, writes, events, state, advance: value => { now += value; } };
+  return { c, definition, timers, writes, events, toasts, state, advance: value => { now += value; } };
 }
+
+test('全球动态点赞只显示提示，评论入口沿用官方动态的旧评论查看机制', () => {
+  const f = fixture({ guest: true });
+  Object.assign(f.c.data.post, { contentType: 'news', replyCount: 0 });
+  f.c.like(); f.c.reply();
+  assert.deepEqual(f.toasts, ['全球动态暂不支持点赞', '全球动态暂不支持评论']);
+  assert.equal(f.events.length, 0);
+  assert.equal(f.c.data.likeMotionClass, '');
+  f.c.data.post.replyCount = 2;
+  f.c.reply();
+  assert.equal(f.events[0].name, 'reply');
+});
 
 test('初始展示及后台同步不播动画；明确点击后的真实乐观状态触发点赞爆发和取消回弹', () => {
   const f = fixture(); f.state(true); assert.equal(f.c.data.likeMotionClass, '');

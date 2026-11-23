@@ -11,6 +11,7 @@
 .quote-avatar { flex-shrink: 0; width: 40rpx; height: 40rpx; border-radius: 50%; background: #f0f2f4; }
 .quote-name { min-width: 0; font-size: 25rpx; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quote-verified { width: 21rpx; height: 21rpx; flex-shrink: 0; }
+.quote-verified.is-student { width: 25rpx; height: 25rpx; }
 .quote-time { margin-left: auto; flex-shrink: 0; color: #939ba7; font-size: 21rpx; }
 .quote-content { display: block; margin-top: 12rpx; white-space: pre-wrap; word-break: break-word; font-size: 27rpx; line-height: 1.65; }
 .quote-media-width { width: 100%; margin-top: 16rpx; }

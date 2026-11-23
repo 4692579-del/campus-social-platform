@@ -1,4 +1,5 @@
 <import src="../../templates/login-sheet.wxml" />
+<import src="../../templates/xiaocui-icon.wxml" />
 <view class="square-page detail-page">
   <view class="square-nav" style="height: {{navHeight}}px;">
     <button class="square-back" style="top: {{navTop}}px; height: {{navButtonHeight}}px;" bindtap="back" aria-label="返回"><image src="/images/interface/chevron-left.svg" mode="aspectFit" /></button>
@@ -9,10 +10,18 @@
       <comments-sheet bind:author="viewAuthorProfile" wx:for="{{commentMounts}}" wx:key="key" id="detail-comments" post-id="{{postId}}" viewer="{{user}}" comments-disabled="{{posts[0].author.commentsDisabled}}" news-comments="{{isNews}}" embedded top-offset="{{navHeight}}" focus-reply-id="{{focusReplyId}}" bind:login="commentLogin" bind:close="onCommentsClose" bind:changed="commentChanged">
         <view slot="post">
           <view wx:if="{{error}}" class="inline-error">{{error}}<button class="retry-link" bindtap="retry">重试</button></view>
-          <square-post post="{{posts[0]}}" viewer="{{user}}" bind:author="viewAuthorProfile" like-motion="{{true}}" detail
+          <square-post post="{{posts[0]}}" viewer="{{user}}" news-translation="{{newsTranslation}}" bind:author="viewAuthorProfile" like-motion="{{true}}" detail
             feed-video-enabled="{{!loginSheetOpen && !loginLoading && !composerOpen && !unfollowTarget}}"
             bind:react="reactPost" bind:reply="focusComments" bind:more="managePost" bind:quote="quotePost">
             <button slot="header-actions" wx:if="{{!isNews && (!user || (user.accountId && posts[0].author.accountId ? posts[0].author.accountId !== user.accountId : !posts[0].isOwn))}}" class="detail-follow" catchtap="followDetailAuthor" aria-label="{{followByAccount[posts[0].author.accountId].following ? '已关注' : '关注'}}">{{followByAccount[posts[0].author.accountId].following ? '已关注' : '关注'}}</button>
+            <view slot="news-translation" wx:if="{{isNews && posts[0].translationVersion}}" class="news-translate">
+              <view wx:if="{{translatingNews}}" class="xiaocui-ai-glow" aria-hidden="true"></view>
+              <view wx:if="{{translatingNews}}" class="xiaocui-ai-rim" aria-hidden="true"></view>
+              <button class="news-translate-button" catchtap="toggleNewsTranslation" disabled="{{translatingNews}}">
+                <template is="xiaocui-icon" />
+                <text>{{translatingNews ? '小萃正在翻译' : (newsTranslation ? '显示原文' : '使用小萃翻译')}}</text>
+              </button>
+            </view>
           </square-post>
         </view>
       </comments-sheet>

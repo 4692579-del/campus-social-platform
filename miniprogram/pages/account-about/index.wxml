@@ -31,7 +31,7 @@
           <view class="detail-label">所在学校</view>
           <view class="school-value">
             <text class="detail-value">{{schoolText}}</text>
-            <view wx:if="{{isVerified}}" class="verified-badge"><image src="/images/verification/verified.png" mode="aspectFit" /><text>已认证</text></view>
+            <image wx:if="{{isVerified}}" class="school-student-badge" src="/images/verification/student.svg" mode="aspectFit" aria-label="学生已认证" />
           </view>
         </view>
       </view>

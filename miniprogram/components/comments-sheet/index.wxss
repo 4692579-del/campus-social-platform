@@ -1,5 +1,6 @@
 @import "../../styles/avatar.wxss";
 @import "../../styles/xiaocui-icon.wxss";
+@import "../../styles/emoji-picker.wxss";
 :host { display: block; }
 .comments-layer { position: fixed; z-index: 2400; top: 0; right: 0; bottom: 0; left: 0; color: #171b20; }
 .comments-mask { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: rgba(15, 23, 37, .35); animation: comments-fade .18s ease-out; }
@@ -31,6 +32,7 @@ button::after { border: 0; }
 .comment-heading .comment-more { display: flex; align-items: center; justify-content: center; flex: 0 0 44rpx; width: 44rpx; min-width: 0; height: 34rpx; margin: 0 0 0 auto; padding: 0; background: transparent; }
 .comment-more image { display: block; width: 30rpx; height: 30rpx; }
 .comment-badge { width: 22rpx; height: 22rpx; flex-shrink: 0; }
+.comment-badge.is-student { width: 25rpx; height: 25rpx; }
 .comment-address { min-width: 0; color: #98a1ad; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comment-text { position: relative; top: -4rpx; display: block; margin-top: 6rpx; font-size: 28rpx; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .comment-meta { position: relative; top: -8rpx; display: flex; align-items: center; gap: 18rpx; min-height: 48rpx; margin-top: 4rpx; color: #a1a7af; font-size: 22rpx; }
@@ -68,15 +70,21 @@ button::after { border: 0; }
 .comment-entry { display: block; position: relative; flex: 1 1 0; min-width: 0; min-height: 46rpx; }
 .composer-ai-chip { display: flex; align-items: center; justify-content: center; flex-shrink: 0; height: 40rpx; padding: 0 10rpx; box-sizing: border-box; border-radius: 24rpx; background: #e2edff; color: #4775fa; font-size: 22rpx; line-height: 1; white-space: nowrap; }
 .composer-ai-mention { position: absolute; z-index: 2; top: 3rpx; left: 0; width: 84rpx; padding: 0; pointer-events: none; }
-.composer-tool-icons .composer-ask-ai { width: 144rpx; min-width: 0; margin: 0; gap: 6rpx; }
+.composer-tools .composer-ask-ai { flex: 0 0 144rpx; width: 144rpx; min-width: 0; margin: 0; gap: 6rpx; }
 .composer-ask-ai .xiaocui-icon { width: 28rpx; height: 28rpx; }
 .composer-ask-ai::after { border: 0; }
-.composer-tools { position: relative; flex-shrink: 0; width: 324rpx; height: 46rpx; margin-left: 12rpx; transition: width .26s cubic-bezier(.22, .68, .2, 1), margin-left .26s cubic-bezier(.22, .68, .2, 1); }
-.composer-tool-icons { position: absolute; right: 0; top: 0; display: flex; align-items: center; gap: 8rpx; width: 324rpx; height: 46rpx; opacity: 1; transform: scale(1); transform-origin: right center; transition: transform .2s ease, opacity .18s ease; }
-.composer-tool { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 52rpx; height: 40rpx; }
+/* 工具槽的中线距底部 23rpx，与字数圆环的 6rpx 底距加半径对齐。 */
+.composer-tools { display: flex; flex: 0 0 auto; align-self: flex-end; align-items: center; height: 46rpx; margin-left: 12rpx; transition: margin-left .26s cubic-bezier(.22, .68, .2, 1); }
+.composer-tool-group { display: flex; flex: 0 0 auto; align-items: center; height: 46rpx; overflow: hidden; transition: width .26s cubic-bezier(.22, .68, .2, 1), margin .26s cubic-bezier(.22, .68, .2, 1), opacity .18s ease; }
+.composer-tool-left { width: 204rpx; margin-right: 8rpx; gap: 8rpx; }
+.composer-tool-right { width: 52rpx; margin-left: 8rpx; }
+.composer-tools .composer-tool { display: flex; align-items: center; justify-content: center; flex: 0 0 52rpx; width: 52rpx; min-width: 0; height: 40rpx; box-sizing: border-box; margin: 0; padding: 0; border: 0; border-radius: 12rpx; background: transparent; line-height: 1; }
 .composer-tool image { display: block; width: 40rpx; height: 40rpx; }
-.has-text .composer-tools { width: 0; margin-left: 0; pointer-events: none; }
-.has-text .composer-tool-icons { opacity: 0; transform: scale(.35); }
+.composer-emoji::after { border: 0; }
+.composer-tools .composer-emoji.is-active { background: #e2edff; }
+.has-text .composer-tools { margin-left: 8rpx; }
+.has-text .composer-tool-group { width: 0; margin: 0; opacity: 0; pointer-events: none; }
+.comment-emoji-panel { background: #f5f6f8; }
 .composer-send-slot { position: relative; flex: 0 0 auto; width: 0; height: 76rpx; overflow: hidden; pointer-events: none; transition: width .26s cubic-bezier(.22, .68, .2, 1); }
 .has-content .composer-send-slot { width: 90rpx; pointer-events: auto; }
 .comment-composer .comment-send, .comment-composer .comment-login { display: flex; align-items: center; justify-content: center; flex: 0 0 76rpx; width: 76rpx; min-width: 0; height: 76rpx; box-sizing: border-box; padding: 0; margin: 0; border-radius: 50%; background: #4775fa; color: #fff; font-size: 27rpx; line-height: 1; }
@@ -127,7 +135,6 @@ button::after { border: 0; }
 .comment-image-uploading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.24); color: #fff; font-size: 22rpx; }
 .comment-image-cell .comment-image-remove { position: absolute; top: 6rpx; right: 6rpx; display: flex; align-items: center; justify-content: center; width: 40rpx; min-width: 0; height: 40rpx; margin: 0; padding: 0; border-radius: 50%; background: rgba(255,255,255,.92); }
 .comment-image-remove image { width: 24rpx; height: 24rpx; }
-.composer-tool-icons .composer-image-trigger { flex: 0 0 52rpx; width: 52rpx; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; line-height: 1; }
 .composer-image-trigger[disabled] { opacity: .5; }
 
 /* 评论正文/回复组保留节点，以自然内容高度收拢；不触碰底部原生输入框。 */

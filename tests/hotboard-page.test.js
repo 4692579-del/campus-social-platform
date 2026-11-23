@@ -144,6 +144,21 @@ test('热榜完整展示原排名，预填和平台切换复用缓存',async()=>
   await f.page.selectHotPlatform({currentTarget:{dataset:{type:'weibo'}}});assert.equal(f.page.data.hotRows[0].rank,11);
 });
 
+test('搜索侧栏打开荟萃计划时隐藏底栏，页面隐藏后清除遮挡', () => {
+  const f = pageFixture();
+  const bar = { data: {}, setData(patch) { Object.assign(this.data, patch); } };
+  f.page.getTabBar = () => bar;
+  f.page.onShow();
+  f.page.setData({ menuOpen: true });
+  f.page.selectMenuItem({ currentTarget: { dataset: { key: 'membership' } } });
+  assert.equal(f.page.data.membershipOpen, true);
+  assert.equal(bar.data.authBlocked, true);
+  assert.match(fs.readFileSync('miniprogram/pages/search/index.wxml', 'utf8'), /<membership-sheet[^>]*top="{{navHeight}}"/);
+  f.page.onHide();
+  assert.equal(f.page.data.membershipOpen, false);
+  assert.equal(bar.data.authBlocked, false);
+});
+
 test('搜索页的侧栏使用已登录头像和统计，菜单跳转保留展开画面，返回后恢复搜索状态', async () => {
   let user = { _id: 'viewer', accountId: '12345678', avatarFileID: 'avatar' };
   const f = pageFixture(undefined, {}, () => null, {

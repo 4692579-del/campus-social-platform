@@ -1,0 +1,7 @@
+<template name="emoji-picker">
+  <scroll-view class="emoji-picker" scroll-y show-scrollbar="{{false}}" aria-label="选择表情">
+    <view class="emoji-picker-grid">
+      <button wx:for="{{choices}}" wx:key="emoji" class="emoji-picker-choice" data-emoji="{{item.emoji}}" catchtap="chooseEmoji" aria-label="{{item.label}}">{{item.emoji}}</button>
+    </view>
+  </scroll-view>
+</template>

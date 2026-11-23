@@ -1,0 +1,4 @@
+.xiaocui-ai-rim, .xiaocui-ai-glow { position: absolute; top: -3rpx; right: -3rpx; bottom: -3rpx; left: -3rpx; border-radius: inherit; pointer-events: none; background: linear-gradient(115deg, #4e8eff 0%, #57d9f3 14%, #ad78f1 30%, #f58abd 46%, #ffb37c 61%, #ed9ae5 77%, #678aff 90%, #4e8eff 100%); background-size: 350% 180%; animation: xiaocui-ai-colors 4s ease-in-out infinite alternate; }
+.xiaocui-ai-glow { top: -6rpx; right: -6rpx; bottom: -6rpx; left: -6rpx; opacity: .6; filter: blur(6rpx); }
+@keyframes xiaocui-ai-colors { 0% { background-position: 0% 20%; } 50% { background-position: 55% 80%; } 100% { background-position: 100% 30%; } }
+@media (prefers-reduced-motion: reduce) { .xiaocui-ai-rim, .xiaocui-ai-glow { animation: none; } }

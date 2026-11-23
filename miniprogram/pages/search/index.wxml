@@ -95,6 +95,7 @@
   </view>
 </view>
 <template is="account-menu" data="{{user: user, accountHint: accountHint, menuOpen: menuOpen, navHeight: navHeight, menuLikeCount: menuLikeCount, followerCount: followerCount, followingCount: followingCount, menuItems: menuItems, utilityMenuItems: utilityMenuItems, loading: loading, confirmingLogout: confirmingLogout}}" />
+<membership-sheet wx:if="{{membershipOpen}}" top="{{navHeight}}" capsule-height="{{navButtonHeight}}" bind:close="closeMembership" />
 <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: accountError, loading: loading, cancelText: '暂不登录'}}" />
 <view wx:if="{{tabMotionPhase && !menuOpen && !authChecking && !loginSheetOpen}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>
 </view>

@@ -4,6 +4,7 @@ const media = require('../../services/post-images');
 const { token } = require('../../utils/post-view');
 const { commentGroups } = require('../../utils/comment-threads');
 const { reactComment: optimisticReaction } = require('../../utils/comment-state');
+const { emojiChoices, selectionOf, captureSelection, insertEmoji } = require('../../utils/emoji-input');
 // 原生首行保留98rpx给84rpx胶囊和14rpx间隔，后续行自然回到左边界。
 // 占位仅用于布局和捕获退格，解码后才计数/发送；不能作为真实空格提交。
 const COMMENT_MAX = 50;
@@ -31,17 +32,19 @@ Component({
   properties: { postId: String, viewer: Object, embedded: Boolean, topOffset: Number, focusReplyId: String, focusReplyInput: Boolean, commentsDisabled: Boolean, newsComments: Boolean },
   observers: { topOffset() { if (this._sheetStops && this.data.embedded) this.measureSheet(); },
     focusReplyId() { if (this._roots) this.locateReply(); },
+    'commentsDisabled, commentsClosed, newsComments': function () { if (this.commentsAreClosed()) this.closeEmoji(); },
     'postId, viewer._id': function (id, account) {
       const owner = `${id || ''}:${account || ''}`;
       if (owner === this._commentMotionOwner) return;
       this._commentMotionOwner = owner;
       this.clearCommentMotions();
+      this.closeEmoji(); this._commentSelection = null;
     } },
   data: { items: [], loading: false, loadingMore: false, error: '', sendError: '', hasMore: false, nextOffset: 0, commentsClosed: false,
     selectedImages: [], choosingImages: false,
     text: '', inputValue: '', nativeInputValue: '', inputCursor: -1, askAI: false, count: 0, remainingCount: COMMENT_MAX, countWarning: false, countProgress: 0, limitHintVisible: false, canSend: false, sending: false, keyboardHeight: 0, keyboardTop: 0,
     viewportHeight: 812, sheetTop: 260, expanded: false, dragging: false,
-    replyTarget: null, inputFocused: false, inputFocusRequested: false, nativeTextareaMetrics: false, scrollIntoView: '' },
+    replyTarget: null, inputFocused: false, inputFocusRequested: false, nativeTextareaMetrics: false, scrollIntoView: '', emojiOpen: false, emojiChoices },
   lifetimes: {
     attached() {
       try {
@@ -74,7 +77,7 @@ Component({
     },
     detached() { this.clearCommentMotions('', false); this.discardCommentUploads(); clearTimeout(this._limitHintTimer); this._dead = true; this._drag = null; this.clearAITimers(); this._epoch = (this._epoch || 0) + 1; if (this._stopComments) this._stopComments(); if (this._stopAI) this._stopAI(); },
   },
-  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this.hideLimitHint(); this._pageHidden = true; this.clearCommentMotions(); this.clearAITimers(); }, show() {
+  pageLifetimes: { resize() { this.measureSheet(); }, hide() { this.hideLimitHint(); this._pageHidden = true; this.closeEmoji(); this.clearCommentMotions(); this.clearAITimers(); }, show() {
     this._pageHidden = false;
     if (this._mediaVersion !== users.getSessionVersion()) {
       this.clearCommentMotions('', false);
@@ -86,7 +89,7 @@ Component({
   } },
   methods: {
     stopEvent() {},
-    commentsAreClosed() { return this.data.commentsDisabled || this.data.commentsClosed; },
+    commentsAreClosed() { return this.data.newsComments || this.data.commentsDisabled || this.data.commentsClosed; },
     clearCommentMotions(id = '', render = true) {
       if (!this._commentMotions) return;
       const ids = id ? [id] : [...this._commentMotions.keys()];
@@ -146,6 +149,7 @@ Component({
       if (!users.getCachedUser()) { this.login(); return; }
       if (this.data.selectedImages.length >= 3) { wx.showToast({ title: '一次最多发送3张图片', icon: 'none' }); return; }
       const epoch = this._epoch, version = users.getSessionVersion();
+      this.closeEmoji();
       this._nativeMediaActive = true;
       this.setData({ choosingImages: true, sendError: '', inputFocused: false, inputFocusRequested: false, keyboardHeight: 0 });
       if (typeof wx.hideKeyboard === 'function') { try { wx.hideKeyboard({ fail() {} }); } catch (error) { /* 收键盘失败仍允许选择图片。 */ } }
@@ -247,6 +251,7 @@ Component({
     dragStart(event) {
       const y = this.touchY(event);
       if (this.data.embedded || this._dead || typeof y !== 'number' || !this._sheetStops) return;
+      this.closeEmoji();
       if (this.data.keyboardHeight && typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this._drag = { y, top: this.data.sheetTop, expanded: this.data.expanded };
       this.setData({ dragging: true, keyboardHeight: 0 });
@@ -289,6 +294,7 @@ Component({
     focusComposer() {
       if (this.commentsAreClosed()) return;
       if (!users.getCachedUser()) { this.login(); return; }
+      this.closeEmoji();
       this.cancelReply();
       this.setData({ inputFocused: true, inputFocusRequested: true });
     },
@@ -481,6 +487,7 @@ Component({
       if (!row || row.folded || row.rootId && this.findComment(row.rootId)?.folded) return;
       const thread = row.rootId && this._threads.get(row.rootId);
       if (thread && thread.items.some(item => item.folded && (row.ancestorIds || []).includes(item._id))) return;
+      this.closeEmoji();
       this._requestId = token();
       this.setData({ replyTarget: { id: row._id, rootId: row.rootId || row._id, nickname: row.author.nickname }, inputFocused: true, inputFocusRequested: true, sendError: '' });
     },
@@ -490,9 +497,14 @@ Component({
       this.setData({ replyTarget: null });
     },
     // 原生focus只更新观测值，不把这个事件反写成另一次focus请求。
-    focusInput() { this.traceInput('focus'); if (!this.data.inputFocused) this.setData({ inputFocused: true }); },
-    blurInput() {
+    focusInput(event) {
+      this.traceInput('focus'); this.closeEmoji();
+      this._commentSelection = selectionOf(this.data.inputValue, event?.detail) || this._commentSelection;
+      if (!this.data.inputFocused) this.setData({ inputFocused: true });
+    },
+    blurInput(event) {
       this.traceInput('blur');
+      if (event?.detail?.value === this.data.inputValue) this._commentSelection = selectionOf(this.data.inputValue, event.detail) || this._commentSelection;
       // 键盘还在时，原生缩行的临时blur不能被放大成一条focus=false指令。
       // 不反向请求focus；真正收键盘后由keyboard事件解除聚焦请求。
       const values = {};
@@ -613,9 +625,10 @@ Component({
       this._requestId = token();
       this._nativeInputSnapshot = value;
       this.setReplyInput(text, askAI, value);
+      this._commentSelection = selectionOf(this.data.inputValue, event.detail);
       return this.data.inputValue;
     },
-    setReplyInput(text, askAI, nativeValue) {
+    setReplyInput(text, askAI, nativeValue, cursor = -1) {
       text = Array.from(text).slice(0, askAI ? COMMENT_MAX - AI_MENTION_CHARS : COMMENT_MAX).join('');
       const content = replyText(text, askAI), count = Array.from(content).length;
       const inputValue = (askAI ? AI_PREFIX : '') + text;
@@ -624,18 +637,53 @@ Component({
         canSend: !this.data.choosingImages && Boolean(content.trim() || this.data.selectedImages.length) && count <= COMMENT_MAX, sendError: '' };
       // 正常键入（包括回车、拼音）交给原生控件，模型值与绑定值分离，禁止每字重设value/cursor。
       if (nativeValue !== inputValue) {
+        this._commentSelection = selectionOf(inputValue, { cursor });
         const actual = this._nativeInputSnapshot === undefined ? this.data.inputValue : this._nativeInputSnapshot;
         // 原生值已在本地变化，但上次绑定值可能仍是空串；先回显实际值使清空/重复截断也能生效。
         if (this.data.nativeInputValue === inputValue && actual !== inputValue) this.setData({ nativeInputValue: actual });
         values.nativeInputValue = inputValue;
-        values.inputCursor = -1;
+        values.inputCursor = cursor;
         this._nativeInputSnapshot = inputValue;
       }
       this.setData(values);
     },
+    closeEmoji() {
+      this._emojiSession = null;
+      if (this.data.emojiOpen) this.setData({ emojiOpen: false });
+    },
+    toggleEmoji() {
+      if (this.commentsAreClosed() || this._dead || this._pageHidden || this.data.sending || this.data.choosingImages) return;
+      const viewer = users.getCachedUser();
+      if (!viewer) { this.login(); return; }
+      const version = users.getSessionVersion();
+      if (viewer._id !== this.data.viewer?._id || version !== this._mediaVersion) return;
+      if (this.data.emojiOpen) { this.closeEmoji(); return; }
+      const ticket = this._emojiSession = { version };
+      const value = this.data.inputValue, focused = this.data.inputFocused;
+      captureSelection(wx, detail => {
+        if (this._emojiSession === ticket && !ticket.picked && this.data.inputValue === value && users.getSessionVersion() === version) {
+          this._commentSelection = selectionOf(value, detail) || this._commentSelection;
+        }
+      }, focused);
+      this.setData({ emojiOpen: true, inputFocused: false, inputFocusRequested: false });
+    },
+    chooseEmoji(event) {
+      if (!this.data.emojiOpen || this.commentsAreClosed() || this._dead || this._pageHidden || this.data.sending || this.data.choosingImages ||
+          this._emojiSession?.version !== users.getSessionVersion()) return;
+      const askAI = this.data.askAI, prefixLength = askAI ? AI_PREFIX.length : 0;
+      const next = insertEmoji(this.data.inputValue, event.currentTarget.dataset.emoji, this._commentSelection,
+        askAI ? COMMENT_MAX - AI_MENTION_CHARS : COMMENT_MAX, prefixLength);
+      if (!next) return;
+      if (next.limited) { this.showLimitHint(); return; }
+      this._emojiSession.picked = true;
+      this.hideLimitHint();
+      this._requestId = token();
+      this.setReplyInput(next.value.slice(prefixLength), askAI, undefined, next.cursor);
+    },
     askXiaocui() {
       if (this.data.newsComments || this.data.sending || this._dead) return;
       if (!users.getCachedUser()) { this.login(); return; }
+      this.closeEmoji();
       if (!this.data.askAI) this._requestId = token();
       this.setReplyInput(this.data.text, true);
       // hold-keyboard 保留原生焦点；已聚焦时只插入胶囊，不重放 focus。
@@ -655,6 +703,7 @@ Component({
         ...(!height && this.data.inputFocusRequested ? { inputFocusRequested: false } : {}) });
     },
     dismissKeyboardOnSend() {
+      this.closeEmoji();
       this.setData({ inputFocused: false, inputFocusRequested: false, keyboardHeight: 0,
         keyboardTop: this.keyboardTop(this.data.sheetTop, 0) });
       // 仅点击发送时执行，云端回调不再操作键盘；API失败不能中断评论提交。

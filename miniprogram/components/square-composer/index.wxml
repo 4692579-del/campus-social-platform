@@ -1,5 +1,6 @@
 <import src="../../templates/login-sheet.wxml" />
 <import src="../../templates/xiaocui-icon.wxml" />
+<import src="../../templates/emoji-picker.wxml" />
 <view class="composer-layer {{closing ? 'is-closing' : ''}}">
   <view class="composer-backdrop" bindtap="cancel" catchtouchmove="stopMenuEvent"></view>
   <view class="compose-sheet" style="top: {{sheetTop}}px; height: {{viewportHeight - sheetTop - keyboardHeight}}px;" aria-role="dialog" aria-modal="true" aria-label="发布动态">
@@ -15,7 +16,7 @@
     <view class="compose-body {{quotePostId ? 'is-quoted' : ''}}"><view class="compose-body-inner {{quotePostId ? 'has-quote' : ''}}">
       <view class="compose-author"><image class="compose-avatar avatar-outline" src="{{user.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view class="compose-destination"><text class="compose-nickname">{{user.nickname || '未登录'}}</text><image src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /><text class="compose-scope">动态广场</text></view></view>
       <view class="compose-editor">
-        <textarea class="compose-textarea" wx:if="{{editorReady}}" value="{{content}}" fixed hold-keyboard auto-height="{{!!quotePostId}}" bindtouchstart="editorTouchStart" disable-default-padding="{{!!quotePostId}}" focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing || !!panel || exitConfirmVisible}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
+        <textarea class="compose-textarea" wx:if="{{editorReady}}" value="{{content}}" cursor="{{editorCursor}}" fixed hold-keyboard auto-height="{{!!quotePostId}}" bindtouchstart="editorTouchStart" disable-default-padding="{{!!quotePostId}}" focus="{{editorFocusRequested}}" bindfocus="editorDidFocus" bindblur="blurEditor" bindinput="onInput" bindkeyboardheightchange="keyboard" placeholder="有什么新鲜事想和大家分享？" placeholder-class="compose-placeholder" maxlength="-1" disabled="{{publishing || savingDraft || !user || loginSheetOpen || closing || !!panel || exitConfirmVisible}}" show-confirm-bar="{{false}}" confirm-type="return" confirm-hold="{{true}}" adjust-position="{{false}}" />
       </view>
       <scroll-view class="compose-attachments {{quotePostId ? 'has-quote' : ''}}" scroll-y="{{!!quotePostId}}" enhanced show-scrollbar="{{false}}">
       <view wx:if="{{quotePostId}}" class="compose-inline-quote"><quote-card quote="{{quote}}" removable disabled="{{publishing || savingDraft || choosingImages}}" bind:remove="removeQuote" /><view wx:if="{{quoteError}}" class="compose-quote-error">{{quoteError}}<button bindtap="retryQuote">重试</button></view></view>
@@ -34,7 +35,7 @@
       <view wx:if="{{images.length > 3}}" class="media-limit-hint">旧草稿含超过 3 个媒体，请移除多余项后发布。</view>
       </scroll-view>
     </view></view>
-    <view class="compose-footer" catchtouchmove="stopMenuEvent">
+    <view class="compose-footer">
       <view wx:if="{{error}}" class="compose-error">{{error}}</view>
       <view wx:if="{{(publishing || savingDraft) && uploadTotal}}" class="compose-upload-status">{{uploadDone < uploadTotal ? '正在上传图片 ' + uploadDone + ' / ' + uploadTotal : (savingDraft ? '正在保存图片草稿…' : '正在发布图文…')}}</view>
       <scroll-view wx:if="{{noticeOrder.length}}" class="compose-notice-scroll" scroll-x enhanced show-scrollbar="{{false}}"><view class="compose-notices">
@@ -49,7 +50,7 @@
               </view>
               <view class="compose-optimize-controls">
                 <view class="compose-optimize-shell {{optimizing ? 'is-optimizing' : ''}}">
-                  <block wx:if="{{optimizing}}"><view class="compose-optimize-glow" aria-hidden="true"></view><view class="compose-optimize-rim" aria-hidden="true"></view></block>
+                  <block wx:if="{{optimizing}}"><view class="xiaocui-ai-glow" aria-hidden="true"></view><view class="xiaocui-ai-rim" aria-hidden="true"></view></block>
                   <button class="compose-optimize {{optimizing ? 'is-optimizing' : ''}}" catchtap="optimizeContent" disabled="{{optimizing || publishing || savingDraft || choosingImages || !user}}" aria-label="{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}"><template is="xiaocui-icon" /><text>{{optimizing ? '小萃正在优化内容' : '使用小萃优化内容'}}</text></button>
                 </view>
                 <button wx:if="{{!optimizeHelpUsed || optimizeHelpVisible}}" class="compose-optimize-help" catchtap="showOptimizeHelp" disabled="{{optimizing || publishing || savingDraft || choosingImages || !user}}" aria-label="查看小萃功能说明"><image src="/images/interface/help-circle.svg" mode="aspectFit" /></button>
@@ -61,12 +62,13 @@
         </view>
       </view></scroll-view>
       <text wx:if="{{optimizeError}}" class="compose-optimize-error" aria-role="alert">{{optimizeError}}</text>
-      <view class="compose-tools" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
+      <view class="compose-tools" catchtouchmove="stopMenuEvent" style="padding-bottom: {{keyboardHeight ? '20rpx' : 'calc(20rpx + env(safe-area-inset-bottom))'}};">
         <button class="post-options" data-panel="options" bindtap="openPanel" disabled="{{publishing || savingDraft || choosingImages}}"><image src="/images/interface/sliders.svg" mode="aspectFit" /><text>动态设置</text></button>
         <view class="compose-tools-divider" aria-hidden="true"></view>
-        <view class="compose-media"><button class="choose-image-button" bindtap="choosePostImages" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="从相册选择图片或视频，也可拍照"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button><view><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></view><view><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view></view>
+        <view class="compose-media"><button class="choose-image-button" bindtap="choosePostImages" disabled="{{publishing || savingDraft || choosingImages}}" aria-label="从相册选择图片或视频，也可拍照"><image src="/images/interface/comment-image.svg" mode="aspectFit" /></button><button class="choose-image-button emoji-trigger {{emojiOpen ? 'is-active' : ''}}" catchtap="toggleEmoji" disabled="{{publishing || savingDraft || choosingImages || !editorReady || !user}}" aria-label="表情" aria-expanded="{{emojiOpen}}"><image src="/images/interface/comment-sticker.svg" mode="aspectFit" /></button><view><image src="/images/interface/comment-gif.svg" mode="aspectFit" /></view></view>
         <view class="compose-submit"><view class="compose-progress-anchor"><view wx:if="{{limitHintVisible}}" class="compose-limit-hint" aria-role="alert">已达到输入上限</view><view class="compose-progress {{countWarning ? 'is-warning' : ''}}" style="background-image: conic-gradient({{countWarning ? '#e44646' : '#4775fa'}} 0deg, {{countWarning ? '#e44646' : '#4775fa'}} {{countProgress}}deg, #dce0e5 {{countProgress}}deg, #dce0e5 360deg);" aria-role="progressbar" aria-label="{{'剩余可输入' + remainingCount + '字，含空格和标点，上限150字'}}"><view><text class="compose-remaining">{{countWarning ? remainingCount : ''}}</text></view></view></view><button class="publish-button" bindtap="publish" loading="{{publishing}}" disabled="{{!canPublish || publishing || savingDraft || choosingImages || !user || loginSheetOpen}}">{{publishing ? (uploadDone < uploadTotal ? '上传中' : publishingVideo ? '处理中' : '发布中') : '发布'}}</button></view>
       </view>
+      <template wx:if="{{emojiOpen}}" is="emoji-picker" data="{{choices: emojiChoices}}" />
     </view>
   </view>
   <view wx:if="{{panel}}" class="compose-settings-layer">

@@ -3,6 +3,18 @@ const { createHash } = require('crypto');
 const digest = value => createHash('sha256').update(value).digest('hex').slice(0, 40);
 const isNewsId = value => typeof value === 'string' && /^n_[a-f0-9]{40}$/.test(value);
 const plain = value => typeof value === 'string' ? value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim() : '';
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', hellip: '…' };
+function displayText(value) {
+  if (typeof value !== 'string') return '';
+  const decode = (entity, number, hex, name) => {
+    if (name) return Object.prototype.hasOwnProperty.call(ENTITIES, name) ? ENTITIES[name] : entity;
+    const point = hex ? parseInt(hex, 16) : Number(number);
+    return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? String.fromCodePoint(point) : entity;
+  };
+  const pattern = /&(?:#(\d+)|#[xX]([a-fA-F0-9]+)|([A-Za-z]+));/g;
+  return plain(value.replace(pattern, decode).replace(pattern, decode));
+}
 function publicUrl(value) {
   if (typeof value !== 'string' || value.length > 2048) return '';
   try {
@@ -33,7 +45,6 @@ function imageUrls(list) {
     const https = url.replace(/^http:/, 'https:');
     const key = canonicalUrl(https);
     if (!images.has(key)) images.set(key, https);
-    if (images.size >= 9) break;
   }
   return [...images.values()];
 }
@@ -47,7 +58,7 @@ function articleOf(row) {
   if (!Number.isFinite(time)) return null;
   const images = imageUrls([row.image, ...(Array.isArray(row.images) ? row.images : [])]);
   return { _id: `n_${digest(`worldnews:${externalId}`)}`, externalId, url, urlKey: canonicalUrl(url), title,
-    content: bodyOf(row.text), summary: plain(row.summary).slice(0, 1600), images, feedImages: images,
+    content: bodyOf(row.text), summary: plain(row.summary).slice(0, 1600), images,
     createdAt: new Date(time).toISOString(), authors: (Array.isArray(row.authors) ? row.authors : [row.author]).map(plain).filter(Boolean).slice(0, 20).map(name => name.slice(0, 160)),
     language: plain(row.language).slice(0, 10), sourceCountry: plain(row.source_country).slice(0, 10), category: plain(row.category).slice(0, 100),
     source: new URL(url).hostname.replace(/^www\./, ''), scope: 'news', contentType: 'news', status: 'published' };
@@ -60,10 +71,11 @@ function bodyOf(value) {
 }
 
 function newsView(row, detail) {
-  const summary = row.summary || row.content || '';
-  return { _id: row._id, contentType: 'news', title: row.title, content: detail ? row.content || row.summary : Array.from(summary).slice(0, 280).join(''),
-    detailReady: detail, ...(detail ? { sourceUrl: row.url, authors: row.authors, bodyMissing: !row.content } : {}),
-    images: detail ? row.images : row.feedImages || row.images.slice(0, 1), createdAt: row.createdAt, category: row.category, language: row.language,
+  const body = displayText(row.content);
+  const title = displayText(row.title), content = body || displayText(row.summary);
+  return { _id: row._id, contentType: 'news', title, content, translationVersion: digest(JSON.stringify([title, content])),
+    detailReady: detail, bodyMissing: !body, ...(detail ? { sourceUrl: row.url, authors: row.authors } : {}),
+    images: imageUrls([...(row.images || []), ...(row.feedImages || [])]), createdAt: row.createdAt, category: row.category, language: row.language,
     sourceCountry: row.sourceCountry, newsUrlKey: row.urlKey, author: { nickname: row.source, avatarFileID: '/images/interface/news-source.svg', accountId: '' },
     likeCount: row.likeCount || 0, replyCount: row.replyCount || 0, isOwn: false };
 }

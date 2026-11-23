@@ -18,7 +18,7 @@
       <view wx:for="{{skeletons}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view>
     </block>
     <block wx:else>
-      <square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" like-motion="{{true}}"
+      <square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" like-motion="{{true}}" seven-line-preview="{{true}}"
         bind:open="openPost" bind:author="viewAuthorProfile" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" />
       <view wx:if="{{!posts.length && !feedError && !feedHasMore}}" class="feed-empty"><view class="empty-heading">暂时没有新闻</view><view class="empty-caption">下拉刷新看看最新动态</view></view>
       <view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view>

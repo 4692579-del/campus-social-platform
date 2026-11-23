@@ -4,6 +4,7 @@ const gate = require('../../utils/login-gate');
 const { token } = require('../../utils/post-view');
 const media = require('../../services/post-images');
 const { declarations, declarationKey } = require('../../utils/content-declaration');
+const { emojiChoices, selectionOf, captureSelection, insertEmoji } = require('../../utils/emoji-input');
 
 Component({
   properties: { initialQuote: Object, quoteOwnerId: String },
@@ -15,7 +16,7 @@ Component({
       { key: 'followers', label: '我的粉丝' }, { key: 'following', label: '我的关注' }],
     declarations,
     quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '',
-    loginSheetOpen: false, loginLoading: false, loginError: '' },
+    loginSheetOpen: false, loginLoading: false, loginError: '', emojiOpen: false, emojiChoices, editorCursor: -1 },
   lifetimes: {
     attached() { this.measure(); return this.initialize(); },
     detached() {
@@ -30,6 +31,8 @@ Component({
   pageLifetimes: {
     resize() { this.measure(); },
     hide() {
+      this._pageHidden = true;
+      this.closeEmoji();
       this._editorFocusUntil = 0;
       this.cancelOptimization();
       this.hideLimitHint();
@@ -38,6 +41,7 @@ Component({
     },
     show() {
       if (this._unloaded) return;
+      this._pageHidden = false;
       const current = users.getCachedUser();
       if ((current && current._id) !== (this.data.user && this.data.user._id)) {
         this._quoteSequence = (this._quoteSequence || 0) + 1;
@@ -87,6 +91,7 @@ Component({
       const changed = this._editorOwnerId !== user._id;
       this._editorOwnerId = user._id;
       if (changed) {
+        this.closeEmoji(); this._editorSelection = null;
         this._quoteSequence = (this._quoteSequence || 0) + 1;
         this._savedQuoteId = '';
         this.setData({ editorReady: false, quotePostId: '', quote: null, quoteReady: false, quoteLoading: false, quoteError: '' });
@@ -161,13 +166,13 @@ Component({
       for (const key of ['optimize', 'declaration']) if (visible[key] && !noticeOrder.includes(key)) noticeOrder.push(key);
       return { noticeOrder };
     },
-    setContent(content) {
+    setContent(content, cursor = -1) {
       const changed = content !== this.data.content;
-      if (changed) { this._editRevision = (this._editRevision || 0) + 1; this._optimizedOriginal = null; }
+      if (changed) { this._editRevision = (this._editRevision || 0) + 1; this._optimizedOriginal = null; this._editorSelection = selectionOf(content, { cursor }); }
       const count = Array.from(content).length;
       const remainingCount = Math.max(0, 150 - count);
       const canOptimize = Boolean(content.trim() || this.data.images.some(image => image.type !== 'mp4')) && count <= 150;
-      this.setData({ content, count, remainingCount, countWarning: remainingCount <= 20,
+      this.setData({ content, ...(cursor !== this.data.editorCursor ? { editorCursor: cursor } : {}), count, remainingCount, countWarning: remainingCount <= 20,
         ...(!canOptimize ? { optimizeHelpVisible: false } : {}),
         canOptimize, ...this.noticeState(canOptimize), ...(changed ? { canUndoOptimization: false, optimizeError: '' } : {}),
         countProgress: Math.min(360, Math.round(count * 360 / 150)), canPublish: Boolean(content.trim() || this.data.images.length || this.data.quotePostId) && this.data.images.length <= 3 && count <= 150 && (!this.data.quotePostId || this.data.quoteReady) });
@@ -180,12 +185,42 @@ Component({
       if (content !== this.data.content) this._requestId = token();
       // textarea 不采用 input 回调返回值，必须下发两次不同的 value 修正重复超限输入。
       if (characters.length > 150) this.setData({ content: event.detail.value });
-      this.setContent(content);
+      this.setContent(content, this.data.editorCursor);
+      this._editorSelection = selectionOf(content, event.detail);
       if (characters.length >= 150) this.showLimitHint();
       else this.hideLimitHint();
       this.setData({ error: '' });
       // 即使截断结果与上一次绑定值相同，也让原生输入框丢弃超出的粘贴/输入。
       return content;
+    },
+    closeEmoji() {
+      this._emojiSession = null;
+      if (this.data.emojiOpen) this.setData({ emojiOpen: false });
+    },
+    toggleEmoji() {
+      if (this.busy() || this._pageHidden || !this.data.editorReady || !this.data.user || this.data.loginSheetOpen || this.data.panel || this.data.exitConfirmVisible) return;
+      if (users.getCachedUser()?._id !== this.data.user._id) return;
+      if (this.data.emojiOpen) { this.closeEmoji(); return; }
+      const ticket = this._emojiSession = { version: users.getSessionVersion() };
+      const value = this.data.content, focused = this.data.editorFocused;
+      captureSelection(wx, detail => {
+        if (this._emojiSession === ticket && !ticket.picked && this.data.content === value && users.getSessionVersion() === ticket.version) {
+          this._editorSelection = selectionOf(value, detail) || this._editorSelection;
+        }
+      }, focused);
+      this.setData({ emojiOpen: true, editorFocused: false, editorFocusRequested: false });
+    },
+    chooseEmoji(event) {
+      if (!this.data.emojiOpen || this.busy() || this._pageHidden || this.data.loginSheetOpen || this._emojiSession?.version !== users.getSessionVersion()) return;
+      const next = insertEmoji(this.data.content, event.currentTarget.dataset.emoji, this._editorSelection, 150);
+      if (!next) return;
+      if (next.limited) { this.showLimitHint(); return; }
+      this.cancelOptimization();
+      this._emojiSession.picked = true;
+      this._requestId = token();
+      this.hideLimitHint();
+      this.setContent(next.value, next.cursor);
+      this.setData({ error: '' });
     },
     cancelOptimization() {
       this._optimizationSequence = (this._optimizationSequence || 0) + 1;
@@ -205,6 +240,7 @@ Component({
       if (this.busy() || this.data.optimizing || !this.data.canOptimize || this.data.panel || this.data.exitConfirmVisible || this.data.loginSheetOpen) return;
       const user = users.getCachedUser(), version = users.getSessionVersion();
       if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
+      this.closeEmoji();
       this.setData({ optimizeHelpUsed: true, optimizeHelpVisible: false });
       const original = this.data.content, revision = this._editRevision;
       const sequence = this._optimizationSequence = (this._optimizationSequence || 0) + 1;
@@ -276,6 +312,7 @@ Component({
       if (this.busy()) return;
       if (!this.data.content.trim() && !this.data.images.length && !this.data.quotePostId) { wx.showToast({ title: '请先写点内容或选择图片、视频', icon: 'none' }); return; }
       this.cancelOptimization();
+      this.closeEmoji();
       this.setData({ savingDraft: true, error: '' });
       const version = users.getSessionVersion();
       try {
@@ -293,6 +330,7 @@ Component({
       if (!users.getCachedUser()) { this.requestLogin(); return; }
       if (this.data.images.length >= 3) { wx.showToast({ title: '图片和视频合计最多 3 个', icon: 'none' }); return; }
       this.cancelOptimization();
+      this.closeEmoji();
       const version = users.getSessionVersion();
       this.setData({ choosingImages: true, editorFocused: false, editorFocusRequested: false, error: '' });
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
@@ -359,6 +397,7 @@ Component({
     focusEditor() {
       if (!this.data.user || this.busy() || this.data.panel || this.data.exitConfirmVisible) return;
       this._editorFocusUntil = Date.now() + 1000;
+      this.closeEmoji();
       if (!this.data.editorFocused && !this.data.editorFocusRequested) this.setData({ editorFocusRequested: true });
     },
     editorTouchStart() {
@@ -367,13 +406,16 @@ Component({
       this._editorFocusUntil = Date.now() + 1000;
     },
     // 原生focus/临时blur只更新观测状态，不重新请求焦点或在键盘仍打开时主动取消。
-    editorDidFocus() {
+    editorDidFocus(event) {
       if (this._unloaded || this._closing) return;
+      this.closeEmoji();
+      this._editorSelection = selectionOf(this.data.content, event?.detail) || this._editorSelection;
       this._editorFocusUntil = Date.now() + 1000;
       if (!this.data.editorFocused) this.setData({ editorFocused: true });
     },
-    blurEditor() {
+    blurEditor(event) {
       if (this._unloaded || this._closing) return;
+      if (event?.detail?.value === this.data.content) this._editorSelection = selectionOf(this.data.content, event.detail) || this._editorSelection;
       const patch = {};
       if (this.data.editorFocused) patch.editorFocused = false;
       if (!this.data.keyboardHeight && this.data.editorFocusRequested) patch.editorFocusRequested = false;
@@ -395,6 +437,7 @@ Component({
       const panel = event.currentTarget.dataset.panel;
       if (!['options', 'declaration'].includes(panel)) return;
       this.closeOptimizeHelp();
+      this.closeEmoji();
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       this._editorFocusUntil = 0;
       this.setData({ panel, keyboardHeight: 0, editorFocused: false, editorFocusRequested: false });
@@ -417,6 +460,7 @@ Component({
     finishClose(published = false) {
       if (this._closing || this._unloaded) return;
       this.cancelOptimization();
+      this.closeEmoji();
       this.hideLimitHint();
       this._closing = true;
       this._authVersion = (this._authVersion || 0) + 1;
@@ -430,6 +474,7 @@ Component({
       if (!user || !this.data.user || user._id !== this.data.user._id) { this.requestLogin(); return; }
       this._requestId = this._requestId || token();
       this.cancelOptimization();
+      this.closeEmoji();
       const mixed = this.data.images.some(image => image.type === 'mp4');
       this.setData({ publishing: true, publishingVideo: mixed, error: '' });
       try {
@@ -484,6 +529,7 @@ Component({
     cancel() {
       if (this.busy() || this.data.exitConfirmVisible) return;
       this.cancelOptimization();
+      this.closeEmoji();
       const imageKeys = this.data.images.map(image => image.fileID || image.key);
       if ((this.data.content.length || this.data.images.length || this.data.quotePostId) && (this.data.content !== (this._savedContent || '') || this.data.declaration !== (this._savedDeclaration || 'none') || JSON.stringify(imageKeys) !== JSON.stringify(this._savedImages || []) || this.data.quotePostId !== (this._savedQuoteId || ''))) {
         this.setData({ exitConfirmVisible: true, panel: '', keyboardHeight: 0, editorFocused: false, editorFocusRequested: false, error: '' });

@@ -17,12 +17,13 @@ module.exports = { methods: {
     const changed = (this.data.user && this.data.user._id) !== (viewer && viewer._id) || this._publicViewerVersion !== users.getSessionVersion();
     if (changed) {
       this.resetProfilePull();
+      this.resetProfileVideos();
       this.closeUnfollowPrompt(true);
       if (keepRefresh) this._publicContentRequests = {}; else this.cancelPublicReads();
       this.closeComments();
       this.setData({ profileUser: null, coverFileID: '', ownPosts: [], quotePosts: [], albumImages: [], pinnedPostId: '',
         postsHasMore: false, quotesHasMore: false, albumHasMore: false, postsOffset: 0, quotesOffset: 0, albumOffset: 0, postCountText: '帖子',
-        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '' });
+        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
     }
     this._publicViewerVersion = users.getSessionVersion();
     this.setData({ user: viewer, identity: describeUser(viewer), authChecking: Boolean(checking && !viewer), loginSheetOpen: Boolean(!viewer && !checking) });
@@ -75,7 +76,9 @@ module.exports = { methods: {
         const profile = await users.getPublicProfile(request.accountId, { force: force !== false });
         if (!current()) return;
         this.applyPublicProfile(profile);
-        const kind = this.data.selectedContent === 'reposts' ? 'quotes' : this.data.selectedContent === 'album' ? 'album' : this.data.selectedContent === 'replies' ? null : 'posts';
+        const tab = this.data.selectedContent;
+        if (tab === 'album' && this.data.mediaTab === 'videos') { await this.loadProfileVideos(force); return; }
+        const kind = tab === 'reposts' ? 'quotes' : tab === 'replies' ? null : tab;
         if (kind) await this.loadPublicContent(kind, force !== false);
       } catch (error) {
         if (!this._unloaded && this._visible !== false && this._publicRefresh === request) {
@@ -91,6 +94,7 @@ module.exports = { methods: {
   },
   markPublicUnavailable(message) {
     this.cancelPublicReads();
+    this.resetProfileVideos();
     if (typeof users.invalidatePublicProfile === 'function') users.invalidatePublicProfile(this.data.profileAccountId, { unavailable: true });
     if (typeof square.clearPublicAccount === 'function') square.clearPublicAccount(this.data.profileAccountId);
     this.setData({ profileUnavailable: true, profileUser: null, coverFileID: '', ownPosts: [], quotePosts: [], albumImages: [], pinnedPostId: '', isVerified: false, joinedText: '', loading: false,

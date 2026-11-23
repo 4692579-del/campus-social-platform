@@ -116,6 +116,21 @@ test('相册返回与底栏晚初始化均从当前页面恢复隐藏标记，�
   f.bar.switchTab({ currentTarget: { dataset: { index: 3 } } }); assert.deepEqual(f.routes, ['/pages/search/index']);
 });
 
+test('底栏晚初始化时仍读取荟萃计划的遮挡状态，点击不会切走当前页面', () => {
+  const f = fixture();
+  const page = { route: 'pages/search/index', data: { menuOpen: true, membershipOpen: true },
+    closeMenu() { throw new Error('荟萃面板展开时不能关闭底层侧栏'); } };
+  f.pages.push(page);
+  f.attach();
+  assert.equal(f.bar.data.authBlocked, true);
+  f.bar.switchTab({ currentTarget: { dataset: { index: 0 } } });
+  assert.equal(f.routes.length, 0);
+  page.data.membershipOpen = false;
+  f.show();
+  assert.equal(f.bar.data.authBlocked, false);
+  assert.equal(f.bar.data.menuOpen, true);
+});
+
 test('切到其他页面后底栏不沿用发布页的遮挡状态', () => {
   const f = fixture(); f.pages.push({ data: { composerOpen: true } }); f.attach();
   f.pages.push({ data: {} }); f.show();

@@ -16,7 +16,7 @@
       <button size="mini" class="profile-search-button" style="left: {{searchLeft}}px; width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="openSearch" aria-label="搜索"><image src="/images/interface/search-white.svg" mode="aspectFit" /></button>
     </view>
   </view>
-  <scroll-view class="profile-scroll" scroll-y="{{!authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !composerOpen && !unfollowTarget}}" enhanced bounces="{{false}}" show-scrollbar="{{false}}" enable-back-to-top bindscroll="onProfileScroll" bindscrolltoupper="onProfileScrollUpper" upper-threshold="1" bindscrolltolower="loadMoreOwnPosts" lower-threshold="160" bindtouchstart="startProfilePull" bindtouchmove="moveProfilePull" bindtouchend="finishProfilePull" bindtouchcancel="cancelProfilePull">
+  <scroll-view class="profile-scroll" scroll-y="{{!authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !mediaMenuOpen && !composerOpen && !unfollowTarget}}" enhanced bounces="{{false}}" show-scrollbar="{{false}}" enable-back-to-top bindscroll="onProfileScroll" bindscrolltoupper="onProfileScrollUpper" upper-threshold="1" bindscrolltolower="loadMoreOwnPosts" lower-threshold="160" bindtouchstart="startProfilePull" bindtouchmove="moveProfilePull" bindtouchend="finishProfilePull" bindtouchcancel="cancelProfilePull">
   <view class="profile-page">
   <view class="profile-cover" style="height: {{coverHeight}}px;">
     <view class="profile-cover-art" style="height: {{coverArtHeight}}px;">
@@ -33,7 +33,7 @@
     <view class="profile-heading">
       <view class="nickname">{{profileUnavailable ? '该用户暂不可查看' : profileUser ? profileUser.nickname : loading ? '正在读取资料…' : isVisitor ? '个人主页' : '你好，新同学'}}</view>
       <view wx:if="{{profileUser.officialVerified}}" class="verified-badge"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>Cui官方</text></view>
-      <view wx:elif="{{isVerified}}" class="verified-badge" bindtap="openCertification" aria-role="{{isVisitor ? 'text' : 'button'}}" aria-label="已认证"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>已认证</text></view>
+      <view wx:elif="{{isVerified}}" class="profile-student-badge" bindtap="openCertification" aria-role="{{isVisitor ? 'img' : 'button'}}" aria-label="学生已认证"><image src="/images/verification/student.svg" mode="aspectFit" /></view>
       <view wx:elif="{{!isVisitor && identity.isAdmin}}" class="role-badge">管理员</view>
       <view wx:elif="{{profileUser && !isVisitor}}" class="verified-badge unverified-badge" bindtap="openCertification" aria-role="button" aria-label="未认证，查看学校认证"><image class="verification-icon" src="/images/verification/unverified.png" mode="aspectFit" /><text>未认证</text></view>
     </view>
@@ -60,17 +60,22 @@
   </view>
 
   <view wx:if="{{!profileUnavailable}}" class="profile-timeline" style="min-height: calc(100vh - {{navHeight}}px);">
-  <view wx:if="{{postsMenuOpen}}" class="posts-menu-backdrop" bindtap="closePostsMenu" catchtouchmove="stopMenuEvent"></view>
-  <view class="content-tabs {{postsMenuOpen ? 'posts-menu-open' : ''}}" style="top: {{navHeight}}px;" role="tablist">
-    <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
-      <image class="content-tab-icon" src="{{item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
-      <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.label}}</text>
+  <view wx:if="{{postsMenuOpen || mediaMenuOpen}}" class="posts-menu-backdrop" bindtap="closePostsMenu" catchtouchmove="stopMenuEvent"></view>
+  <view class="content-tabs {{postsMenuOpen || mediaMenuOpen ? 'posts-menu-open' : ''}}" style="top: {{navHeight}}px;" role="tablist">
+    <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
+      <image class="content-tab-icon" src="{{item.key === 'album' && mediaTab === 'videos' ? '/images/profile-tabs/videos' : item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
+      <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}</text>
       <image wx:if="{{!isVisitor && item.key === 'posts' && selectedContent === 'posts'}}" class="tab-dropdown-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
+      <view wx:if="{{item.key === 'album'}}" class="media-menu-trigger" catchtap="toggleMediaMenu" aria-role="button" aria-label="切换相册或视频" aria-expanded="{{mediaMenuOpen}}"><image class="tab-dropdown-chevron {{mediaMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view>
     </button>
     <view class="content-tab-indicator" style="left: {{contentIndex * 25 + 4.5}}%;" aria-hidden="true"></view>
     <view wx:if="{{postsMenuOpen}}" class="posts-menu tab-dropdown" aria-label="动态来源">
       <button class="tab-dropdown-option {{postScope === 'square' ? 'active' : ''}}" data-scope="square" bindtap="selectPostScope" aria-label="广场动态" aria-pressed="{{postScope === 'square'}}">动态广场</button>
       <button class="tab-dropdown-option {{postScope === 'campus' ? 'active' : ''}}" data-scope="campus" bindtap="selectPostScope" aria-label="校园圈" aria-pressed="{{postScope === 'campus'}}">校园圈</button>
+    </view>
+    <view wx:if="{{mediaMenuOpen}}" class="media-menu tab-dropdown" aria-label="切换相册或视频">
+      <button class="tab-dropdown-option {{mediaTab === 'album' ? 'active' : ''}}" data-media="album" bindtap="selectMediaTab" aria-pressed="{{mediaTab === 'album'}}">相册</button>
+      <button class="tab-dropdown-option {{mediaTab === 'videos' ? 'active' : ''}}" data-media="videos" bindtap="selectMediaTab" aria-pressed="{{mediaTab === 'videos'}}">视频</button>
     </view>
   </view>
   <view class="profile-panels-viewport" style="min-height: calc(100vh - {{navHeight}}px - 94rpx);">
@@ -82,7 +87,7 @@
     <block wx:else>
       <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" profile-posts="{{!isVisitor && selectedContent === 'posts' && postScope === 'square'}}"
         seven-line-preview="{{profileUser.officialVerified || item.author.officialVerified}}"
-        feed-video-enabled="{{(profileUser.officialVerified || item.author.officialVerified) && selectedContent === 'posts' && !profileUnavailable && !menuOpen && !authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !composerOpen && !unfollowTarget}}"
+        feed-video-enabled="{{(profileUser.officialVerified || item.author.officialVerified) && selectedContent === 'posts' && !profileUnavailable && !menuOpen && !authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !mediaMenuOpen && !composerOpen && !unfollowTarget}}"
         pinned="{{item._id === pinnedPostId}}" show-pin="{{isVisitor}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
@@ -105,12 +110,37 @@
     </block>
   </view>
   <view class="profile-panel {{selectedContent === 'album' ? 'is-active' : ''}}" style="left: 75%;" aria-hidden="{{selectedContent !== 'album'}}">
+    <view hidden="{{mediaTab !== 'album'}}">
     <view wx:if="{{albumError}}" class="profile-post-error"><text>{{albumError}}</text><button bindtap="retryAlbum">重试</button></view>
     <view class="profile-album"><media-image class="profile-album-photo" wx:for="{{albumImages}}" wx:key="_id" src="{{item.fileID}}" mode="aspectFill" lazy-load data-index="{{index}}" bindtap="previewAlbum" /></view>
     <view wx:if="{{albumLoading && !albumImages.length}}" class="profile-post-end">正在读取相册…</view>
     <view wx:elif="{{!albumImages.length && !albumError}}" class="content-empty"><view class="empty-title">还没有发布图片</view></view>
     <view wx:if="{{albumMoreLoading}}" class="profile-post-end">正在加载…</view>
     <button wx:elif="{{albumHasMore}}" class="album-more" bindtap="loadMoreOwnPosts">加载更多图片</button>
+    </view>
+    <view hidden="{{mediaTab !== 'videos'}}" class="profile-videos">
+      <view wx:if="{{videosError}}" class="profile-post-error"><text>{{videosError}}</text><button bindtap="retryProfileVideos">重试</button></view>
+      <view wx:for="{{videos}}" wx:key="_id" class="profile-video-row" data-post="{{item.postId}}" bindtap="openVideoPost">
+        <view class="profile-video-cover" data-id="{{item._id}}" catchtap="playProfileVideo" aria-role="button" aria-label="播放视频">
+          <media-image wx:if="{{item.poster}}" src="{{item.poster}}" mode="aspectFit" lazy-load />
+          <video wx:if="{{videoPlayback.id === item._id && videoPlayback.src}}" class="profile-video-player {{videoPlayback.ready ? 'is-ready' : ''}}"
+            src="{{videoPlayback.src}}" data-token="{{videoPlayback.token}}" autoplay controls object-fit="contain" show-center-play-btn="{{false}}" show-fullscreen-btn="{{false}}" enable-progress-gesture="{{false}}"
+            bindtimeupdate="profileVideoStarted" bindended="profileVideoEnded" binderror="profileVideoError" />
+          <view wx:if="{{videoPlayback.id === item._id && !videoPlayback.ready}}" class="profile-video-loading" aria-label="正在加载视频">
+            <image src="/images/interface/video-loading.svg" mode="aspectFit" />
+          </view>
+          <view wx:elif="{{videoPlayback.id !== item._id}}" class="post-play-badge" aria-hidden="true"></view>
+        </view>
+        <view class="profile-video-caption" aria-role="button" aria-label="查看动态详情">
+          <text wx:if="{{item.content}}" class="profile-video-text">{{item.content}}</text>
+          <text class="profile-video-time" aria-label="{{item.exactTime}}">{{item.timeText}}</text>
+        </view>
+      </view>
+      <view wx:if="{{videosLoading && !videos.length}}" class="profile-post-end">正在读取视频…</view>
+      <view wx:elif="{{!videos.length && !videosError && !videosHasMore}}" class="content-empty"><text class="empty-title">还没有发布视频</text></view>
+      <view wx:if="{{videosMoreLoading}}" class="profile-post-end">正在加载…</view>
+      <button wx:elif="{{videosHasMore && !videosError}}" class="album-more" bindtap="loadMoreOwnPosts">加载更多视频</button>
+    </view>
   </view>
   </view>
   </view>

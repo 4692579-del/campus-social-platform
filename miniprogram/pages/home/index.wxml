@@ -58,5 +58,6 @@
 </view>
 
 <square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />
+<membership-sheet wx:if="{{membershipOpen}}" top="{{navHeight}}" capsule-height="{{navButtonHeight}}" bind:close="closeMembership" />
 
 <view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{chromeCompact ? chromeSafeTop : navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>

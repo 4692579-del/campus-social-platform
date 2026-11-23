@@ -12,7 +12,7 @@ function stateOf(row, now, maximum = DAILY_CHARS) {
   if (!Number.isSafeInteger(usedChars) || usedChars < 0 || usedChars > maximum) throw aiError('AI_USAGE_UNAVAILABLE');
   const reservations = {};
   for (const [key, value] of Object.entries(row && row.reservations || {})) {
-    if (!value || !Number.isSafeInteger(value.chars) || value.chars < 1 || value.chars > 150 || !Number.isFinite(value.until)) throw aiError('AI_USAGE_UNAVAILABLE');
+    if (!value || !Number.isSafeInteger(value.chars) || value.chars < 1 || value.chars > HOURLY_CHARS || !Number.isFinite(value.until)) throw aiError('AI_USAGE_UNAVAILABLE');
     if (value.until > now) reservations[key] = value;
   }
   return { usedChars, reservations };
@@ -31,7 +31,8 @@ function createAIUsage(db, options = {}) {
       exhausted: state.usedChars >= DAILY_CHARS,
       resetsAt: new Date(Date.parse(day + 'T00:00:00+08:00') + 86400000).toISOString() };
   }
-  async function reserve(userId) {
+  async function reserve(userId, maximum = 150) {
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > HOURLY_CHARS) throw aiError('AI_USAGE_UNAVAILABLE');
     const stamp = now(), day = usageDay(stamp), id = usageId(userId, day), token = crypto.randomBytes(16).toString('hex');
     const hour = usageHour(stamp), hourlyId = usageId(userId, hour);
     let reservation;
@@ -45,7 +46,7 @@ function createAIUsage(db, options = {}) {
       const hourlyAvailable = HOURLY_CHARS - hourly.usedChars - Object.values(hourly.reservations).reduce((sum, value) => sum + value.chars, 0);
       const available = DAILY_CHARS - state.usedChars - Object.values(state.reservations).reduce((sum, value) => sum + value.chars, 0);
       if (Math.min(available, hourlyAvailable) <= 0) throw aiError('AI_QUOTA_BUSY');
-      const chars = Math.min(150, available, hourlyAvailable);
+      const chars = Math.min(maximum, available, hourlyAvailable);
       state.reservations[token] = { chars, until: now() + LEASE_MS };
       hourly.reservations[token] = { ...state.reservations[token] };
       await save(ref, userId, day, state);

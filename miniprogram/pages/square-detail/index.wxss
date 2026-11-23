@@ -1,4 +1,6 @@
 @import "../../styles/square-pages.wxss";
+@import "../../styles/xiaocui-icon.wxss";
+@import "../../styles/xiaocui-ai-glow.wxss";
 page { height: 100%; overflow: hidden; }
 .detail-page { height: 100vh; overflow: hidden; }
 .detail-body { position: fixed; left: 0; right: 0; bottom: 0; overflow: hidden; }
@@ -8,3 +10,9 @@ page { height: 100%; overflow: hidden; }
 
 .detail-follow { display: flex; align-items: center; justify-content: center; flex: 0 0 104rpx; width: 104rpx; min-width: 0; box-sizing: border-box; height: 52rpx; padding: 0; margin: 0; border: 0; border-radius: 16rpx; background: #f0f1f4; color: #171b20; font-size: 25rpx; font-weight: 600; line-height: 1; opacity: 1; }
 .detail-follow::after { border: 0; }
+
+.news-translate { position: relative; display: inline-flex; height: 40rpx; margin-top: 6rpx; vertical-align: top; border-radius: 24rpx; }
+.news-translate .news-translate-button { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6rpx; min-width: 0; width: auto; height: 40rpx; margin: 0; padding: 0 12rpx; border: 0; border-radius: 24rpx; background: #e2edff; color: #4775fa; font-size: 22rpx; font-weight: 500; line-height: 1; white-space: nowrap; }
+.news-translate .news-translate-button[disabled] { background: #e2edff; color: #4775fa; opacity: 1; }
+.news-translate-button::after { border: 0; }
+.news-translate-button .xiaocui-icon { width: 28rpx; height: 28rpx; }

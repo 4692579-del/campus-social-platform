@@ -16,6 +16,8 @@
 .account-menu .menu-item { display: flex; align-items: center; gap: 28rpx; width: 100%; min-width: 0; min-height: 94rpx; margin: 0; padding: 18rpx 0; box-sizing: border-box; border: 0; border-radius: 12rpx; background: transparent; color: #171b20; font-size: 36rpx; font-weight: 650; line-height: 1.5; text-align: left; white-space: nowrap; }
 .menu-item text { font-size: inherit; font-weight: inherit; line-height: inherit; }
 .menu-item-icon { display: block; width: 32rpx; height: 32rpx; flex-shrink: 0; }
+.menu-student-icon { position: relative; }
+.menu-student-icon image { position: absolute; top: -2rpx; left: -2rpx; width: 36rpx; height: 36rpx; filter: brightness(0) invert(.1); }
 .menu-utilities { margin: 48rpx 48rpx 0; padding-top: 48rpx; border-top: 1rpx solid #e4e7eb; }
 .menu-utility-section { padding: 8rpx 0; }
 .menu-utility-section:first-child { padding-top: 0; }

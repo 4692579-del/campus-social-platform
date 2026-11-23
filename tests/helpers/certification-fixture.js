@@ -16,6 +16,7 @@ function fixture(options = {}) {
       if (!value || !value.operation) return row[key] === value;
       if (value.operation === 'regex') return typeof row[key] === 'string' && new RegExp(value.regexp, value.options).test(row[key]);
       if (value.operation === 'exists') return Object.hasOwn(row, key) === value.value;
+      if (value.operation === 'elemMatch') return Array.isArray(row[key]) && row[key].some(item => item && matches(item, value.value));
       if (value.operation === 'lt') return row[key] < value.value;
       if (value.operation === 'gt') return row[key] > value.value;
       if (value.operation === 'in') return value.value.includes(row[key]);
@@ -116,7 +117,7 @@ function fixture(options = {}) {
   }
   const db = {
     RegExp: options => ({ operation: 'regex', ...options }),
-    command: { exists: value => ({ operation: 'exists', value }), lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
+    command: { exists: value => ({ operation: 'exists', value }), elemMatch: value => ({ operation: 'elemMatch', value }), lt: value => ({ operation: 'lt', value }), gt: value => ({ operation: 'gt', value }), in: value => ({ operation: 'in', value }),
       aggregate: { sum: field => ({ operation: 'sum', field }) } },
     collection: name => collection(name, tables),
     serverDate: () => options.serverTime || '2026-11-14T10:00:00.000Z',
@@ -139,6 +140,7 @@ function fixture(options = {}) {
   };
   const handle = createUserService(db, {
     news: options.news && options.news(db),
+    translateAI: options.translateAI,
     generateAI: options.generateAI, resolveAIImages: options.resolveAIImages, resolveAICommentImages: options.resolveAICommentImages, resolveComposeImages: options.resolveComposeImages, optimizeAI: options.optimizeAI, aiNow: options.aiNow,
     checkText: options.checkText || (async () => true),
     processSquareImages: options.processSquareImages,

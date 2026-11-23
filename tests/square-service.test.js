@@ -341,6 +341,41 @@ test('普通及楼中回复按50个码点限制，空格换行计入，@小萃�
 });
 
 
+test('主页视频按动态游标倒序分页，兼容已有多视频记录并隔离作者、私有媒体及未发布动态', async () => {
+  const f = fixture(), alice = await f.login(), bob = await f.login(f.bob);
+  const id = n => 'p_' + n.toString(16).padStart(40, '0');
+  const file = (n, index = 0) => `cloud://test.bucket/square-media/${alice._id}/${id(n)}/${index}-video.mp4`;
+  const add = (n, fields = {}) => f.squarePosts.set(id(n), { _id: id(n), authorId: alice._id, status: 'published', scope: 'square',
+    sortKey: `${String(n).padStart(4, '0')}_${id(n)}`, createdAt: '2026-11-23T06:00:00Z', content: '视频正文',
+    media: [{ type: 'video', fileID: file(n) }], ...fields });
+  for (let n = 1; n <= 22; n++) add(n);
+  add(22, { media: [{ type: 'video', fileID: file(22), poster: 'cloud://test.bucket/square-uploads/alice/private.jpg' },
+    { type: 'image', fileID: 'cloud://test.bucket/square-media/image.jpg' }, { type: 'video', fileID: file(22, 2) }] });
+  add(23, { status: 'deleted' });
+  add(24, { scope: 'campus' });
+  add(25, { authorId: bob._id });
+  add(26, { media: [{ type: 'image', fileID: 'cloud://test.bucket/square-media/image.jpg' }] });
+  add(21, { media: [{ type: 'video', fileID: 'cloud://test.bucket/square-uploads/alice/private.mp4' }] });
+  const read = (fields = {}, actor = f.alice) => f.handle({ action: 'listSquareVideos', ...fields }, actor);
+  const first = (await read({ authorId: bob._id })).square;
+  assert.equal(first.items[0].postId, id(22));
+  assert.equal(first.items[0].poster, '');
+  assert.equal(first.items[1]._id, `${id(22)}_2`);
+  assert.equal(first.items.length, 20);
+  assert.ok(!first.items.some(item => item.postId === id(21)));
+  assert.equal(first.items[0].content, '视频正文');
+  assert.equal(first.hasMore, true);
+  const second = (await read({ cursor: first.nextCursor })).square;
+  assert.deepEqual(second.items.map(item => item.postId), [id(2), id(1)]);
+  assert.equal(second.hasMore, false);
+  const visitor = (await read({ profileAccountId: alice.accountId }, f.bob)).square;
+  assert.equal(visitor.profileAccountId, alice.accountId);
+  assert.deepEqual(visitor.items, first.items);
+  assert.equal((await read({}, { openid: 'guest', env: 'test' })).code, 'NOT_REGISTERED');
+  f.users.get(alice._id).status = 'disabled';
+  assert.equal((await read({ profileAccountId: alice.accountId }, f.bob)).code, 'PROFILE_NOT_FOUND');
+});
+
 test('本人获赞统计覆盖全部已发布广场动态，忽略客户端指定的账号及已删除内容', async () => {
   const f = fixture(), alice = await f.login(), bob = await f.login(f.bob);
   const read = identity => f.handle({ action: 'getSquareOwnStats', userId: bob._id, authorId: bob._id }, identity);

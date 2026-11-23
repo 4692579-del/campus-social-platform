@@ -11,26 +11,71 @@ const post = { _id: 'p_' + 'a'.repeat(40), content: '本人的广场动态', aut
 const result = { items: [post], hasMore: false, nextOffset: 1 };
 const event = key => ({ currentTarget: { dataset: { key } } });
 function fixture(options = {}) {
-  let definition, cached = options.cached || null, current = { ...user }, albumCache = options.albumCache || null, quoteCache = options.quoteCache || null;
-  const calls = [], routes = [];
-  const users = { getCachedUser: () => current, getSessionVersion: () => 0, restore: async () => current };
+  let definition, cached = options.cached || null, current = { ...user }, albumCache = options.albumCache || null, quoteCache = options.quoteCache || null, session = 0;
+  const calls = [], routes = [], statsListeners = new Set();
+  const users = { getCachedUser: () => current, getSessionVersion: () => session, restore: async () => current };
   const square = {
     cachedOwnFeed: type => type === 'quotes' ? quoteCache : cached, cachedPost: () => null,
     cachedAlbum: () => albumCache,
     album: async args => { calls.push({ album: true, ...args }); albumCache = options.album ? await options.album(args) : { items: [], hasMore: false, nextOffset: 0 }; return albumCache; },
+    cachedProfileVideos: () => options.cachedVideos || null,
+    listProfileVideos: async (accountId, args) => { calls.push({ videos: true, accountId, ...args }); return options.videos ? options.videos(args) : { items: [], hasMore: false, nextCursor: '' }; },
     list: async args => { calls.push(args); if (args.postType === 'quotes') { quoteCache = options.quotes ? await options.quotes(args) : { items: [], hasMore: false, nextOffset: 0 }; return quoteCache; } cached = options.list ? await options.list(args) : result; return cached; },
     react: async () => ({ ...post, liked: true, likeCount: 1 }),
+    cachedOwnStats: () => options.cachedStats || null,
+    getOwnStats: options.getOwnStats,
+    subscribeOwnStats(listener) { statsListeners.add(listener); return () => statsListeners.delete(listener); },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
     Page: value => { definition = value; }, setTimeout, clearTimeout,
     require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, { showToast() {}, navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } :
-      name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : users,
+      name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('post-images') ? { resolveVideoPlayback: options.resolveVideoPlayback } : users,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       navigateTo: args => routes.push(args.url), showToast() {}, stopPullDownRefresh() {} },
   });
   const page = { ...definition, data: structuredClone(definition.data), setData: values => applyPageData(page.data, values) };
-  return { page, calls, routes, setUser: value => { if ((current && current._id) !== (value && value._id)) { cached = null; albumCache = null; quoteCache = null; } current = value; page.applyUser(value); } };
+  return { page, calls, routes, statsListeners, setUser: value => { if ((current && current._id) !== (value && value._id)) { session++; cached = null; albumCache = null; quoteCache = null; options.cachedStats = null; } current = value; page.applyUser(value); } };
 }
+
+test('本人主页首帧复用侧栏获赞缓存，统计失效后只更新数字，失败保留已有值', async () => {
+  let fail = false, receivedLikes = 8;
+  const options = { cached: result, cachedStats: { receivedLikes: 5 }, async getOwnStats() {
+    if (fail) throw new Error('offline');
+    return options.cachedStats = { receivedLikes };
+  } };
+  const f = fixture(options);
+  f.page.onLoad();
+  assert.equal(f.page.data.likeCount, 5);
+  await f.page.onShow();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.page.data.likeCount, 8);
+  const posts = f.page.data.ownPosts;
+  receivedLikes = 9;
+  await [...f.statsListeners][0]();
+  assert.equal(f.page.data.likeCount, 9);
+  assert.equal(f.page.data.ownPosts, posts);
+  fail = true;
+  await [...f.statsListeners][0]();
+  assert.equal(f.page.data.likeCount, 9);
+  f.page.onHide();
+  assert.equal(f.statsListeners.size, 0);
+});
+
+test('本人主页的迟到获赞请求不能覆盖另一账号', async () => {
+  let finish;
+  const f = fixture({ getOwnStats: () => new Promise(resolve => { finish = resolve; }) });
+  f.page.onLoad();
+  assert.equal(f.page.data.likeCount, '—');
+  f.page._visible = true;
+  const pending = f.page.refreshOwnLikes(), resolveAlice = finish;
+  f.setUser({ ...user, _id: 'bob' });
+  resolveAlice({ receivedLikes: 99 });
+  await pending;
+  assert.equal(f.page.data.likeCount, '—');
+  finish({ receivedLikes: 0 });
+  await Promise.resolve();
+  assert.equal(f.page.data.likeCount, 0);
+});
 
 test('个人主页发布打开原位面板，取消回到原个人主页，不跳转或清空动态', () => {
   const f = fixture({ cached: result }); f.page.onLoad(); f.page.publishPost();
@@ -55,6 +100,52 @@ test('个人相册同步预填缓存，后台失败保留图片；分页与账�
   f.page.onHide(); f.setUser({ ...user, _id: 'bob' });
   finish({ items: [photo], hasMore: false, nextOffset: 21 }); await pending;
   assert.equal(f.page.data.albumImages.length, 0); assert.equal(f.page.data.albumError, '');
+});
+
+test('个人主页视频复用第四项位置，播放和动态详情分开，视频分页保留相册', async () => {
+  const photo = { _id: 'photo', fileID: 'cloud://test.bucket/square-media/alice/photo.jpg' };
+  const album = { items: [photo], hasMore: true, nextOffset: 20 };
+  const video = { _id: `${post._id}_0`, postId: post._id, fileID: 'cloud://test.bucket/square-media/alice/video.mp4', content: '视频正文', createdAt: post.createdAt };
+  let finish;
+  const f = fixture({ albumCache: album, album: async () => album, videos: ({ cursor }) => ({ items: [video], hasMore: !cursor, nextCursor: cursor ? '' : 'older' }),
+    resolveVideoPlayback: () => new Promise(resolve => { finish = resolve; }) });
+  const choose = media => ({ currentTarget: { dataset: { media } } });
+  f.page.onLoad();
+  await f.page.selectContent(event('album'));
+  assert.equal(f.page.data.contentIndex, 3);
+  const images = f.page.data.albumImages;
+  f.page.selectContent(event('album'));
+  assert.equal(f.page.data.mediaMenuOpen, true);
+  await f.page.selectMediaTab(choose('videos'));
+  assert.equal(f.page.data.mediaTab, 'videos');
+  assert.equal(f.page.data.selectedContent, 'album');
+  assert.equal(f.page.data.contentIndex, 3);
+  assert.equal(f.page.data.videos[0].content, '视频正文');
+  assert.match(f.page.data.videos[0].timeText, /11月17日/);
+  await f.page.loadMoreOwnPosts();
+  assert.equal(f.calls.at(-1).cursor, 'older');
+  assert.equal(f.calls.filter(call => call.album).length, 1);
+  assert.equal(f.page.data.albumImages, images);
+  const tap = { currentTarget: { dataset: { id: video._id, post: post._id } } };
+  const playing = f.page.playProfileVideo(tap);
+  assert.equal(f.page.data.videoPlayback.id, video._id);
+  assert.equal(f.routes.length, 0);
+  finish('https://example.com/video.mp4'); await playing;
+  assert.equal(f.page.data.videoPlayback.src, 'https://example.com/video.mp4');
+  f.page.openVideoPost(tap);
+  assert.equal(f.page.data.videoPlayback, null);
+  assert.equal(f.routes[0], `/pages/square-detail/index?id=${post._id}`);
+  const late = f.page.playProfileVideo(tap);
+  f.page.toggleMediaMenu();
+  finish('https://example.com/late.mp4'); await late;
+  assert.equal(f.page.data.videoPlayback, null);
+  await f.page.selectMediaTab(choose('album'));
+  assert.equal(f.page.data.mediaTab, 'album');
+  assert.equal(f.page.data.mediaMenuOpen, false);
+  assert.equal(f.page.data.albumImages[0]._id, photo._id);
+  f.page.toggleMediaMenu();
+  f.page.onHide();
+  assert.equal(f.page.data.mediaMenuOpen, false);
 });
 
 test('动态箭头切换来源，评论保留原面板，正文可进入详情', async () => {

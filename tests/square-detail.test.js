@@ -13,11 +13,20 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 function fixture(options = {}) {
   let definition, account = options.guest ? null : user, version = 0, cached = options.cached || null;
   const calls = [], routes = [], updates = [], toasts = [], listeners = new Set();
+  const translations = new Map();
   const users = { getCachedUser: () => account, getSessionVersion: () => version,
     logout() { account = null; version++; cached = null; },
     login: async () => { account = user; version++; cached = null; return account; } };
   const square = {
     cachedPost: () => cached,
+    cachedNewsTranslation: (id, key) => translations.get(`${version}:${id}:${key}`),
+    async translateNews(id, key) {
+      calls.push({ type: 'translation', id, key });
+      const cacheKey = `${version}:${id}:${key}`;
+      const result = await options.translateNews(id, key);
+      translations.set(cacheKey, result);
+      return result;
+    },
     subscribePost(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     detail: async (postId, force) => {
       calls.push({ type: 'detail', postId, force });
@@ -50,10 +59,53 @@ function fixture(options = {}) {
     setData(values) { updates.push(values); applyPageData(this.data, values); },
     selectComponent: () => options.comments || null };
   return { page, calls, routes, toasts, updates, listeners,
-    start() { page.onLoad({ id }); return page.onShow(); },
+    start(postId = id) { page.onLoad({ id: postId }); return page.onShow(); },
     setUser(next) { account = next; version++; cached = null; },
     setCached(next) { cached = next; } };
 }
+
+const news = { ...post, _id: 'n_' + 'a'.repeat(40), contentType: 'news', title: 'English headline', content: 'First.\n\nSecond.',
+  translationVersion: '1'.repeat(40), images: ['https://images.example.com/a.jpg'] };
+const translation = { version: news.translationVersion, title: '中文标题', content: '第一段。\n\n第二段。' };
+
+test('新闻详情首次点击展现翻译状态，后续原文译文切换复用首次结果，只更新译文展示', async () => {
+  let finish;
+  const f = fixture({ cached: news, detail: () => news, translateNews: () => new Promise(resolve => { finish = resolve; }) });
+  await f.start(news._id);
+  const original = f.page.data.posts[0];
+  const pending = f.page.toggleNewsTranslation();
+  assert.equal(f.page.data.translatingNews, true);
+  assert.equal(f.page.data.newsTranslation, null);
+  await f.page.toggleNewsTranslation();
+  finish(translation); await pending;
+  assert.equal(f.page.data.translatingNews, false);
+  assert.deepEqual(f.page.data.newsTranslation, translation);
+  await f.page.toggleNewsTranslation();
+  assert.equal(f.page.data.newsTranslation, null);
+  await f.page.toggleNewsTranslation();
+  assert.deepEqual(f.page.data.newsTranslation, translation);
+  assert.equal(f.page.data.posts[0], original);
+  assert.equal(f.calls.filter(call => call.type === 'translation').length, 1);
+  await f.page.loadPost();
+  assert.deepEqual(f.page.data.newsTranslation, translation);
+  f.page.showPost({ ...news, translationVersion: '2'.repeat(40), title: 'Updated' });
+  assert.equal(f.page.data.newsTranslation, null);
+});
+
+test('页面隐藏后的译文不主动覆盖界面，返回后可使用已完成结果', async () => {
+  let finish;
+  const f = fixture({ cached: news, detail: () => news, translateNews: () => new Promise(resolve => { finish = resolve; }) });
+  await f.start(news._id);
+  const pending = f.page.toggleNewsTranslation();
+  f.page.onHide();
+  finish(translation); await pending;
+  assert.equal(f.page.data.newsTranslation, null);
+  await f.page.onShow();
+  assert.equal(f.page.data.translatingNews, false);
+  await f.page.toggleNewsTranslation();
+  assert.deepEqual(f.page.data.newsTranslation, translation);
+  assert.equal(f.calls.filter(call => call.type === 'translation').length, 1);
+});
 
 test('详情首帧展示真实缓存全文，复用会话，不等待后台，不重复加载', async () => {
   let finish;

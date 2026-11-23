@@ -15,6 +15,11 @@ const utilityMenuItems = [
 
 function accountMenuRoutes(api) {
   return {
+    closeMembership() {
+      if (!this.data.membershipOpen) return;
+      this.setData({ membershipOpen: false });
+      this.syncNavigation();
+    },
     openProfile() {
       if (this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
       if (!this.data.user) { this.openMenu(); return; }
@@ -33,6 +38,13 @@ function accountMenuRoutes(api) {
       if (this._menuNavigating || this.interactionBlocked() || this.data.loading || this.data.confirmingLogout) return;
       const item = [...menuItems, ...utilityMenuItems].find(entry => entry.key === event.currentTarget.dataset.key);
       if (!item) return;
+      if (item.key === 'membership') {
+        if (this.data.menuOpen && !this._unloaded && this._visible !== false) {
+          this.setData({ membershipOpen: true });
+          this.syncNavigation();
+        }
+        return;
+      }
       if (item.key === 'xiaocui') { this.navigateFromMenu('/pages/xiaocui-about/index', '小萃AI页面打开失败，请重试'); return; }
       if (item.key === 'profile') { this.openProfile(); return; }
       if (item.key === 'certification') {

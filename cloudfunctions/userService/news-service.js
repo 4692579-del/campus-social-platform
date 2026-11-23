@@ -55,8 +55,8 @@ function createNewsService(db, { request = createWorldNewsClient(), now = Date.n
       const ref = tx.collection('news_articles').doc(_id), previous = (await ref.get()).data;
       if (!previous) { await ref.set({ data: { ...fields, likeCount: 0, replyCount: 0 } }); return; }
       await ref.update({ data: { ...fields, status: previous.status, content: previous.content || fields.content,
-        summary: fields.summary || previous.summary, feedImages: fields.feedImages.length ? fields.feedImages : previous.feedImages || [],
-        images: imageUrls([...(previous.images || []), ...fields.images]) } });
+        summary: fields.summary || previous.summary,
+        images: imageUrls([...(previous.images || []), ...(previous.feedImages || []), ...fields.images]) } });
     });
   }
 
@@ -158,7 +158,7 @@ function createNewsService(db, { request = createWorldNewsClient(), now = Date.n
           if (!extracted || typeof extracted !== 'object' || (!Array.isArray(extracted.images) && typeof extracted.text !== 'string')) throw newsError('NEWS_INVALID_RESPONSE');
           const content = bodyOf(extracted?.text);
           if (!article.content && content) changes.content = content;
-          if (Array.isArray(extracted?.images)) changes.images = imageUrls([...extracted.images, ...article.images]);
+          if (Array.isArray(extracted?.images)) changes.images = imageUrls([...extracted.images, ...(changes.images || article.images)]);
           changes.detailRetryAt = now() + (content || changes.images?.length > 1 ? 7 * DAY : TTL);
         }
       } catch (error) {

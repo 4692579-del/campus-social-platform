@@ -109,6 +109,20 @@ test('隐藏时结束关注动画并关闭确认，换账号清空显示，旧�
   assert.equal(f.page._followPreviewState.size, 0); await f.page.confirmUnfollow(); assert.equal(f.toasts.length, 0);
 });
 
+test('荟萃计划使用胶囊下方的导航高度，打开时隐藏底栏并在关闭后恢复侧栏', async () => {
+  const f = fixture({ cachedUser: user });
+  f.page.onLoad(); await f.page.onShow(); f.page.openMenu();
+  const markup = fs.readFileSync('miniprogram/pages/home/index.wxml', 'utf8');
+  assert.match(markup, /<membership-sheet[^>]*top="{{navHeight}}"/);
+  assert.equal(f.page.data.navHeight, f.page.data.navTop + f.page.data.navButtonHeight + 8);
+  f.page.selectMenuItem({ currentTarget: { dataset: { key: 'membership' } } });
+  assert.equal(f.page.data.membershipOpen, true);
+  assert.equal(f.bar.authBlocked, true);
+  f.page.closeMembership();
+  assert.equal(f.bar.authBlocked, false);
+  assert.equal(f.page.data.menuOpen, true);
+});
+
 test('关于小萃AI排在设置前，进入额度页保留菜单直到新页面覆盖', async () => {
   const f = fixture({ cachedUser: user }); f.page.onLoad(); await f.page.onShow(); f.page.openMenu();
   const keys = menuConfig.utilityMenuItems.map(item => item.key); assert.equal(keys.indexOf('xiaocui') + 1, keys.indexOf('settings'));

@@ -208,7 +208,7 @@ test('侧栏退出只弹一次确认；取消保留账号和菜单，确认后�
   assert.equal(f.page.data.menuOpen, false);
   assert.equal(f.page.data.confirmingLogout, false);
   assert.equal(f.page.data.selectedContent, 'posts');
-  assert.equal(f.page.data.likeCount, 0);
+  assert.equal(f.page.data.likeCount, '—');
 });
 
 test('退出确认期间切换账号、离开或卸载页面，迟到确认不会退出新账号', () => {

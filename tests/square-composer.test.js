@@ -5,6 +5,36 @@ const input = value => ({ detail: { value } });
 const option = key => ({ currentTarget: { dataset: { key } } });
 const panel = name => ({ currentTarget: { dataset: { panel: name } } });
 const quote = { _id: 'p_' + 'b'.repeat(40), content: '原动态正文不会放进我的输入框', images: ['cloud://test.bucket/square-media/bob/source/image.jpg'], author: { nickname: '原作者' } };
+test('发布表情保留原生选区并插入标准字符，允许连续点选且提交原字符', async () => {
+  const f = composerFixture({ getSelectedTextRange: ({ success }) => success({ start: 1, end: 3 }) });
+  await f.attach(); const c = f.component;
+  c.onInput({ detail: { value: '左😀右', cursor: 4 } });
+  c.editorDidFocus(); c.toggleEmoji();
+  const emoji = { currentTarget: { dataset: { emoji: '🎉' } } };
+  c.chooseEmoji(emoji); c.chooseEmoji(emoji);
+  assert.equal(c.data.content, '左🎉🎉右');
+  assert.equal(c.data.editorCursor, 5);
+  assert.equal(c.data.count, 4);
+  assert.equal(c.data.editorFocusRequested, false);
+  assert.equal(c.data.emojiOpen, true);
+  await c.publish();
+  assert.equal(c.data.emojiOpen, false);
+  assert.equal(f.calls[0].content, '左🎉🎉右');
+  f.detach();
+});
+
+test('发布 Emoji 达到上限时保留原正文，切换账号后旧面板不能插入', async () => {
+  const f = composerFixture(); await f.attach(); const c = f.component;
+  const emoji = { currentTarget: { dataset: { emoji: '😀' } } };
+  c.onInput(input('字'.repeat(150))); c.toggleEmoji(); c.chooseEmoji(emoji);
+  assert.equal(c.data.content, '字'.repeat(150));
+  assert.equal(c.data.limitHintVisible, true);
+  f.setUser({ ...user, _id: 'bob' }); c.chooseEmoji(emoji);
+  assert.equal(c.data.content, '字'.repeat(150));
+  f.hide(); assert.equal(c.data.emojiOpen, false);
+  f.detach();
+});
+
 test('引用入口预填原卡片，支持仅引用发布，原帖文字和图片不进入本次正文与上传参数', async () => {
   const f = composerFixture({ initialQuote: quote, cachedQuote: quote, detail: async () => quote });
   await f.attach(); const c = f.component;

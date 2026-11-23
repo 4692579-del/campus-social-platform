@@ -25,7 +25,7 @@ Page({
     homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true,
     loading: false, error: '', accountHint: '未登录', menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: false, loginSheetOpen: false, menuInstant: false,
-    navTop: 28, navButtonHeight: 32, navHeight: 72,
+    navTop: 28, navButtonHeight: 32, navHeight: 72, membershipOpen: false,
     brandRefreshPhase: 'idle', nativeRefreshing: false, refreshThreshold: 72,
     brandBouncing: false, squareTopTarget: '', campusTopTarget: '',
     menuLikeCount: '—', followerCount: '—', followingCount: '—', menuItems, utilityMenuItems,
@@ -69,6 +69,7 @@ Page({
     return account;
   },
   onHide() {
+    this.closeMembership();
     this.settleFollowAnimations();
     this.closeUnfollow(true);
     this.hideTabMotion();
@@ -92,6 +93,7 @@ Page({
     this.setAuthBlocked(false);
   },
   onUnload() {
+    this.closeMembership();
     this.resetFollowAnimations();
     this.hideTabMotion();
     this.stopBrandBounce();
@@ -187,7 +189,7 @@ Page({
     const tabBar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (tabBar) patchState(tabBar, { menuOpen: open, menuInstant: this.data.menuInstant });
   },
-  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen || this.data.unfollowTarget); },
+  interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen || this.data.unfollowTarget || this.data.membershipOpen); },
   setAuthBlocked(blocked) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) patchState(bar, { authBlocked: Boolean(blocked), composerOpen: Boolean(this.data.composerOpen && this._visible !== false && !this._unloaded) });

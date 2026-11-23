@@ -29,7 +29,7 @@ function selectFeedVideo(card, file) {
 
 Component({
   options: { multipleSlots: true },
-  properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, feedVideoEnabled: Boolean, followPreview: Object, sevenLinePreview: Boolean },
+  properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, feedVideoEnabled: Boolean, followPreview: Object, sevenLinePreview: Boolean, newsTranslation: Object },
   data: { expanded: false, sevenLineOverflow: null, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, likeMotionClass: '', feedVideo: null,
     likeParticleRays: [
       { angle: 0, color: '#b39ad4', accent: '#94c8d1' }, { angle: 51.4, color: '#ad83b3', accent: '#c1a4bf' },
@@ -64,7 +64,7 @@ Component({
       this._postId = id;
       this.setData({ expanded: false, imageIndex: 0, ...(this.data.sevenLineOverflow !== null ? { sevenLineOverflow: null } : {}) }, () => this.watchFeedVideo());
     },
-    'sevenLinePreview, detail, post._id, post.content, post.fullContent': function () {
+    'sevenLinePreview, detail, post._id, post.title, post.content, post.fullContent': function () {
       if (this._unloaded) return;
       this.measureSevenLinePreview();
     },
@@ -110,7 +110,8 @@ Component({
       const measure = () => {
         if (!current()) return;
         const query = this.createSelectorQuery();
-        query.select('.post-text-seven-lines').fields({ size: true, computedStyle: ['lineHeight'] });
+        const selector = this.data.post?.contentType === 'news' ? '.post-news-preview' : '.post-text-seven-lines';
+        query.select(selector).fields({ size: true, computedStyle: ['lineHeight'] });
         query.exec(result => {
           const rect = result?.[0];
           if (!current() || !rect?.width) return;
@@ -293,8 +294,9 @@ Component({
     toggleExpanded() { this.setData({ expanded: !this.data.expanded }); },
     reply() {
       const post = this.data.post;
-      if (post.author?.commentsDisabled && !post.replyCount) {
-        wx.showToast({ title: '该账号已关闭评论', icon: 'none' });
+      const news = post.contentType === 'news';
+      if ((news || post.author?.commentsDisabled) && !post.replyCount) {
+        wx.showToast({ title: news ? '全球动态暂不支持评论' : '该账号已关闭评论', icon: 'none' });
         return;
       }
       this.triggerEvent('reply', { id: post._id });
@@ -306,6 +308,10 @@ Component({
     },
     like() {
       if (this._unloaded || this._pageHidden) return;
+      if (this.data.post.contentType === 'news') {
+        wx.showToast({ title: '全球动态暂不支持点赞', icon: 'none' });
+        return;
+      }
       this._likeIntent = this.data.likeMotion && this.data.viewer ? { id: this.data.post._id, from: Boolean(this.data.post.liked), expires: Date.now() + 750 } : null;
       this.triggerEvent('react', { id: this.data.post._id, kind: 'like' });
     },

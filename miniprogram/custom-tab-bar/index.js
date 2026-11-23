@@ -79,11 +79,11 @@ Component({
       const next = {
         composerOpen: Boolean(page.data.composerOpen),
         commentsOpen: Boolean(page.data.commentPostId),
-        authBlocked: Boolean(page.data.authChecking || page.data.loginSheetOpen || page.data.composerOpen),
+        authBlocked: Boolean(page.data.authChecking || page.data.loginSheetOpen || page.data.composerOpen || page.data.membershipOpen),
         menuOpen: Boolean(page.data.menuOpen),
         menuInstant: Boolean(page.data.menuInstant),
         compact: ['pages/home/index', 'pages/search/index'].includes(page.route) && Boolean(page.data.chromeCompact) &&
-          !page.data.menuOpen && !page.data.commentPostId && !page.data.composerOpen && !page.data.authChecking && !page.data.loginSheetOpen,
+          !page.data.menuOpen && !page.data.commentPostId && !page.data.composerOpen && !page.data.authChecking && !page.data.loginSheetOpen && !page.data.membershipOpen,
       };
       const selected = pending === null ? this.data.items.findIndex(item => item.path === `/${page.route}`) : pending;
       // 原生页面栈可能尚未完成切换；不要把正在前往的标签反写回源页索引。

@@ -2,7 +2,7 @@ const userService = require('../../services/user');
 const { describeUser } = require('../../utils/user-role');
 const { menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const square = require('../../services/square');
-const { postPreview } = require('../../utils/post-view');
+const { postPreview, postView } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
 const postImages = require('../../services/post-images');
 const publicProfile = require('../../utils/public-profile');
@@ -29,7 +29,7 @@ Page({
     menuOpen: false, confirmingLogout: false, composerOpen: false,
     authChecking: true, loginSheetOpen: false,
     menuItems, utilityMenuItems,
-    likeCount: 0, followingCount: '—', followerCount: '—', selectedContent: 'posts', contentIndex: 0,
+    likeCount: '—', followingCount: '—', followerCount: '—', selectedContent: 'posts', contentIndex: 0,
     contentTabs: [
       { key: 'posts', label: '动态', icon: 'posts', empty: '还没有发布动态' },
       { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/profile-tabs/replies', iconExtension: 'svg', empty: '还没有回复' },
@@ -37,10 +37,11 @@ Page({
       { key: 'album', label: '相册', icon: 'album', iconSource: '/images/interface/album', iconExtension: 'svg', empty: '还没有上传照片' },
     ],
     emptyText: '还没有发布动态', commentPostId: '', historyCommentPostId: '', historyReplyId: '', historyReplyInput: false,
-    postsMenuOpen: false, postScope: 'square', pinnedPostId: '', ownPosts: [], postsLoading: false, postsMoreLoading: false,
+    postsMenuOpen: false, mediaMenuOpen: false, mediaTab: 'album', postScope: 'square', pinnedPostId: '', ownPosts: [], postsLoading: false, postsMoreLoading: false,
     postsError: '', postsHasMore: false, postsOffset: 0,
     quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0,
     albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '',
+    videos: [], videosLoading: false, videosMoreLoading: false, videosHasMore: false, videosCursor: '', videosError: '', videoPlayback: null,
   },
   onLoad(options = {}) {
     const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : [];
@@ -51,6 +52,9 @@ Page({
     if (cached) this.applyUser(cached);
   },
   onUnload() {
+    this._videoRequest = null;
+    this.stopProfileVideo();
+    this.stopOwnLikesUpdates();
     if (this.data.isVisitor) this.cancelPublicReads();
     this._visible = false;
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
@@ -71,6 +75,9 @@ Page({
     this._accountVersion = (this._accountVersion || 0) + 1;
   },
   onHide() {
+    this._videoRequest = null;
+    this.stopProfileVideo();
+    this.stopOwnLikesUpdates();
     if (this.data.isVisitor) this.cancelPublicReads();
     this._albumRequest = null;
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
@@ -88,7 +95,7 @@ Page({
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     this._postsRequest = null;
     this._quotesRequest = null;
-    this.setData({ confirmingLogout: false, loading: false, authChecking: false, loginSheetOpen: false, postsMenuOpen: false });
+    this.setData({ confirmingLogout: false, loading: false, authChecking: false, loginSheetOpen: false, postsMenuOpen: false, mediaMenuOpen: false, videosLoading: false, videosMoreLoading: false });
     this.setAuthBlocked(false);
   },
   onShow() {
@@ -99,6 +106,8 @@ Page({
     this._visible = true;
     this.startPostUpdates();
     this._viewVersion = (this._viewVersion || 0) + 1;
+    this.stopOwnLikesUpdates();
+    this._stopOwnLikes = square.subscribeOwnStats?.(() => this.refreshOwnLikes());
     this.syncNavigation();
     this.updateNavigationScroll();
     this.measureProfileNavigation();
@@ -211,7 +220,7 @@ Page({
   },
   startProfilePull(event) {
     this._pullGesture = null;
-    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen || this.data.profileRefreshing) return;
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen || this.data.mediaMenuOpen || this.data.profileRefreshing) return;
     const touch = event.touches && event.touches[0];
     if (touch && event.touches.length === 1) {
       this._pullGesture = { x: touch.clientX, y: touch.clientY, lastY: touch.clientY, active: false };
@@ -305,7 +314,7 @@ Page({
     return this._profilePullRequest === request && !this._unloaded && this._visible !== false &&
       this.data.user && this.data.user._id === request.account && this.data.selectedContent === request.tab &&
       (typeof userService.getSessionVersion !== 'function' || userService.getSessionVersion() === request.session) &&
-      this.data.profileAccountId === request.target && !this.interactionBlocked() && !this.data.commentPostId && !this.data.postsMenuOpen;
+      this.data.profileAccountId === request.target && !this.interactionBlocked() && !this.data.commentPostId && !this.data.postsMenuOpen && !this.data.mediaMenuOpen;
   },
   scheduleProfileRefresh(request, delay, action) {
     const timer = setTimeout(() => {
@@ -340,7 +349,8 @@ Page({
       this.paintProfileCui({ phase: 'loading', startedAt: request.startedAt });
       if (request.done) this.completeProfileRefresh(request);
     });
-    try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadAlbum(true); else if (this.data.selectedContent === 'reposts') await this.loadOwnQuotes(true); else await this.loadOwnPosts(true); }
+    this.refreshOwnLikes(true);
+    try { if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history) await history.load(true); } else if (this.data.selectedContent === 'album') await this.loadProfileMedia(true); else if (this.data.selectedContent === 'reposts') await this.loadOwnQuotes(true); else await this.loadOwnPosts(true); }
     finally {
       request.done = true;
       if (this._profilePullRequest === request) {
@@ -365,6 +375,21 @@ Page({
   interactionBlocked() { return Boolean(this.data.authChecking || this.data.loginSheetOpen || this.data.composerOpen || this.data.unfollowTarget); },
   currentView(version) {
     return !this._unloaded && this._visible !== false && version === (this._viewVersion || 0);
+  },
+  stopOwnLikesUpdates() {
+    this._stopOwnLikes?.();
+    this._stopOwnLikes = null;
+  },
+  refreshOwnLikes(force = false) {
+    const id = this.data.user?._id;
+    if (this.data.isVisitor || !id || this._visible !== true || this._unloaded || userService.getCachedUser()?._id !== id || !square.getOwnStats) return;
+    const view = this._viewVersion || 0, session = userService.getSessionVersion?.();
+    return square.getOwnStats({ force }).then(stats => {
+      if (this.currentView(view) && !this.data.isVisitor && this.data.user?._id === id && userService.getCachedUser()?._id === id &&
+          userService.getSessionVersion?.() === session && this.data.likeCount !== stats.receivedLikes) {
+        this.setData({ likeCount: stats.receivedLikes });
+      }
+    }).catch(() => { /* 保留当前会话已有的统计。 */ });
   },
   async refresh(force = true) {
     if (this.data.isVisitor) return this.refreshPublicProfile(force);
@@ -400,7 +425,8 @@ Page({
       this._postsRequest = null;
       this._quotesRequest = null;
       this._albumRequest = null;
-      this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '' });
+      this.resetProfileVideos();
+      this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
       this.setData({ quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0 });
       this.setData({ pinnedPostId: '', ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, postsMenuOpen: false, composerOpen: false });
     }
@@ -410,10 +436,12 @@ Page({
     const date = raw ? new Date(raw && typeof raw === 'object' && '$date' in raw ? raw.$date : raw) : null;
     const joinedText = user?.joinedMonth ? `${user.joinedMonth} 加入` :
       date && !Number.isNaN(date.getTime()) ? `${date.getFullYear()}年${date.getMonth() + 1}月 加入` : '';
+    const likeCount = user && userService.getCachedUser()?._id === user._id ? square.cachedOwnStats?.()?.receivedLikes ?? '—' : '—';
     this.setData({
       user, profileUser: user, identity: describeUser(user), isVerified, joinedText, authChecking: false, loginSheetOpen: !user,
       coverFileID: user ? user.coverFileID || '' : '', coverFailed: false, coverRetry: Boolean(this._pendingCover),
-      likeCount: 0, followingCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followingCount ?? '—' : '—', followerCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followerCount ?? '—' : '—',
+      ...(this.data.likeCount !== likeCount ? { likeCount } : {}),
+      followingCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followingCount ?? '—' : '—', followerCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followerCount ?? '—' : '—',
       certificationAction: user && user.certificationStatus === 'pending' ? '查看审核' :
         user && user.certificationStatus === 'rejected' ? '重新认证' : '去认证',
     });
@@ -421,13 +449,14 @@ Page({
     this.measureProfileNavigation();
     this.refreshFollowPresentation();
     if (user) {
+      this.refreshOwnLikes();
       const cachedPosts = square.cachedOwnFeed('posts');
       if (cachedPosts) this.showOwnPosts(cachedPosts);
       const cachedQuotes = square.cachedOwnFeed('quotes');
       if (cachedQuotes) this.showOwnQuotes(cachedQuotes);
       if (this._visible === true && this.data.selectedContent === 'reposts') this.loadOwnQuotes();
       if (this._visible === true && this.data.selectedContent === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
-      if (this._visible === true && this.data.selectedContent === 'album') this.loadAlbum();
+      if (this._visible === true && this.data.selectedContent === 'album') this.loadProfileMedia();
     }
   },
   async login() {
@@ -506,7 +535,8 @@ Page({
     if (this.data.isVisitor) return;
     if (this.interactionBlocked() || this._unloaded || this.data.menuOpen) return;
     this.resetProfilePull();
-    this.setData({ menuOpen: true });
+    this.stopProfileVideo();
+    this.setData({ menuOpen: true, postsMenuOpen: false, mediaMenuOpen: false });
     this.setMenuTabBarOpen(true);
     this.setMenuNavigationColor(true);
   },
@@ -584,17 +614,33 @@ Page({
     if (this.interactionBlocked()) return;
     const tab = this.data.contentTabs.find(item => item.key === event.currentTarget.dataset.key);
     if (!tab) return;
+    if (tab.key === 'album' && this.data.selectedContent === 'album') return this.toggleMediaMenu();
     this.resetProfilePull();
+    this.stopProfileVideo();
     if (!this.data.isVisitor && tab.key === 'posts' && this.data.selectedContent === 'posts') {
-      this.setData({ postsMenuOpen: !this.data.postsMenuOpen });
+      this.setData({ postsMenuOpen: !this.data.postsMenuOpen, mediaMenuOpen: false });
       return;
     }
-    this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false });
+    this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false, mediaMenuOpen: false });
     if (tab.key === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
     if (tab.key === 'reposts') return this.loadOwnQuotes();
-    if (tab.key === 'album') return this.loadAlbum();
+    if (tab.key === 'album') return this.loadProfileMedia();
   },
-  closePostsMenu() { this.setData({ postsMenuOpen: false }); },
+  closePostsMenu() { this.setData({ postsMenuOpen: false, mediaMenuOpen: false }); },
+  toggleMediaMenu() {
+    if (this.interactionBlocked() || this._unloaded || this._visible === false) return;
+    this.resetProfilePull();
+    this.stopProfileVideo();
+    this.setData({ mediaMenuOpen: !this.data.mediaMenuOpen, postsMenuOpen: false });
+  },
+  selectMediaTab(event) {
+    const mediaTab = event.currentTarget.dataset.media;
+    if (!this.data.mediaMenuOpen || this.interactionBlocked() || this._unloaded || this._visible === false || !['album', 'videos'].includes(mediaTab)) return;
+    this.resetProfilePull();
+    const contentIndex = this.data.contentTabs.findIndex(tab => tab.key === 'album');
+    this.setData({ mediaTab, mediaMenuOpen: false, selectedContent: 'album', contentIndex, emptyText: this.data.contentTabs[contentIndex].empty });
+    return this.loadProfileMedia();
+  },
   openComments(event) {
     this.resetProfilePull();
     this.setData({ historyCommentPostId: '', historyReplyId: '', historyReplyInput: false });
@@ -700,6 +746,89 @@ Page({
     return request.promise;
   },
   retryAlbum() { return this.loadAlbum(true); },
+  loadProfileMedia(force = false, append = false) {
+    return this.data.mediaTab === 'videos' ? this.loadProfileVideos(force, append) : this.loadAlbum(force, append);
+  },
+  resetProfileVideos() {
+    this._videoRequest = null;
+    this._shownVideos = null;
+    this._shownVideoRows = null;
+    this.stopProfileVideo();
+    this.setData({ videos: [], videosLoading: false, videosMoreLoading: false, videosHasMore: false, videosCursor: '', videosError: '' });
+  },
+  showProfileVideos(result) {
+    const { items, hasMore, nextCursor } = result;
+    if (this.data.videoPlayback && !items.some(item => item._id === this.data.videoPlayback.id)) this.stopProfileVideo();
+    if (this._shownVideos === result && this._shownVideoRows === items) return;
+    this._shownVideos = result;
+    this._shownVideoRows = items;
+    this.setData({ videos: items.map(item => postView(item)), videosHasMore: hasMore, videosCursor: nextCursor });
+  },
+  loadProfileVideos(force = false, append = false) {
+    const user = this.data.user;
+    if (!user || this.interactionBlocked() || this._unloaded || this._visible === false || this.data.profileUnavailable) return;
+    if (this._videoRequest) return this._videoRequest.promise;
+    const account = this.data.isVisitor ? this.data.profileAccountId : '';
+    const cached = square.cachedProfileVideos(account);
+    if (cached) this.showProfileVideos(cached);
+    const request = this._videoRequest = { view: this._viewVersion || 0, session: userService.getSessionVersion(), account };
+    const current = () => this._videoRequest === request && this.currentView(request.view) && userService.getSessionVersion() === request.session &&
+      this.data.user?._id === user._id && (this.data.isVisitor ? this.data.profileAccountId : '') === account;
+    this.setData({ videosLoading: !this.data.videos.length, videosMoreLoading: append, videosError: '' });
+    request.promise = square.listProfileVideos(account, { force, cursor: append ? this.data.videosCursor : '' }).then(result => {
+      if (current() && result) this.showProfileVideos(result);
+    }).catch(error => {
+      if (!current() || error.code === 'SESSION_CHANGED') return;
+      if (error.code === 'PROFILE_NOT_FOUND' && this.data.isVisitor) this.markPublicUnavailable(error.message);
+      else this.setData({ videosError: error.message || '视频读取失败，请重试' });
+    }).finally(() => {
+      if (this._videoRequest !== request) return;
+      if (current()) this.setData({ videosLoading: false, videosMoreLoading: false });
+      this._videoRequest = null;
+    });
+    return request.promise;
+  },
+  retryProfileVideos() { return this.loadProfileVideos(true); },
+  async playProfileVideo(event) {
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.mediaMenuOpen ||
+        this.data.selectedContent !== 'album' || this.data.mediaTab !== 'videos') return;
+    const row = this.data.videos.find(item => item._id === event.currentTarget.dataset.id);
+    if (!row || this.data.videoPlayback?.id === row._id) return;
+    const token = (this._videoToken || 0) + 1, session = userService.getSessionVersion(), view = this._viewVersion || 0;
+    const current = () => this.data.videoPlayback?.token === token && this.currentView(view) && session === userService.getSessionVersion();
+    this._videoToken = token;
+    this.setData({ videoPlayback: { id: row._id, token, src: '', ready: false } });
+    try {
+      const src = await postImages.resolveVideoPlayback(row.fileID);
+      if (current()) {
+        this.setData({ 'videoPlayback.src': src });
+      }
+    } catch (error) {
+      if (current()) {
+        this.stopProfileVideo();
+        wx.showToast({ title: '视频暂时无法播放，请重试', icon: 'none' });
+      }
+    }
+  },
+  profileVideoStarted(event) {
+    if (this.data.videoPlayback?.token === Number(event.currentTarget.dataset.token) && !this.data.videoPlayback.ready) {
+      this.setData({ 'videoPlayback.ready': true });
+    }
+  },
+  profileVideoEnded(event) {
+    if (this.data.videoPlayback?.token === Number(event.currentTarget.dataset.token)) this.stopProfileVideo();
+  },
+  profileVideoError(event) {
+    if (this.data.videoPlayback?.token !== Number(event.currentTarget.dataset.token)) return;
+    this.stopProfileVideo();
+    wx.showToast({ title: '视频暂时无法播放，请重试', icon: 'none' });
+  },
+  stopProfileVideo() { if (this.data.videoPlayback) this.setData({ videoPlayback: null }); },
+  openVideoPost(event) {
+    if (this.data.mediaMenuOpen || this.data.mediaTab !== 'videos' || this.data.selectedContent !== 'album') return;
+    this.stopProfileVideo();
+    this.openPost({ detail: { id: event.currentTarget.dataset.post } });
+  },
   async previewAlbum(event) {
     const files = this.data.albumImages.map(image => image.fileID), current = files[Number(event.currentTarget.dataset.index)];
     if (!current || this._albumPreviewing || this.interactionBlocked()) return;
@@ -710,16 +839,20 @@ Page({
   },
   loadMoreOwnPosts() {
     if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history && !this.data.commentPostId) return history.loadMore(); return; }
-    if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen) return;
+    if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen || this.data.mediaMenuOpen) return;
     if (this.data.selectedContent === 'reposts') { if (this.data.quotesHasMore) return this.loadOwnQuotes(false, true); return; }
-    if (this.data.selectedContent === 'album') { if (this.data.albumHasMore) return this.loadAlbum(false, true); return; }
+    if (this.data.selectedContent === 'album') {
+      if (this.data.mediaTab === 'videos' ? this.data.videosHasMore : this.data.albumHasMore) return this.loadProfileMedia(false, true);
+      return;
+    }
     if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' && this.data.postsHasMore) return this.loadOwnPosts(false, true);
   },
   shareProfile() { if (!this.interactionBlocked()) wx.showToast({ title: '个人主页分享将在后续开放', icon: 'none' }); },
   publishPost(event) {
     if (this.interactionBlocked() || !this.data.user || this.data.commentPostId) return;
     this.resetProfilePull();
-    this.setData({ composerOpen: true, postsMenuOpen: false, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
+    this.stopProfileVideo();
+    this.setData({ composerOpen: true, postsMenuOpen: false, mediaMenuOpen: false, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
     this.syncNavigation();
   },
   closeComposer(event) {
@@ -735,7 +868,7 @@ Page({
       else this.loadOwnPosts(false);
       const album = square.cachedAlbum();
       if (album) this.showAlbum(album);
-      if (this.data.selectedContent === 'album') this.loadAlbum(false);
+      if (this.data.selectedContent === 'album') this.loadProfileMedia();
     }
     this.syncNavigation();
   },
