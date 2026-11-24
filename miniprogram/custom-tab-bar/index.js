@@ -8,11 +8,20 @@ Component({
     menuOpen: false,
     menuInstant: false,
     compact: false,
+    dockScrollMotion: false,
+    dockHandoff: false,
+    dockScaleFrom: 1,
+    glassPress: '',
+    glassPressedIndex: -1,
     selected: -1,
+    litIcons: {},
+    iconLeaves: {},
+    iconContact: 0,
     indicatorPosition: 0,
-    indicatorFrom: 0,
     indicatorTo: 0,
-    indicatorDuration: 320,
+    indicatorScale: 'scale(1,1)',
+    indicatorMotionStyle: '',
+    indicatorDuration: 660,
     indicatorDelay: 0,
     indicatorAnimating: false,
     indicatorVariant: false,
@@ -24,57 +33,165 @@ Component({
     ],
   },
   observers: {
-    selected(index) { this.syncIndicator(index); },
     'authBlocked, commentsOpen, composerOpen, menuOpen'() {
-      if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this.data.menuOpen) this.stopIndicator();
-      else this.syncIndicator(this.data.selected);
+      if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this.data.menuOpen) {
+        this.clearGlassPress();
+        this.stopIndicator();
+      }
+      else if (this._indicatorVisible !== false && this._indicatorFlight === null) this.paintSelection(this.data.selected);
     },
   },
   lifetimes: {
-    attached() { this._indicatorVisible = true; this.syncPageState(true); this.syncIndicator(this.data.selected); },
-    ready() { this.syncPageState(true); this.syncIndicator(this.data.selected); },
-    detached() { this._indicatorDetached = true; this.stopIndicator(); },
+    attached() { this._indicatorVisible = true; this.syncPageState(); },
+    ready() { this.syncPageState(true); },
+    detached() {
+      this._indicatorDetached = true; this._glassTouch = null; this.stopIndicator();
+      tabSelection.unregister(this._tabOwner, this);
+    },
   },
   pageLifetimes: {
-    show() { this._indicatorVisible = true; this.syncPageState(true); this.syncIndicator(this.data.selected); },
-    hide() { this._indicatorVisible = false; this.stopIndicator(false); },
+    show() {
+      this._indicatorVisible = true;
+      this._dockDeparture = null;
+      const page = this._tabPageState;
+      this._tabPageState = null;
+      if (page && tabSelection.pendingIndex() === page.index) this.syncFromPage(page.index, page.values);
+      else this.syncPageState(true);
+    },
+    hide() {
+      this._indicatorVisible = false;
+      this._arrivingFlight = null;
+      this._tabPageState = null;
+      this.clearGlassPress(); this.stopIndicator(false);
+      if (this.data.dockScrollMotion) this.setData({ dockScrollMotion: false });
+      this.clearDepartedDock();
+    },
   },
   methods: {
+    setDockScrollCompact(compact) {
+      if (this._indicatorDetached || this._indicatorVisible === false || this._switching ||
+          compact === this.data.compact) return;
+      this.setData({ compact, dockScrollMotion: true, dockHandoff: false });
+    },
+    clearDepartedDock() {
+      const departure = this._dockDeparture;
+      if (!departure?.succeeded || this._indicatorVisible !== false || this._indicatorDetached) return;
+      this._dockDeparture = null;
+      const page = departure.page;
+      if (page && !page._unloaded && page.data?.chromeCompact && typeof page.setData === 'function') page.setData({ chromeCompact: false });
+      // 快速返回若已预填了下一次交接，旧页面的成功回调不能覆盖那一帧。
+      if (this.data.selected !== departure.target) return;
+      if (this.data.compact || this.data.dockHandoff || this.data.dockScaleFrom !== 1) {
+        this.setData({ compact: false, dockHandoff: false, dockScaleFrom: 1 });
+      }
+    },
+    pressGlass(event) {
+      if (this._indicatorDetached || this._indicatorVisible === false || this._switching ||
+          this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this.data.menuOpen) return;
+      if (event.touches.length !== 1) { this.clearGlassPress(); return; }
+      const { glass, index } = event.currentTarget.dataset;
+      if (glass !== 'tabs' && glass !== 'compose') return;
+      const { identifier, clientX, clientY } = event.touches[0];
+      this._glassTouch = { identifier, x: clientX, y: clientY };
+      const pressedIndex = glass === 'tabs' ? Number(index) : -1;
+      if (this.data.glassPress !== glass || this.data.glassPressedIndex !== pressedIndex) {
+        this.setData({ glassPress: glass, glassPressedIndex: pressedIndex });
+      }
+    },
+    moveGlassPress(event) {
+      const start = this._glassTouch;
+      if (!start) return;
+      const touch = event.touches.length === 1 && event.touches[0];
+      if (!touch || touch.identifier !== start.identifier ||
+          Math.abs(touch.clientX - start.x) > 12 || Math.abs(touch.clientY - start.y) > 12) this.clearGlassPress();
+    },
+    releaseGlass(event) {
+      if (this._glassTouch && !(event.touches || []).some(touch => touch.identifier === this._glassTouch.identifier)) {
+        this.clearGlassPress();
+      }
+    },
+    clearGlassPress() {
+      this._glassTouch = null;
+      if (!this._indicatorDetached && this.data.glassPress) this.setData({ glassPress: '', glassPressedIndex: -1 });
+    },
     stopIndicator(resetView = true) {
       this._indicatorEpoch = (this._indicatorEpoch || 0) + 1;
       this._indicatorFlight = null;
       if (this._indicatorTimer) { clearTimeout(this._indicatorTimer); this._indicatorTimer = null; }
-      if (resetView && this._indicatorVisible !== false && !this._indicatorDetached && this.data.indicatorAnimating)
-        this.setData({ indicatorAnimating: false });
+      if (resetView && this._indicatorVisible !== false && !this._indicatorDetached && (this.data.indicatorAnimating || this.data.dockHandoff))
+        this.setData({ indicatorAnimating: false, dockHandoff: false });
     },
-    syncIndicator(index) {
-      if (!Number.isInteger(index) || !this.data.items[index]) return;
-      if (this._indicatorDetached || this._indicatorVisible === false || this.data.authBlocked ||
-          this.data.commentsOpen || this.data.composerOpen || this.data.menuOpen) { this.stopIndicator(); return; }
-      const state = tabSelection.read(index), key = `${index}:${state.id}`;
-      if (this._indicatorFlight === key) return;
-      // 只取消旧回调；不能先撤掉 CSS 动画暴露 inline 终点，再写回当前坐标。
+    paintSelection(index, patch = {}, onPaint) {
+      if (this._indicatorDetached || !this.data.items[index]) return;
+      const state = tabSelection.read(index), key = `${index}:${state.id}${state.waiting ? ':waiting' : ''}`;
+      // 交接首帧由来源底栏的尺寸决定，目标页缓存的缩小状态不能盖过它。
+      if (state.waiting) patch = { ...patch, compact: false, dockScrollMotion: false };
+      if (this._indicatorFlight === key) {
+        if (onPaint) this.setData({ ...patch, indicatorPosition: state.position }, onPaint);
+        else if (Object.keys(patch).length) this.setData(patch);
+        return;
+      }
       this.stopIndicator(false);
       this._indicatorFlight = key;
       const epoch = this._indicatorEpoch;
-      if (!state.active) { this.setData({ indicatorAnimating: false, indicatorPosition: state.position }); return; }
-      // 交替动画名，切页及反向时在同一补丁里从共享时间轴启动，不插入静止帧。
-      this.setData({ indicatorAnimating: true, indicatorPosition: state.position, indicatorFrom: state.from,
-        indicatorTo: state.to, indicatorDuration: state.duration, indicatorDelay: -state.elapsed, indicatorVariant: !this.data.indicatorVariant });
+      const dockScaleFrom = state.scaleFrom ?? 1;
+      const dockHandoff = dockScaleFrom < 1;
+      const litIcons = Object.fromEntries(state.litIcons.map(icon => [icon, true]));
+      if (!state.active) {
+        this.setData({ ...patch, dockHandoff, dockScaleFrom, selected: index, litIcons,
+          indicatorScale: state.waiting ? `scale(${state.scaleX},${state.scaleY})` : 'scale(1,1)',
+          indicatorMotionStyle: state.waiting ? state.motionStyle : '',
+          iconContact: 0, iconLeaves: {}, indicatorAnimating: false, indicatorPosition: state.position }, onPaint);
+        return;
+      }
       this._indicatorTimer = setTimeout(() => {
         if (epoch !== this._indicatorEpoch || this._indicatorDetached || this._indicatorVisible === false) return;
         this._indicatorTimer = null;
-        this.setData({ indicatorAnimating: false, indicatorPosition: state.to });
+        this.setData({ litIcons: { [index]: true }, iconContact: 0, iconLeaves: {}, indicatorAnimating: false,
+          indicatorPosition: state.to, indicatorScale: 'scale(1,1)', indicatorMotionStyle: '', dockHandoff: false });
         this._indicatorFlight = `${index}:0`;
       }, state.duration - state.elapsed);
+      this.setData({ ...patch, dockHandoff, dockScaleFrom, selected: index, litIcons,
+        iconContact: litIcons[index] ? 0 : state.iconContact, iconLeaves: state.iconLeaves,
+        indicatorAnimating: true, indicatorPosition: state.position, indicatorScale: 'scale(1,1)', indicatorMotionStyle: state.motionStyle,
+        indicatorTo: state.to, indicatorDuration: state.duration, indicatorDelay: -state.elapsed || 0, indicatorVariant: !this.data.indicatorVariant }, onPaint);
+    },
+    syncFromPage(index, values, arriving = true) {
+      if (this._indicatorDetached) return;
+      if (this._tabOwner !== undefined && this._tabOwner !== index) return;
+      const pending = tabSelection.pendingIndex();
+      if (pending !== null && pending !== index) return;
+      if (this._tabOwner !== index) {
+        tabSelection.unregister(this._tabOwner, this);
+        this._tabOwner = index;
+        tabSelection.register(index, this);
+      }
+      if (this._indicatorVisible === false) {
+        if (pending === index && arriving) this._tabPageState = { index, values };
+        return;
+      }
+      if (this._switching) return;
+      const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => this.data[key] !== value));
+      const state = tabSelection.read(index);
+      if (!state.waiting || !arriving) {
+        if (arriving) tabSelection.acknowledge(index);
+        this.paintSelection(index, changed);
+        return;
+      }
+      if (this._arrivingFlight === state.id) return;
+      this._arrivingFlight = state.id;
+      this.paintSelection(index, changed, () => {
+        if (this._indicatorDetached || this._arrivingFlight !== state.id) return;
+        this._arrivingFlight = null;
+        if (this._indicatorVisible === false || this._switching) return;
+        if (tabSelection.start(index, state.id) || tabSelection.pendingIndex() === null) this.paintSelection(index);
+      });
     },
     syncPageState(arriving = false) {
       const pages = getCurrentPages(), page = pages[pages.length - 1];
-      const pending = arriving ? tabSelection.pendingIndex() : null;
-      if (!page || !page.data) {
-        if (pending !== null && !this._switching) this.setData({ selected: pending });
-        return;
-      }
+      if (!page || !page.data || (typeof page.getTabBar === 'function' && page.getTabBar() !== this)) return;
+      const index = this.data.items.findIndex(item => item.path === `/${page.route}`);
+      if (this._tabOwner !== undefined && this._tabOwner !== index) return;
       // 相册/相机返回时底栏可能比页面晚恢复，始终以当前页面为准。
       const next = {
         composerOpen: Boolean(page.data.composerOpen),
@@ -85,11 +202,13 @@ Component({
         compact: ['pages/home/index', 'pages/search/index'].includes(page.route) && Boolean(page.data.chromeCompact) &&
           !page.data.menuOpen && !page.data.commentPostId && !page.data.composerOpen && !page.data.authChecking && !page.data.loginSheetOpen && !page.data.membershipOpen,
       };
-      const selected = pending === null ? this.data.items.findIndex(item => item.path === `/${page.route}`) : pending;
-      // 原生页面栈可能尚未完成切换；不要把正在前往的标签反写回源页索引。
-      if (selected >= 0 && !this._switching) next.selected = selected;
-      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => this.data[key] !== value));
-      if (Object.keys(changed).length) this.setData(changed);
+      // 组件 show/ready 可能比页面 onShow 早，不能用还没重置的旧滚动状态。
+      if (arriving && index >= 0 && tabSelection.read(index).scaleFrom !== undefined) next.compact = false;
+      if (index >= 0) this.syncFromPage(index, next, arriving);
+      else if (!this._switching) {
+        const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => this.data[key] !== value));
+        if (Object.keys(changed).length) this.setData(changed);
+      }
     },
     stopMenuTouch() {},
     closeProfileMenu() {
@@ -126,35 +245,41 @@ Component({
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }
       const index = Number(event.currentTarget.dataset.index);
       if (!Number.isInteger(index) || !this.data.items[index] || index === this.data.selected || this._switching) return;
-      const previous = this.data.selected, previousCompact = this.data.compact, animationId = tabSelection.begin(previous, index);
+      const previous = this.data.selected, previousCompact = this.data.compact;
+      const animationId = tabSelection.begin(previous, index, previousCompact);
       this._switching = true;
       this._tabNavigationId = animationId;
-      this.setData({ selected: index, compact: false });
       const pages = getCurrentPages(), source = pages[pages.length - 1];
-      const motionTicket = source && typeof source.prepareTabLeave === 'function' ?
-        source.prepareTabLeave(this.data.items[index].path) : null;
+      const departure = this._dockDeparture = { target: index, page: source, succeeded: false };
       const rollback = () => {
         if (this._tabNavigationId !== animationId) return false;
         if (!tabSelection.rollback(animationId, previous)) return false;
-        if (!this._indicatorDetached) this.setData({ selected: previous, compact: previousCompact });
+        this.paintSelection(previous, { compact: previousCompact });
+        tabSelection.prepare(index, this);
         return true;
       };
+      const cachedTarget = tabSelection.prepare(index, this);
+      if (!cachedTarget) tabSelection.start(index, animationId, true);
+      this.paintSelection(index, { compact: false, dockScrollMotion: false });
       wx.switchTab({
-        url: this.data.items[index].path,
-        success: () => {
-          if (motionTicket !== null && source && typeof source.finishTabLeave === 'function') source.finishTabLeave(motionTicket);
-        },
-        fail: () => {
-          if (!rollback()) return;
-          if (motionTicket !== null && source && typeof source.cancelTabLeave === 'function') source.cancelTabLeave(motionTicket);
-          wx.showToast({ title: '页面打开失败，请重试', icon: 'none' });
-        },
-        complete: () => {
-          tabSelection.complete(animationId);
-          if (this._tabNavigationId !== animationId) return;
-          this._tabNavigationId = null;
-          this._switching = false;
-        },
+          url: this.data.items[index].path,
+          success: () => {
+            if (this._dockDeparture === departure) {
+              departure.succeeded = true;
+              this.clearDepartedDock();
+            }
+          },
+          fail: () => {
+            if (this._dockDeparture === departure) this._dockDeparture = null;
+            if (!rollback()) return;
+            wx.showToast({ title: '页面打开失败，请重试', icon: 'none' });
+          },
+          complete: () => {
+            if (this._tabNavigationId !== animationId) return;
+            this._tabNavigationId = null;
+            this._switching = false;
+            if (this._indicatorVisible !== false && tabSelection.pendingIndex() === this._tabOwner) this.syncPageState(true);
+          },
       });
     },
   },

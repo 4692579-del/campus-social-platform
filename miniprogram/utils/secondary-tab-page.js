@@ -1,21 +1,18 @@
 const { DEFAULT_LAYOUT, readTabLayout, patchState } = require('./tab-page-layout');
-const tabPageMotion = require('./tab-page-motion');
 
 // 仍是独立原生 Page；统一视窗与首页一致，避免切页时创建/移除系统导航栏。
 module.exports = function secondaryTabPage(index, extra = {}) {
   return {
     ...extra,
-    ...tabPageMotion.methods,
-    data: { ...DEFAULT_LAYOUT, ...tabPageMotion.data, ...extra.data },
+    data: { ...DEFAULT_LAYOUT, ...extra.data },
     onLoad() { this.updateTabLayout(); },
     onShow() {
       this._visible = true;
-      this.showTabMotion(`/pages/${['home', 'inbox', 'messages', 'search'][index]}/index`);
       this.syncNavigation();
     },
     onReady() { this.syncNavigation(); },
-    onHide() { this.hideTabMotion(); this._visible = false; },
-    onUnload() { this.hideTabMotion(); this._visible = false; this._unloaded = true; },
+    onHide() { this._visible = false; },
+    onUnload() { this._visible = false; this._unloaded = true; },
     onResize() { this.updateTabLayout(); },
     updateTabLayout() {
       const { windowWidth, ...layout } = readTabLayout(wx);
@@ -23,8 +20,10 @@ module.exports = function secondaryTabPage(index, extra = {}) {
     },
     syncNavigation() {
       const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-      if (bar) patchState(bar, { selected: index, compact: false, menuOpen: false, authBlocked: false,
-        commentsOpen: false, composerOpen: false });
+      if (!bar || this._unloaded || this._visible === false) return;
+      const values = { compact: false, menuOpen: false, authBlocked: false, commentsOpen: false, composerOpen: false };
+      if (typeof bar.syncFromPage === 'function') bar.syncFromPage(index, values);
+      else if (!bar._switching) patchState(bar, { ...values, selected: index });
     },
   };
 };

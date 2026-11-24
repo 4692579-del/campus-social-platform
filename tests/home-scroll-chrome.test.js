@@ -6,7 +6,9 @@ const vm = require('node:vm');
 const { createDirectionTracker } = require('../miniprogram/utils/home-scroll-chrome');
 
 function fixture() {
+  let now = 1000;
   const context = { module: { exports: {} }, require: () => require('../miniprogram/utils/tab-page-layout'),
+    Date: { now: () => now },
     wx: { getWindowInfo: () => ({ windowHeight: 800, statusBarHeight: 44 }) },
     setTimeout() { assert.fail('滚动尺寸不能依赖计时器或逐帧同步'); } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/utils/home-scroll-chrome.js'), 'utf8'), context);
@@ -21,6 +23,7 @@ function fixture() {
     setData(values) { writes.push(values); Object.assign(this.data, values); } };
   page.configureHomeChrome(); page.resetHomeChrome(); writes.length = 0;
   return { page, bar, posts, writes, navWrites,
+    advance(ms) { now += ms; },
     touch(key = 'square') { page.onHomeFeedTouchStart({ currentTarget: { dataset: { feed: key } } }); },
     scroll(top, key = 'square', height = 2000) { page.onHomeFeedScroll({ currentTarget: { dataset: { feed: key } }, detail: { scrollTop: top, scrollHeight: height } }); },
   };
@@ -70,9 +73,20 @@ test('隐藏页和非当前列表的迟到滚动无效，恢复滚动位置不�
   f.scroll(700, 'campus'); assert.equal(f.writes.length, 0);
   f.touch(); f.scroll(604); assert.equal(f.page.data.chromeCompact, true);
   f.page._visible = false; f.scroll(400); assert.equal(f.page.data.chromeCompact, true);
-  f.page._visible = true; f.page.resetHomeChrome(); assert.equal(f.page.data.chromeCompact, false);
-  f.scroll(604); assert.equal(f.page.data.chromeCompact, false);
-  f.touch(); f.scroll(608); assert.equal(f.page.data.chromeCompact, true);
+  f.page._visible = true; f.page.resetHomeChrome(true); assert.equal(f.page.data.chromeCompact, false);
+  for (const top of [604, 620, 640]) f.scroll(top);
+  assert.equal(f.page.data.chromeCompact, false); assert.equal(f.bar.data.compact, false);
+  f.advance(150); // 某些原生滚动只派发 scroll，不能永久等 touchstart/dragstart。
+  f.scroll(644); assert.equal(f.page.data.chromeCompact, true);
+  f.scroll(638); assert.equal(f.page.data.chromeCompact, false);
+});
+
+test('返回时开始真实拖动，可立即结束恢复滚动保护', () => {
+  const f = fixture();
+  f.page.resetHomeChrome(true); f.scroll(400);
+  f.page.onHomeFeedDragStart({ currentTarget: { dataset: { feed: 'square' } } });
+  f.scroll(410);
+  assert.equal(f.bar.data.compact, true);
 });
 
 test('菜单、评论、发布及刷新期间恢复头部，不跟随滚动缩小；切页中的惯性滚动不改导航状态', () => {

@@ -32,6 +32,35 @@ test('关注页使用真实游标继续空页，加载完成不重设图片数�
   const posts=f.page.data.posts;f.page.showFeed({items:[row],hasMore:false,nextCursor:''});assert.equal(f.page.data.posts,posts);
 });
 
+test('首页分页只发送新增卡片和旧卡片变化字段，顺序变化后重新对齐', async () => {
+  const first = { _id: 'first', content: '已有动态', images: ['cloud://test/photo.jpg'], likeCount: 1 };
+  const second = { _id: 'second', content: '下一页动态' };
+  const cachedFeed = { items: [first], hasMore: true, nextOffset: 1 };
+  const result = { items: [{ ...first, images: [...first.images], likeCount: 2 }, second], hasMore: false, nextOffset: 2 };
+  const f = fixture({ cachedFeed, list: () => result });
+  f.page.onLoad();
+  const existing = f.page.data.posts[0], images = existing.images;
+  const updates = [], setData = f.page.setData.bind(f.page);
+  f.page.setData = values => { updates.push(values); setData(values); };
+
+  await f.page.loadMoreFeed();
+  assert.equal(f.feedRequests[0].offset, 1);
+  const listUpdate = updates.find(value => Object.hasOwn(value, 'posts[1]'));
+  assert.deepEqual(Object.keys(listUpdate).sort(), ['feedHasMore', 'feedOffset', 'posts[0].likeCount', 'posts[1]']);
+  assert.equal(f.page.data.posts[0], existing);
+  assert.equal(existing.images, images);
+  assert.equal(existing.likeCount, 2);
+  assert.equal(f.page.data.posts[1]._id, second._id);
+  assert.equal(f.page.data.feedOffset, 2);
+
+  f.page.showFeed({ ...result, items: [second, first] });
+  assert.ok(Object.hasOwn(updates.at(-1), 'posts'));
+  assert.equal(f.page.data.posts[0]._id, second._id);
+  f.page.showFeed({ ...result, items: [second], nextOffset: 1 });
+  assert.ok(Object.hasOwn(updates.at(-1), 'posts'));
+  assert.equal(f.page.data.posts.length, 1);
+});
+
 test('首页头像菜单按真实头像定位，点击立即更新关注并播放动画，不改帖子图片', async () => {
   const id = 'p_' + 'a'.repeat(40), feed = { items: [{ _id: id, content: '动态', images: ['cloud://real/photo.jpg'], author: { nickname: '同学', accountId: '87654321' } }], hasMore: false, nextOffset: 1 };
   const f = fixture({ cachedUser: user, cachedFeed: feed }); f.page.onLoad();
@@ -167,7 +196,7 @@ function fixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
     setTimeout: setTimer, clearTimeout: clearTimer,
-    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-motion') ? require('../miniprogram/utils/tab-page-motion') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title), navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title), navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
       ...(options.nextTick ? { nextTick: options.nextTick } : {}),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),

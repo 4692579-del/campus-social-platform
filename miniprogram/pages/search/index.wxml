@@ -31,7 +31,7 @@
             <view wx:for="{{hotPlatforms}}" wx:key="key" class="board-option {{hotType === item.key ? 'active' : ''}}" data-type="{{item.key}}" catchtap="selectHotPlatform" aria-role="button">{{item.label}}</view>
           </view>
         </view>
-        <view class="board-viewport">
+        <view wx:if="{{boardsMounted}}" class="board-viewport">
           <view class="board-panels" style="left:{{-boardIndex * 100}}%;">
             <view class="board-panel cui-board-panel {{boardIndex === 0 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 0 ? boardMinHeight : 0}}px;">
               <view class="cui-promo-frame">
@@ -107,5 +107,4 @@
 <template is="account-menu" data="{{user: user, accountHint: accountHint, menuOpen: menuOpen, navHeight: navHeight, menuLikeCount: menuLikeCount, followerCount: followerCount, followingCount: followingCount, menuItems: menuItems, utilityMenuItems: utilityMenuItems, loading: loading, confirmingLogout: confirmingLogout}}" />
 <membership-sheet wx:if="{{membershipOpen}}" top="{{navHeight}}" capsule-height="{{navButtonHeight}}" bind:close="closeMembership" />
 <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: accountError, loading: loading, cancelText: '暂不登录'}}" />
-<view wx:if="{{tabMotionPhase && !menuOpen && !authChecking && !loginSheetOpen}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>
 </view>

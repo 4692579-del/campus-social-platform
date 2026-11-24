@@ -1,16 +1,38 @@
 <view wx:if="{{!authBlocked && !commentsOpen && !composerOpen}}" class="tab-bar-viewport {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
   <view class="tab-dock">
-    <view class="tab-dock-scale {{compact ? 'is-compact' : ''}}">
-      <view class="tab-bar nav-glass">
-        <view class="tab-items">
-          <view class="tab-indicator {{indicatorAnimating ? (indicatorVariant ? 'slide-a' : 'slide-b') : ''}}" style="opacity: {{selected >= 0 ? 1 : 0}}; width: {{100 / items.length}}%; transform: translate3d({{indicatorAnimating ? indicatorTo : indicatorPosition}}%, 0, 0); --tab-slide-from: {{indicatorFrom}}%; --tab-slide-to: {{indicatorTo}}%; animation-duration: {{indicatorDuration}}ms; animation-delay: {{indicatorDelay}}ms;" aria-hidden="true"></view>
-          <button wx:for="{{items}}" wx:key="path" class="tab-item {{selected === index ? 'is-selected' : ''}}" data-index="{{index}}" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="tab-item-pressed">
+    <view class="tab-dock-scale {{compact ? 'is-compact' : ''}} {{dockScrollMotion ? 'dock-scroll-motion' : ''}} {{dockHandoff ? (indicatorAnimating ? (indicatorVariant ? 'dock-grow-a' : 'dock-grow-b') : 'dock-handoff') : ''}}"
+      style="--tab-dock-from: {{dockScaleFrom}}; --tab-dock-delay: {{indicatorDelay}}ms;">
+      <view class="tab-bar nav-glass {{glassPress === 'tabs' ? 'is-glass-pressed' : ''}}">
+        <view class="nav-glass-surface" aria-hidden="true">
+          <view class="nav-glass-effect"></view>
+          <view class="nav-glass-tint"></view>
+          <view class="nav-glass-shine"></view>
+        </view>
+        <view class="tab-items {{indicatorAnimating ? (indicatorVariant ? 'icons-slide-a' : 'icons-slide-b') : ''}}" style="--icon-delay: {{indicatorDelay}}ms;">
+          <view class="tab-indicator {{indicatorAnimating ? (indicatorVariant ? 'slide-a' : 'slide-b') : ''}}" style="opacity: {{selected >= 0 ? 1 : 0}}; width: {{100 / items.length}}%; --tab-slide-position: {{indicatorPosition}}%; --tab-slide-scale: {{indicatorScale}}; --tab-slide-to: {{indicatorTo}}%; --tab-slide-duration: {{indicatorDuration}}ms; --tab-slide-delay: {{indicatorDelay}}ms; {{indicatorMotionStyle}}" aria-hidden="true">
+            <view class="tab-indicator-glass {{glassPress === 'tabs' && glassPressedIndex === selected ? 'is-lens-pressed' : ''}}">
+              <view class="tab-indicator-refraction"></view>
+              <view class="tab-indicator-tint"></view>
+              <view class="tab-indicator-shine"></view>
+            </view>
+          </view>
+          <button wx:for="{{items}}" wx:key="path" class="tab-item {{selected === index ? 'is-selected' : ''}} {{litIcons[index] ? 'is-lit' : ''}} {{selected === index && iconContact ? 'icon-entering' : litIcons[index] && iconLeaves[index] ? 'icon-leaving' : ''}}"
+            style="--icon-switch-at: {{(selected === index ? iconContact : iconLeaves[index]) || 0}}ms;" data-index="{{index}}" data-glass="tabs" bindtap="switchTab" aria-label="{{item.label}}" aria-role="button" aria-selected="{{selected === index}}" hover-class="none"
+            bindtouchstart="pressGlass" bindtouchmove="moveGlassPress" bindtouchend="releaseGlass" bindtouchcancel="clearGlassPress">
             <view class="tab-icon-capsule"><image class="tab-icon tab-icon-idle" src="/images/tab-bar/{{item.icon}}.svg" mode="aspectFit" /><image class="tab-icon tab-icon-active" src="/images/tab-bar/{{item.icon}}-active.svg" mode="aspectFit" /></view>
           </button>
         </view>
         <view class="tab-menu-shade" bindtap="closeProfileMenu" catchtouchmove="stopMenuTouch" aria-hidden="{{!menuOpen}}" aria-role="button" aria-label="收起侧面菜单"></view>
       </view>
-      <view class="tab-compose-glass nav-glass"><button class="tab-compose-button" bindtap="openComposer" hover-class="tab-item-pressed" aria-label="发布广场动态"><image class="compose-icon" src="/images/tab-bar/plus-blue.svg" mode="aspectFit" /></button></view>
+      <view class="tab-compose-glass nav-glass {{glassPress === 'compose' ? 'is-glass-pressed' : ''}}">
+        <view class="nav-glass-surface" aria-hidden="true">
+          <view class="nav-glass-effect"></view>
+          <view class="nav-glass-tint"></view>
+          <view class="nav-glass-shine"></view>
+        </view>
+        <button class="tab-compose-button" data-glass="compose" bindtap="openComposer" hover-class="none" aria-label="发布广场动态"
+          bindtouchstart="pressGlass" bindtouchmove="moveGlassPress" bindtouchend="releaseGlass" bindtouchcancel="clearGlassPress"><image class="compose-icon" src="/images/tab-bar/plus-blue.svg" mode="aspectFit" /></button>
+      </view>
     </view>
   </view>
 </view>

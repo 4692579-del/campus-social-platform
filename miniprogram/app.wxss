@@ -25,15 +25,6 @@ button::after{
 .tab-page-title { position: absolute; left: 25%; right: 25%; display: flex; align-items: center; justify-content: center; color: #15191d; font-size: 32rpx; font-weight: 600; }
 .tab-secondary-page .search-page { flex: 1; min-height: 0; }
 
-/* 只淡化正文区域，不动画整张 feed，不遮住顶部或底栏，不制造全透明空白。 */
-.tab-page-fader { position: fixed; z-index: 90; left: 0; right: 0; bottom: 0; background: #fff; pointer-events: none; opacity: 0; animation-fill-mode: both; }
-.tab-page-fader.is-leaving { animation: tab-content-out 80ms cubic-bezier(.3333,.6667,.6667,1) both; }
-.tab-page-fader.is-entering { animation: tab-content-in 180ms cubic-bezier(.3333,.6667,.6667,1) both; }
-@keyframes tab-content-out { from { opacity: var(--tab-cover-start, 0); } to { opacity: .24; } }
-@keyframes tab-content-in { from { opacity: var(--tab-cover-start, 0); } to { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .tab-page-fader { display: none; animation: none; } }
-
-
 page {
   background: #f6f6f6;
   display: flex;

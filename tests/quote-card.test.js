@@ -17,11 +17,12 @@ function fixture() {
   return { c, patches, routes, events, toasts, show: () => definition.pageLifetimes.show.call(c), hide: () => definition.pageLifetimes.hide.call(c),
     set(value) { c.data.quote = value; definition.observers.quote.call(c, value); } };
 }
-test('引用卡片保留图片节点和页码；点击跳到被引用详情，编辑态只能移除', () => {
+test('引用卡片保留图片节点；点击跳到被引用详情，编辑态只能移除', () => {
   const f = fixture(); f.set(quote);
-  f.c.imageChanged({ currentTarget: { dataset: { frame: 0 } }, detail: { current: 1 } }); f.patches.length = 0;
+  const images = f.c.data.frames[0].images;
+  f.patches.length = 0;
   f.set({ ...quote, images: [...quote.images] });
-  assert.equal(f.c.data.frames[0].imageIndex, 1); assert.equal(f.patches.length, 0);
+  assert.equal(f.c.data.frames[0].images, images); assert.equal(f.patches.length, 0);
   f.c.open({ currentTarget: { dataset: { id: quote._id } } }); assert.equal(f.routes[0], `/pages/square-detail/index?id=${quote._id}`);
   f.show(); f.c.data.removable = true; f.c.open({ currentTarget: { dataset: { id: quote._id } } }); assert.equal(f.routes.length, 1);
   f.c.remove(); assert.equal(f.events[0], 'remove');
@@ -52,5 +53,5 @@ test('引用多图滑到第二张后，隐藏期间首次解码只缓存比例�
   f.c.photoLoaded({ currentTarget: { dataset: { frame: 0, file: images[0] } }, detail: { width: 600,height: 1000 } });
   assert.equal(f.patches.length,0); f.show();
   assert.equal(f.c.data.frames[0].imageIndex,1);
-  assert.ok(f.patches.every(patch => Object.keys(patch).every(key => /gallery(Width|Height)$/.test(key))));
+  assert.ok(f.patches.every(patch => Object.keys(patch).every(key => /(?:gallery(?:Width|Height)|photoFrames\[\d+\])$/.test(key))));
 });

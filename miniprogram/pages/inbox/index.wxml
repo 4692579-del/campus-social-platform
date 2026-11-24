@@ -10,5 +10,3 @@
   </view>
 </view>
 </view>
-
-<view wx:if="{{tabMotionPhase && !menuOpen && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}" class="tab-page-fader is-{{tabMotionPhase}}" style="top: {{navHeight}}px; --tab-cover-start: {{tabMotionOpacity}};" aria-hidden="true"></view>

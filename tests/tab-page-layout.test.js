@@ -33,7 +33,7 @@ test('占位页切换只同步变化的导航状态，不重复写顶部、不�
     const apiCalls = [], pageWrites = [], barWrites = [];
     const api = { getWindowInfo() { apiCalls.push('window'); return { statusBarHeight: 54, windowWidth: 393 }; },
       getMenuButtonBoundingClientRect() { apiCalls.push('capsule'); return { top: 60, height: 32 }; } };
-    const context = { module: { exports: {} }, require: name => name === './tab-page-motion' ? require('../miniprogram/utils/tab-page-motion') : layout,
+    const context = { module: { exports: {} }, require: () => layout,
       wx: new Proxy(api, { get(target, key) { assert.ok(key in target, '不得调用业务或路由 API：' + String(key)); return target[key]; } }) };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/utils/secondary-tab-page.js'), 'utf8'), context);
     factory = context.module.exports;

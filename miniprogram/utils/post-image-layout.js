@@ -18,8 +18,31 @@ function imageLayout(files = [], detail = false, contentWidth) {
   }
   // 44rpx露出下一项，每项右侧12rpx留白；整组高度只由首图确定，滑动不改高。
   const frameWidth = available - 44 - 12;
-  return { galleryWidth: 100, galleryHeight: round(Math.max(360, Math.min(640, frameWidth / ratio))) };
+  const height = round(Math.max(360, Math.min(640, frameWidth / ratio)));
+  const slideWidth = Math.max(1, frameWidth);
+  const photoFrames = files.map(file => {
+    const decoded = sizes.get(file);
+    const aspect = decoded ? decoded.width / decoded.height : 4 / 3;
+    const width = Math.min(slideWidth, height * aspect);
+    return { width: Math.max(.1, round(width / slideWidth * 100)), widthRpx: Math.max(1, round(width)), height: Math.max(1, round(width / aspect)) };
+  });
+  return { galleryWidth: 100, galleryHeight: height, photoFrames };
 }
+
+function patchImageLayout(patch, current, next, prefix = '') {
+  for (const key of ['galleryWidth', 'galleryHeight']) {
+    if (current[key] !== next[key]) patch[prefix + key] = next[key];
+  }
+  const frames = next.photoFrames || [];
+  const previous = current.photoFrames || [];
+  if (frames.length !== previous.length) patch[prefix + 'photoFrames'] = frames;
+  else frames.forEach((frame, index) => {
+    if (frame.widthRpx !== previous[index].widthRpx || frame.width !== previous[index].width || frame.height !== previous[index].height) {
+      patch[`${prefix}photoFrames[${index}]`] = frame;
+    }
+  });
+}
+
 // 仅作已解码提示；新节点仍须收到自身load事件才能显示图片。
 function hasDecodedSize(file) { return sizes.has(file); }
-module.exports = { rememberSize, imageLayout, hasDecodedSize };
+module.exports = { rememberSize, imageLayout, hasDecodedSize, patchImageLayout };

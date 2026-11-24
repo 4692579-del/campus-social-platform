@@ -7,14 +7,23 @@
       <view class="quote-heading"><image class="quote-avatar avatar-outline" src="{{item.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><text class="quote-name">{{item.author.nickname}}</text><image wx:if="{{item.author.verified || item.author.officialVerified}}" class="quote-verified {{item.author.officialVerified ? '' : 'is-student'}}" src="/images/verification/{{item.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{item.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text class="quote-time">{{item.timeText}}</text></view>
       <text wx:if="{{item.content}}" class="quote-content" user-select>{{item.content}}</text>
       <view wx:if="{{item.images.length}}" class="quote-media-width" data-frame="{{index}}"><view class="quote-gallery" style="width: {{item.galleryWidth}}%; height: {{item.galleryHeight}}rpx;">
-        <swiper wx:if="{{item.images.length > 1}}" current="{{item.imageIndex}}" duration="240" next-margin="44rpx" data-frame="{{index}}" bindchange="imageChanged" class="quote-swiper" indicator-dots="{{false}}">
+        <scroll-view wx:if="{{item.photoStrip}}" class="quote-photo-strip" scroll-x enhanced show-scrollbar="{{false}}" aria-label="原动态照片，左右滑动查看">
+          <view class="quote-photo-track">
+            <view wx:for="{{item.images}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="*this" class="quote-slide-image-frame quote-strip-item {{photoIndex ? 'has-gap' : ''}}" style="width: {{item.photoFrames[photoIndex].widthRpx}}rpx; height: {{item.photoFrames[photoIndex].height}}rpx;">
+              <media-image class="quote-slide-photo" src="{{file}}" data-frame="{{index}}" data-file="{{file}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
+            </view>
+          </view>
+        </scroll-view>
+        <swiper wx:elif="{{item.images.length > 1}}" current="{{item.imageIndex}}" duration="240" next-margin="44rpx" data-frame="{{index}}" bindchange="imageChanged" class="quote-swiper" indicator-dots="{{false}}">
           <swiper-item wx:for="{{item.mediaItems}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="fileID">
             <view class="quote-photo-frame">
               <block wx:if="{{file.type === 'video'}}">
                 <media-image wx:if="{{file.poster}}" class="quote-slide-photo" src="{{file.poster}}" mode="aspectFill" lazy-load />
                 <view class="post-play-badge" aria-label="原动态含视频"></view>
               </block>
-              <media-image wx:else class="quote-slide-photo" src="{{file.fileID}}" data-frame="{{index}}" data-file="{{file.fileID}}" bindload="photoLoaded" mode="aspectFill" lazy-load />
+              <view wx:else class="quote-slide-image-frame" style="width: {{item.photoFrames[photoIndex].width}}%; height: {{item.photoFrames[photoIndex].height}}rpx;">
+                <media-image class="quote-slide-photo" src="{{file.fileID}}" data-frame="{{index}}" data-file="{{file.fileID}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
+              </view>
             </view>
           </swiper-item>
         </swiper>
@@ -23,7 +32,6 @@
           <view class="post-play-badge" aria-label="原动态含视频"></view>
         </view>
         <media-image wx:else class="quote-photo" src="{{item.images[0]}}" data-frame="{{index}}" data-file="{{item.images[0]}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
-        <text wx:if="{{item.images.length > 1}}" class="quote-image-count">{{item.imageIndex + 1}} / {{item.images.length}}</text>
       </view></view>
       <view wx:if="{{item.declarationText}}" class="quote-declaration"><image class="quote-declaration-icon" src="/images/interface/alert-circle-muted.svg" /><text>{{item.declarationText}}</text></view>
     </block>

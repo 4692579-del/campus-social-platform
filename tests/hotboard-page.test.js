@@ -37,6 +37,25 @@ function pageFixture(read, api = {}, pendingIndex = () => null, account = {}){
   return {page,cache,calls,routes,openHotboard,options};
 }
 
+test('搜索先显示页面，首次渲染后才挂载榜单和发起请求，返回时保留原内容', async () => {
+  const ticks = [];
+  const f = pageFixture(undefined, { nextTick: callback => ticks.push(callback) });
+  f.page.onShow();
+  assert.equal(f.page._visible, true);
+  assert.equal(f.page.data.boardsMounted, false);
+  assert.deepEqual(f.calls, []);
+  f.page.onReady();
+  assert.equal(f.page.data.boardsMounted, true);
+  assert.deepEqual(f.calls, ['toutiao']);
+  await flush();
+  f.page.onHide(); f.page.onShow();
+  assert.ok(f.page.data.cuiHotRows.length);
+  assert.equal(f.calls.length, 1);
+  f.page.onHide();
+  ticks.pop()();
+  assert.equal(f.calls.length, 1);
+});
+
 test('Cui热榜宣传片和词条之间展示固定账号，新登录会话可直接关注并从头像进入主页', async () => {
   const ids = ['10000001', '19090448', '58732480', '45214114'];
   const profiles = new Map(), following = new Set(), writes = [];

@@ -1,4 +1,4 @@
-const { rememberSize, imageLayout } = require('../../utils/post-image-layout');
+const { rememberSize, imageLayout, patchImageLayout } = require('../../utils/post-image-layout');
 const { postMedia } = require('../../utils/post-media');
 
 const FEED_VIDEO_VISIBILITY = .6;
@@ -30,7 +30,7 @@ function selectFeedVideo(card, file) {
 Component({
   options: { multipleSlots: true },
   properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, feedVideoEnabled: Boolean, followPreview: Object, sevenLinePreview: Boolean, newsTranslation: Object },
-  data: { expanded: false, sevenLineOverflow: null, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, likeMotionClass: '', feedVideo: null,
+  data: { expanded: false, sevenLineOverflow: null, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, photoFrames: [], photoStrip: false, likeMotionClass: '', feedVideo: null,
     likeParticleRays: [
       { angle: 0, color: '#b39ad4', accent: '#94c8d1' }, { angle: 51.4, color: '#ad83b3', accent: '#c1a4bf' },
       { angle: 102.9, color: '#a9d2a2', accent: '#86c6bd' }, { angle: 154.3, color: '#d4b275', accent: '#aec58e' },
@@ -129,7 +129,8 @@ Component({
       const items = postMedia(post), files = items.map(item => item.fileID);
       // 点赞、时间等字段不重建媒体节点或改写轮播位置。
       if (JSON.stringify(items) === JSON.stringify(this.data.mediaItems)) return;
-      this.setData({ imageFiles: files, mediaItems: items, ...imageLayout(files, this.data.detail), ...(this.data.imageIndex >= files.length && this.data.imageIndex !== 0 ? { imageIndex: 0 } : {}) }, () => this.watchFeedVideo());
+      const photoStrip = items.length > 1 && post.contentType !== 'news' && items.every(item => item.type === 'image');
+      this.setData({ imageFiles: files, mediaItems: items, photoStrip, photoFrames: [], ...imageLayout(files, this.data.detail), ...(this.data.imageIndex >= files.length && this.data.imageIndex !== 0 ? { imageIndex: 0 } : {}) }, () => this.watchFeedVideo());
       if (this._videoVisibility) this.updateFeedVideo();
     },
     watchFeedVideo() {
@@ -277,8 +278,8 @@ Component({
     },
     updateImageLayout() {
       if (this._unloaded) return;
-      const next = imageLayout(this.data.imageFiles, this.data.detail);
-      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => this.data[key] !== value));
+      const changed = {};
+      patchImageLayout(changed, this.data, imageLayout(this.data.imageFiles, this.data.detail));
       if (Object.keys(changed).length) this.setData(changed);
     },
     photoLoaded(event) {
@@ -286,7 +287,7 @@ Component({
       if (this._unloaded || !this.data.imageFiles.includes(file)) return;
       rememberSize(file, event.detail.width, event.detail.height);
       // 同一图片可能在首页和详情同时解码；缓存已由另一实例写入时，本实例仍需应用尺寸。
-      if (file !== this.data.imageFiles[0]) return;
+      if (this.data.post?.contentType === 'news' && file !== this.data.imageFiles[0]) return;
       if (this._pageHidden) this._pendingImageLayout = true;
       else this.updateImageLayout();
     },

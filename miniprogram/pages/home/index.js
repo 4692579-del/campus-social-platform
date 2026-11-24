@@ -6,7 +6,6 @@ const { postPreview } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
 const homeRefresh = require('../../utils/home-refresh');
 const { readTabLayout, patchState } = require('../../utils/tab-page-layout');
-const tabPageMotion = require('../../utils/tab-page-motion');
 const homeScrollChrome = require('../../utils/home-scroll-chrome');
 const DEFAULT_AVATAR = '/images/avatar.png';
 const CUI_WELCOME_POST_ID = 'p_1efff1a54dbe48e2e8e6ceb309fc2f56bde1a7e6';
@@ -15,11 +14,9 @@ Page({
   ...accountMenuRoutes(wx),
   ...postActions,
   ...homeRefresh,
-  ...tabPageMotion.methods,
   ...homeScrollChrome.methods,
   data: {
     followByAccount: {}, followKnown: false, profileFollowing: false, followBusy: false, followError: '',
-    ...tabPageMotion.data,
     ...homeScrollChrome.data,
     user: null, identity: describeUser(null), avatarFailed: false,
     homeAvatarSource: DEFAULT_AVATAR, homeAvatarReady: true,
@@ -50,8 +47,7 @@ Page({
   },
   onShow() {
     this._openingAuthor = false;
-    this.showTabMotion('/pages/home/index');
-    this.resetHomeChrome();
+    this.resetHomeChrome(this._visible === false);
     this._openingPost = false;
     this._visible = true;
     this.startPostUpdates();
@@ -72,7 +68,6 @@ Page({
     this.closeMembership();
     this.settleFollowAnimations();
     this.closeUnfollow(true);
-    this.hideTabMotion();
     this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) patchState(bar, { composerOpen: false });
@@ -95,7 +90,6 @@ Page({
   onUnload() {
     this.closeMembership();
     this.resetFollowAnimations();
-    this.hideTabMotion();
     this.stopBrandBounce();
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (bar) bar.setData({ composerOpen: false });
@@ -177,13 +171,17 @@ Page({
     if (typeof wx.nextTick === 'function') wx.nextTick(measure);
     else measure();
   },
-  syncNavigation() {
+  syncNavigation(preparingReturn = false) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (bar) patchState(bar, {
-      ...(!bar._switching ? { selected: 0, compact: Boolean(this.data.chromeCompact && !this.data.menuOpen && !this.data.commentPostId && !this.interactionBlocked()) } : {}),
+    if (!bar || this._unloaded || (this._visible === false && !preparingReturn)) return;
+    const values = {
       menuOpen: this.data.menuOpen, menuInstant: this.data.menuInstant, authBlocked: this.interactionBlocked(),
       commentsOpen: Boolean(this.data.commentPostId), composerOpen: Boolean(this.data.composerOpen),
-    });
+    };
+    const compact = Boolean(this.data.chromeCompact && !values.menuOpen && !values.commentsOpen && !values.authBlocked);
+    if (typeof bar.syncFromPage === 'function' && !preparingReturn) bar.syncFromPage(0, { ...values, compact });
+    else if (typeof bar.syncFromPage === 'function') patchState(bar, { ...values, compact });
+    else patchState(bar, bar._switching ? values : { ...values, selected: 0, compact });
   },
   setMenuTabBarOpen(open) {
     const tabBar = typeof this.getTabBar === 'function' && this.getTabBar();
@@ -325,7 +323,7 @@ Page({
     this.setData({ menuOpen: false, menuInstant: true, tabMenuKey: '' });
     const cached = userService.getCachedUser();
     if (cached !== this.data.user) this.applyUser(cached);
-    this.syncNavigation();
+    this.syncNavigation(true);
   },
   logout() {
     if (this._menuNavigating || !this.data.user || this._unloaded || this._visible === false || this.data.loading || this.data.confirmingLogout) return;
@@ -517,10 +515,26 @@ Page({
   },
   showFeed(result) {
     const visible = square.visiblePosts?.(result.items) || result.items;
-    const items = visible.map(postPreview);
+    const current = this.data.posts;
     const values = {};
-    // 返回时缓存和后台结果常相同，不重复替换整组图文组件。
-    if (JSON.stringify(items) !== JSON.stringify(this.data.posts)) values.posts = items;
+    if (visible.length < current.length || current.some((post, index) => post._id !== visible[index]._id)) {
+      // 刷新、删除或重新排序时重新对齐列表。
+      values.posts = visible.map(postPreview);
+    } else {
+      visible.forEach((row, index) => {
+        const next = postPreview(row), previous = current[index], path = `posts[${index}]`;
+        if (!previous || Object.keys(previous).some(key => !Object.prototype.hasOwnProperty.call(next, key))) {
+          values[path] = next;
+          return;
+        }
+        for (const [key, value] of Object.entries(next)) {
+          const old = previous[key];
+          if (old === value) continue;
+          if (value && typeof value === 'object' && JSON.stringify(old) === JSON.stringify(value)) continue;
+          values[`${path}.${key}`] = value;
+        }
+      });
+    }
     if (this.data.feedHasMore !== result.hasMore) values.feedHasMore = result.hasMore;
     if (typeof result.nextCursor === 'string' && this.data.feedCursor !== result.nextCursor) values.feedCursor = result.nextCursor;
     if (this.data.feedOffset !== result.nextOffset) values.feedOffset = result.nextOffset;

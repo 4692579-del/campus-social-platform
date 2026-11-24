@@ -29,7 +29,7 @@ Page({
     hotPlatforms: [{ key:'weibo', label:'微博' }, { key:'zhihu', label:'知乎' }, { key:'bilibili', label:'B站' }, { key:'baidu', label:'百度' }],
     hotType:'weibo', hotRows:[], hotHasMore:false, hotLoading:false, hotError:'', hotWarning:'',
     cuiHotRows:[], cuiHotHasMore:false, cuiHotLoading:false, cuiHotError:'', cuiHotWarning:'',
-    boardMinHeight:300,
+    boardMinHeight:300, boardsMounted:false,
     cuiPromoSrc:'', cuiPromoError:false, cuiPromoLoading:false, cuiPromoMuted:true,
     recommendations:[],
     boardIndex:0, boardTabs:['Cui热榜','校园热榜','探索'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
@@ -40,6 +40,7 @@ Page({
     this._openingAuthor = false;
     this._openingCuiPromoPost = false;
     const returningFromMenu = this._menuNavigating || this._menuReturning;
+    const firstShow = !this.data.boardsMounted;
     const session = users.searchSessionKey(), entry = users.consumeSearchEntry();
     const enteredFromTabBar = !returningFromMenu && tabSelection.pendingIndex() === 3;
     this._searchSession = session;
@@ -47,6 +48,7 @@ Page({
     this._openingSearchEntry = false;
     this._menuNavigating = false;
     this._menuReturning = false;
+    this._searchContentPending = true;
     this.applyMenuUser(users.getCachedUser());
     this.setData({ ...(returningFromMenu ? {} : { chromeCompact:false }), menuOpen:false, menuInstant:true,
       platformMenuOpen:false, searchActive:true, cuiPromoMuted:true, ...(enteredFromTabBar ? { boardIndex:0 } : {}) });
@@ -55,14 +57,35 @@ Page({
     this._stopRecommendationFollows = square.subscribeFollow?.(({ accountId }) => {
       if (RECOMMENDED_ACCOUNTS.includes(accountId) && this.data.searchActive && this.data.boardIndex === 0) this.syncRecommendations();
     });
-    this.refreshMenuAvatar();
-    this.measureSearchLayout();
     this._hotView = (this._hotView || 0) + 1; this._hotRequest = null;
+    // 已有的会话榜单可同步显示，联网刷新和视频初始化留到页面显示后。
+    if (!firstShow && this.data.boardIndex === 0) {
+      const board = hotboard.cached(CUI_HOT_TYPE);
+      if (board) this.showCuiHotboard(board);
+    } else if (!firstShow && this.data.boardIndex === HOT_BOARD_INDEX) {
+      const board = hotboard.cached(this.data.hotType);
+      if (board) this.showHotboard(board);
+    }
     if (entry) this.openSearchEntry(entry.accountId);
+    const view = this._hotView;
+    const load = () => this.loadVisibleSearchContent(view);
+    if (typeof wx.nextTick !== 'function') load();
+    else if (this._searchReady) wx.nextTick(load);
+  },
+  onReady() {
+    base.onReady?.call(this);
+    this._searchReady = true;
+    this.loadVisibleSearchContent(this._hotView);
+  },
+  loadVisibleSearchContent(view) {
+    if (!this._searchContentPending || view !== this._hotView || !this.data.searchActive || this._visible === false || this._unloaded) return;
+    this._searchContentPending = false;
+    patchState(this, { boardsMounted:true });
+    this.measureSearchLayout();
+    this.refreshMenuAvatar();
     if (this.data.boardIndex === HOT_BOARD_INDEX) this.activateHotboard();
     else if (this.data.boardIndex === 0) this.activateCuiBoard();
   },
-  onReady() { base.onReady?.call(this); this.measureSearchLayout(); },
   onResize() { base.onResize?.call(this); this.measureSearchLayout(); },
   onHide() {
     this.stopRecommendations();
@@ -101,7 +124,7 @@ Page({
     const session = users.searchSessionKey();
     if (this._recommendationSession !== session || changed) {
       this.syncRecommendations();
-      if (this.data.searchActive && this.data.boardIndex === 0) this.loadRecommendations();
+      if (!this._searchContentPending && this.data.searchActive && this.data.boardIndex === 0) this.loadRecommendations();
     }
   },
   async refreshMenuAvatar() {
@@ -203,7 +226,7 @@ Page({
     this._menuNavigating = false;
     this.applyMenuUser(users.getCachedUser());
     patchState(this, { menuOpen:false, menuInstant:true });
-    this.syncNavigation();
+    this.syncNavigation(true);
   },
   logout() {
     if (this._unloaded || this._visible === false || this._menuNavigating || !this.data.user || this.data.loading || this.data.confirmingLogout) return;
@@ -475,16 +498,19 @@ Page({
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
     if (this._unloaded || this._visible === false || bar?._switching || this.data.menuOpen || this.interactionBlocked()) return;
     if (this.data.chromeCompact !== value.compact) {
-      this.setData({ chromeCompact:value.compact }); if (bar) bar.setData({ compact:value.compact });
+      this.setData({ chromeCompact:value.compact });
+      if (typeof bar?.setDockScrollCompact === 'function') bar.setDockScrollCompact(value.compact);
+      else if (bar) bar.setData({ compact:value.compact });
     }
     this.closePlatformMenu();
   },
-  syncNavigation() {
+  syncNavigation(preparingReturn = false) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (!bar || bar._switching) return;
-    const values = { selected:3, compact:Boolean(this.data.chromeCompact), menuOpen:this.data.menuOpen, menuInstant:this.data.menuInstant,
+    if (!bar || this._unloaded || (this._visible === false && !preparingReturn) || bar._switching) return;
+    const values = { compact:Boolean(this.data.chromeCompact), menuOpen:this.data.menuOpen, menuInstant:this.data.menuInstant,
       authBlocked:Boolean(this.interactionBlocked()), commentsOpen:false, composerOpen:false };
-    const changed = Object.fromEntries(Object.entries(values).filter(([key,value]) => bar.data?.[key] !== value));
-    if (Object.keys(changed).length) bar.setData(changed);
+    if (typeof bar.syncFromPage === 'function' && !preparingReturn) bar.syncFromPage(3, values);
+    else if (typeof bar.syncFromPage === 'function') patchState(bar, values);
+    else patchState(bar, { ...values, selected:3 });
   },
 });

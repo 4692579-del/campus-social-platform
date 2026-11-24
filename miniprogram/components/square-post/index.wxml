@@ -47,12 +47,19 @@
       <text wx:if="{{post.bodyMissing}}">全文暂不可用。</text><text catchtap="copyNewsSource" aria-role="button">复制原文链接</text>
     </view>
     <view wx:if="{{!detail && (sevenLinePreview && sevenLineOverflow !== null ? sevenLineOverflow : post.truncated)}}" class="expand-post" catchtap="toggleExpanded">{{expanded ? '收起' : '展开全文'}}</view>
-    <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{imageFiles.length > 1 ? 'is-carousel' : 'is-single'}}" style="width: {{galleryWidth}}%; height: {{galleryHeight}}rpx;" catchtap="stopEvent">
-      <swiper wx:if="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="动态媒体，左右滑动查看">
+    <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{photoStrip ? 'is-photo-strip' : ''}}" style="{{photoStrip ? '' : 'width:' + galleryWidth + '%;'}} height: {{galleryHeight}}rpx;" catchtap="stopEvent">
+      <scroll-view wx:if="{{photoStrip}}" class="post-image-strip" scroll-x enhanced show-scrollbar="{{false}}" aria-label="动态照片，左右滑动查看">
+        <view class="post-image-track">
+          <view wx:for="{{imageFiles}}" wx:key="*this" class="post-photo-frame post-image-strip-item {{index ? 'has-gap' : ''}}" style="width: {{photoFrames[index].widthRpx}}rpx; height: {{photoFrames[index].height}}rpx;">
+            <media-image class="post-photo" src="{{item}}" mode="aspectFit" lazy-load data-index="{{index}}" data-file="{{item}}" bindload="photoLoaded" catchtap="previewImage" />
+          </view>
+        </view>
+      </scroll-view>
+      <swiper wx:elif="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="动态媒体，左右滑动查看">
         <swiper-item wx:for="{{mediaItems}}" wx:key="fileID" class="post-image-slide">
-          <view class="post-photo-frame">
+          <view class="post-photo-frame" style="{{item.type === 'image' && post.contentType !== 'news' ? ('width:' + photoFrames[index].width + '%;height:' + photoFrames[index].height + 'rpx;') : ''}}">
             <template wx:if="{{item.type === 'video'}}" is="post-video" data="{{item: item, index: index, mode: 'aspectFill', feedVideo: feedVideo, homeFeed: homeFeed}}" />
-            <media-image wx:else class="post-photo" src="{{item.fileID}}" mode="aspectFill" lazy-load data-index="{{index}}" data-file="{{item.fileID}}" bindload="photoLoaded" catchtap="previewImage" />
+            <media-image wx:else class="post-photo" src="{{item.fileID}}" mode="{{post.contentType === 'news' ? 'aspectFill' : 'aspectFit'}}" lazy-load data-index="{{index}}" data-file="{{item.fileID}}" bindload="photoLoaded" catchtap="previewImage" />
           </view>
         </swiper-item>
       </swiper>
@@ -60,7 +67,6 @@
         <template wx:if="{{mediaItems[0].type === 'video'}}" is="post-video" data="{{item: mediaItems[0], index: 0, mode: 'aspectFit', feedVideo: feedVideo, homeFeed: homeFeed}}" />
         <media-image wx:else class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" />
       </view>
-      <view wx:if="{{imageFiles.length > 1}}" class="post-image-counter" aria-label="{{'第' + (imageIndex + 1) + '项，共' + imageFiles.length + '项'}}">{{imageIndex + 1}} / {{imageFiles.length}}</view>
     </view>
     <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>
     <quote-card wx:if="{{post.quotePostId}}" class="post-quote" quote="{{post.quote}}" />
