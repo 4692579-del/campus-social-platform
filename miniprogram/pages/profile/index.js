@@ -9,6 +9,14 @@ const publicProfile = require('../../utils/public-profile');
 const { navigationLayout, defaultGeometry, navigationState, pullState } = require('../../utils/profile-navigation');
 const { CYCLE, REFILL, clamp } = require('../../utils/cui-refresh-drawing');
 
+const userReportReasons = [
+  { key: 'spam', label: '垃圾广告' },
+  { key: 'illegal', label: '违法违规' },
+  { key: 'sexual', label: '色情低俗' },
+  { key: 'abuse', label: '辱骂骚扰' },
+  { key: 'other', label: '其他问题' },
+];
+
 function wxCall(name, options) {
   return new Promise((resolve, reject) => wx[name]({ ...options, success: resolve, fail: reject }));
 }
@@ -19,7 +27,7 @@ Page({
   data: {
     unfollowTarget: null, unfollowClosing: false, unfollowBusy: false,
     followKnown: false, profileFollowing: false, followBusy: false, followError: '',
-    isVisitor: false, profileUser: null, profileAccountId: '', profileUnavailable: false, user: null, loading: false, error: '', identity: describeUser(null),
+    isVisitor: false, profileUser: null, profileAccountId: '', profileUnavailable: false, profileBlocked: false, user: null, loading: false, error: '', identity: describeUser(null),
     coverBusy: false, coverRetry: false, coverFailed: false, coverFileID: '',
     joinedText: '', isVerified: false, certificationAction: '去认证',
     navTop: 28, navButtonHeight: 32, navHeight: 72, searchLeft: 68, navTitleInset: 116,
@@ -622,13 +630,14 @@ Page({
       return;
     }
     this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false, mediaMenuOpen: false });
+    if (this.data.profileBlocked) return;
     if (tab.key === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
     if (tab.key === 'reposts') return this.loadOwnQuotes();
     if (tab.key === 'album') return this.loadProfileMedia();
   },
   closePostsMenu() { this.setData({ postsMenuOpen: false, mediaMenuOpen: false }); },
   toggleMediaMenu() {
-    if (this.interactionBlocked() || this._unloaded || this._visible === false) return;
+    if (this.interactionBlocked() || this._unloaded || this._visible === false || this.data.profileBlocked) return;
     this.resetProfilePull();
     this.stopProfileVideo();
     this.setData({ mediaMenuOpen: !this.data.mediaMenuOpen, postsMenuOpen: false });
@@ -766,7 +775,7 @@ Page({
   },
   loadProfileVideos(force = false, append = false) {
     const user = this.data.user;
-    if (!user || this.interactionBlocked() || this._unloaded || this._visible === false || this.data.profileUnavailable) return;
+    if (!user || this.interactionBlocked() || this._unloaded || this._visible === false || this.data.profileUnavailable || this.data.profileBlocked) return;
     if (this._videoRequest) return this._videoRequest.promise;
     const account = this.data.isVisitor ? this.data.profileAccountId : '';
     const cached = square.cachedProfileVideos(account);
@@ -779,7 +788,8 @@ Page({
       if (current() && result) this.showProfileVideos(result);
     }).catch(error => {
       if (!current() || error.code === 'SESSION_CHANGED') return;
-      if (error.code === 'PROFILE_NOT_FOUND' && this.data.isVisitor) this.markPublicUnavailable(error.message);
+      if (error.code === 'USER_BLOCKED' && this.data.isVisitor) this.markProfileBlocked();
+      else if (error.code === 'PROFILE_NOT_FOUND' && this.data.isVisitor) this.markPublicUnavailable(error.message);
       else this.setData({ videosError: error.message || '视频读取失败，请重试' });
     }).finally(() => {
       if (this._videoRequest !== request) return;
@@ -848,6 +858,56 @@ Page({
     if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' && this.data.postsHasMore) return this.loadOwnPosts(false, true);
   },
   shareProfile() { if (!this.interactionBlocked()) wx.showToast({ title: '个人主页分享将在后续开放', icon: 'none' }); },
+  async openProfileUserMenu() {
+    const { profileUser, user, profileUnavailable } = this.data;
+    const accountId = profileUser?.accountId;
+    const viewVersion = this._viewVersion;
+    const sessionVersion = userService.getSessionVersion();
+    const current = () => !this._unloaded && this._visible !== false && this._viewVersion === viewVersion &&
+      this.data.isVisitor && !this.data.profileUnavailable && !this.interactionBlocked() &&
+      !this.data.commentPostId && !this.data.postsMenuOpen && !this.data.mediaMenuOpen && !this.data.menuOpen &&
+      this.data.profileUser?.accountId === accountId && this.data.user?._id === user?._id &&
+      userService.getCachedUser()?._id === user?._id && userService.getSessionVersion() === sessionVersion;
+    if (this._profileUserMenuBusy || !user || !accountId || accountId === user.accountId || profileUnavailable || !current()) return;
+    this._profileUserMenuBusy = true;
+    this.resetProfilePull();
+    try {
+      const blocked = this.data.profileBlocked;
+      const label = blocked ? '取消拉黑' : '拉黑用户';
+      const choice = await wxCall('showActionSheet', { itemList: ['举报用户', label], itemColor: '#171b20' });
+      if (!current()) return;
+      if (choice.tapIndex === 1) {
+        const confirm = await wxCall('showModal', {
+          title: label,
+          content: blocked ? '取消拉黑后可以查看对方内容。' : '拉黑会取消关注，并隐藏对方的主页内容和广场动态。',
+          confirmText: blocked ? '取消拉黑' : '拉黑', confirmColor: blocked ? '#4775fa' : '#d84a4a',
+        });
+        if (!confirm.confirm || !current() || blocked !== this.data.profileBlocked) return;
+        await square.setBlock(accountId, !blocked);
+        if (!current()) return;
+        this.cancelPublicReads();
+        this.applyProfileBlock(!blocked);
+        wx.showToast({ title: blocked ? '已取消拉黑' : '已拉黑', icon: 'none' });
+        if (blocked) await this.refreshPublicProfile(true);
+        return;
+      }
+      if (choice.tapIndex !== 0) return;
+      const selection = await wxCall('showActionSheet', { itemList: userReportReasons.map(reason => reason.label) });
+      const reason = userReportReasons[selection.tapIndex];
+      if (!reason || !current()) return;
+      const confirm = await wxCall('showModal', {
+        title: '举报用户', content: `举报原因：${reason.label}。提交后将交由管理员处理。`,
+        confirmText: '提交举报', confirmColor: '#4775fa',
+      });
+      if (!confirm.confirm || !current()) return;
+      const result = await square.reportUser(accountId, reason.key);
+      if (current()) wx.showToast({ title: result.alreadyReported ? '你已举报过该用户' : '举报已提交', icon: 'none' });
+    } catch (error) {
+      if (current() && !/cancel/i.test(error?.errMsg || '')) wx.showToast({ title: error?.message || '操作失败，请重试', icon: 'none' });
+    } finally {
+      this._profileUserMenuBusy = false;
+    }
+  },
   publishPost(event) {
     if (this.interactionBlocked() || !this.data.user || this.data.commentPostId) return;
     this.resetProfilePull();

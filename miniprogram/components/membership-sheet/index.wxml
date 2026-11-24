@@ -1,70 +1,83 @@
+<template name="membership-benefits-page">
+  <view class="membership-card-heading" aria-role="heading" aria-label="{{(plan.free ? '' : '荟萃 ') + plan.name}}">
+    <view class="membership-card-title">
+      <image wx:if="{{!plan.free}}" class="membership-plan-prefix" src="/images/membership/plan-prefix.svg" mode="aspectFit" aria-hidden="true" />
+      <text class="membership-plan-name">{{plan.name}}</text>
+    </view>
+    <view wx:if="{{plan.score}}" class="membership-staff" aria-hidden="true">
+      <image class="membership-score" src="/images/membership/score-{{plan.score}}.svg" mode="aspectFit" />
+    </view>
+  </view>
+  <view class="membership-benefits">
+    <view wx:if="{{planIndex > 0}}" class="membership-benefit">
+      <image class="membership-benefit-icon" src="/images/interface/plus.svg" mode="aspectFit" aria-hidden="true" />
+      <text class="membership-benefit-copy">包含 {{plans[planIndex - 1].name}} 的所有内容，以及</text>
+    </view>
+    <block wx:for="{{benefits}}" wx:for-item="benefit" wx:key="label">
+      <block wx:if="{{benefit.values[planIndex] && (planIndex === 0 || benefit.values[planIndex] !== benefit.values[planIndex - 1])}}">
+        <view wx:if="{{benefit.details}}">
+          <button class="membership-benefit membership-benefit-toggle" data-index="{{planIndex}}" bindtap="toggleAiDetails" aria-expanded="{{aiDetailsExpanded[planIndex]}}" hover-class="none">
+            <image class="membership-benefit-icon" src="/images/interface/{{benefit.icon}}.svg" mode="aspectFit" aria-hidden="true" />
+            <text class="membership-benefit-copy">{{benefit.label}}<text class="membership-benefit-value"> {{benefit.values[planIndex]}}</text></text>
+            <image class="membership-benefit-chevron {{aiDetailsExpanded[planIndex] ? 'is-expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" aria-hidden="true" />
+          </button>
+          <view class="membership-benefit-details {{aiDetailsExpanded[planIndex] ? 'is-expanded' : ''}}" aria-hidden="{{!aiDetailsExpanded[planIndex]}}">
+            <view class="membership-benefit-details-content">
+              <view class="membership-benefit-detail-list">
+                <view wx:for="{{benefit.details[planIndex]}}" wx:for-item="detail" wx:key="*this" class="membership-benefit-detail">
+                  <text>{{detail}}</text>
+                </view>
+              </view>
+            </view>
+          </view>
+        </view>
+        <view wx:else class="membership-benefit">
+          <image class="membership-benefit-icon" src="/images/interface/{{benefit.icon}}.svg" mode="aspectFit" aria-hidden="true" />
+          <text class="membership-benefit-copy">{{benefit.label}}<text wx:if="{{benefit.values[planIndex] !== true}}" class="membership-benefit-value"> {{benefit.values[planIndex]}}</text></text>
+        </view>
+      </block>
+    </block>
+  </view>
+</template>
+
 <view class="membership-layer {{closing ? 'is-closing' : ''}}">
   <view class="membership-backdrop" bindtap="close" catchtouchmove="stopMove"></view>
-  <view class="membership-sheet" style="top: {{top}}px;" aria-role="dialog" aria-modal="true" aria-label="荟萃计划">
+  <view class="membership-sheet {{plans[selected].free ? 'is-free' : ''}} {{layout ? 'has-layout' : ''}}" style="top: {{top}}px; --membership-paid-height: {{layout ? layout.paidHeight : 0}}px; --membership-free-height: {{layout ? layout.freeHeight + (aiDetailsExpanded[0] ? layout.freeDetailsHeight : 0) : 0}}px;" aria-role="dialog" aria-modal="true" aria-label="荟萃计划">
     <view class="membership-header" style="min-height: {{capsuleHeight}}px;">
       <button class="membership-close" style="width: {{capsuleHeight}}px; height: {{capsuleHeight}}px;" bindtap="close" aria-label="关闭荟萃计划"><image src="/images/interface/x.svg" mode="aspectFit" /></button>
     </view>
-    <view class="membership-title" aria-role="heading">荟萃计划由此弹奏</view>
+    <view class="membership-title" aria-role="heading" aria-label="荟萃计划由此弹奏">
+      <image class="membership-title-art" src="/images/membership/sheet-title.svg" mode="aspectFit" aria-hidden="true" />
+    </view>
     <view class="membership-tabs" aria-label="会员档位">
       <view class="membership-tab-indicator" style="width: {{100 / plans.length}}%; left: {{selected * 100 / plans.length}}%;" aria-hidden="true"></view>
       <button wx:for="{{plans}}" wx:key="name" class="membership-tab {{selected === index ? 'is-selected' : ''}}" data-index="{{index}}" bindtap="selectPlan" aria-role="tab" aria-selected="{{selected === index}}">{{item.name}}</button>
     </view>
-    <view class="membership-content">
-      <block wx:for="{{plans}}" wx:key="name" wx:for-index="planIndex" wx:for-item="plan">
-        <scroll-view wx:if="{{selected === planIndex}}" class="membership-benefits-scroll" scroll-y enhanced show-scrollbar="{{false}}" aria-label="{{(plan.free ? '' : '荟萃') + plan.name + '权益'}}">
-          <view class="membership-card">
-            <view class="membership-card-heading {{plan.free ? 'is-free' : ''}}">
-              <view class="membership-card-title">
-                <text wx:if="{{!plan.free}}">荟萃</text><text class="membership-plan-name">{{plan.name}}</text>
+    <view class="membership-benefits-viewport">
+      <view class="membership-card">
+        <view class="membership-benefits-track" style="transform: translate3d({{-selected * 100}}%, 0, 0);">
+          <view wx:for="{{plans}}" wx:key="name" wx:for-item="plan" wx:for-index="planIndex" class="membership-benefits-page {{plan.free ? 'is-free' : ''}} {{selected === planIndex ? 'is-current' : ''}}" aria-hidden="{{selected !== planIndex}}">
+            <scroll-view class="membership-benefits-scroll" scroll-y enhanced bounces="{{false}}" show-scrollbar="{{false}}" aria-label="{{(plan.free ? '' : '荟萃') + plan.name + '权益'}}">
+              <view class="membership-page-content">
+                <template is="membership-benefits-page" data="{{plan: plan, planIndex: planIndex, plans, benefits, aiDetailsExpanded}}" />
               </view>
-              <view wx:if="{{plan.score}}" class="membership-staff" aria-hidden="true">
-                <image class="membership-score" src="/images/membership/score-{{plan.score}}.svg" mode="aspectFit" />
-              </view>
-            </view>
-            <view class="membership-benefits">
-              <view wx:if="{{planIndex > 0}}" class="membership-benefit">
-                <image class="membership-benefit-icon" src="/images/interface/plus.svg" mode="aspectFit" aria-hidden="true" />
-                <text class="membership-benefit-copy">包含 {{plans[planIndex - 1].name}} 档的所有权益，以及</text>
-              </view>
-              <block wx:for="{{benefits}}" wx:for-item="benefit" wx:key="label">
-                <block wx:if="{{benefit.values[planIndex] && (planIndex === 0 || benefit.values[planIndex] !== benefit.values[planIndex - 1])}}">
-                  <view wx:if="{{benefit.details}}">
-                    <button class="membership-benefit membership-benefit-toggle" data-index="{{planIndex}}" bindtap="toggleAiDetails" aria-expanded="{{aiDetailsExpanded[planIndex]}}" hover-class="none">
-                      <image class="membership-benefit-icon" src="/images/interface/{{benefit.icon}}.svg" mode="aspectFit" aria-hidden="true" />
-                      <text class="membership-benefit-copy">{{benefit.label}}<text class="membership-benefit-value"> {{benefit.values[planIndex]}}</text></text>
-                      <image class="membership-benefit-chevron {{aiDetailsExpanded[planIndex] ? 'is-expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" aria-hidden="true" />
-                    </button>
-                    <view class="membership-benefit-details {{aiDetailsExpanded[planIndex] ? 'is-expanded' : ''}}" aria-hidden="{{!aiDetailsExpanded[planIndex]}}">
-                      <view class="membership-benefit-details-content">
-                        <view wx:for="{{benefit.details[planIndex]}}" wx:for-item="detail" wx:key="*this" class="membership-benefit-detail">
-                          <text>{{detail}}</text>
-                        </view>
-                      </view>
-                    </view>
-                  </view>
-                  <view wx:else class="membership-benefit">
-                    <image class="membership-benefit-icon" src="/images/interface/{{benefit.icon}}.svg" mode="aspectFit" aria-hidden="true" />
-                    <text class="membership-benefit-copy">{{benefit.label}}<text wx:if="{{benefit.values[planIndex] !== true}}" class="membership-benefit-value"> {{benefit.values[planIndex]}}</text></text>
-                  </view>
-                </block>
-              </block>
-            </view>
+            </scroll-view>
           </view>
-        </scroll-view>
-      </block>
+        </view>
+      </view>
     </view>
-    <view wx:if="{{!plans[selected].free}}" class="membership-footer">
+    <view class="membership-footer" aria-hidden="{{plans[selected].free}}">
       <view class="membership-prices">
         <button class="membership-price {{billing === 'monthly' ? 'is-selected' : ''}}" data-billing="monthly" bindtap="selectBilling" aria-pressed="{{billing === 'monthly'}}">
           <text class="membership-price-label">连续包月</text>
-          <view class="membership-price-amount"><text class="membership-price-value">¥{{plans[selected].monthly}}</text><text class="membership-period">/月</text></view>
+          <view class="membership-price-amount"><text class="membership-price-value">¥{{plans[paymentPlanIndex].monthly}}</text><text class="membership-period">/月</text></view>
         </button>
         <button class="membership-price {{billing === 'yearly' ? 'is-selected' : ''}}" data-billing="yearly" bindtap="selectBilling" aria-pressed="{{billing === 'yearly'}}">
           <view class="membership-price-title"><text class="membership-price-label">连续包年</text><text class="membership-discount">8折</text></view>
-          <view class="membership-price-amount"><text class="membership-price-value">¥{{plans[selected].yearly}}</text><text class="membership-period">/年</text><text class="membership-original">¥{{plans[selected].original}}</text></view>
+          <view class="membership-price-amount"><text class="membership-price-value">¥{{plans[paymentPlanIndex].yearly}}</text><text class="membership-period">/年</text><text class="membership-original">¥{{plans[paymentPlanIndex].original}}</text></view>
         </button>
       </view>
-      <button class="membership-subscribe" disabled aria-label="开通荟萃{{plans[selected].name}}，暂未开放">开通荟萃{{plans[selected].name}} · 暂未开放</button>
+      <button class="membership-subscribe" disabled aria-label="开通荟萃{{plans[paymentPlanIndex].name}}，暂未开放">开通荟萃{{plans[paymentPlanIndex].name}} · 暂未开放</button>
       <view class="membership-subscription-info">
         <view>升级退差价</view>
         <view>{{billing === 'yearly' ? '每年' : '每月'}}自动续费 随时取消 <text class="membership-info-emphasis">恢复订阅</text></view>

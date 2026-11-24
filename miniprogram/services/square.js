@@ -22,13 +22,66 @@ const publicContent = new Map(), publicHistories = new Map(), publicEpoch = new 
 const profileVideos = new Map();
 let videosRevision = 0;
 const unavailablePublicAccounts = new Set();
-function clearPublicAccount(accountId) {
-  unavailablePublicAccounts.add(accountId);
+const blockedAccounts = new Set();
+const blockWrites = new Map();
+let blockRevision = 0;
+function invalidatePublicContent(accountId) {
   publicEpoch.set(accountId, (publicEpoch.get(accountId) || 0) + 1); historyRevision++;
   for (const key of publicContent.keys()) if (key.startsWith(accountId + ':')) publicContent.delete(key);
   publicHistories.delete(accountId);
   profileVideos.delete(accountId);
+}
+function clearPublicAccount(accountId) {
+  unavailablePublicAccounts.add(accountId);
+  invalidatePublicContent(accountId);
   for (const [key, cached] of searchFeeds) if (cached.value.accountId === accountId) searchFeeds.delete(key);
+}
+function isBlocked(accountId) { session(); return blockedAccounts.has(accountId); }
+function visiblePosts(rows) {
+  session();
+  return rows.filter(row => !blockedAccounts.has(row.author?.accountId)).map(row => {
+    const quote = removedQuote(row.quote);
+    return quote === row.quote ? row : { ...row, quote };
+  });
+}
+function rememberBlock(accountId, blocked) {
+  session();
+  if (blockedAccounts.has(accountId) === blocked) return;
+  if (blocked) blockedAccounts.add(accountId); else blockedAccounts.delete(accountId);
+  blockRevision++;
+  invalidatePublicContent(accountId);
+  if (feed) { feed.value.items = visiblePosts(feed.value.items); feed.time = 0; }
+  if (followingFeed) { followingFeed.value.items = visiblePosts(followingFeed.value.items); followingFeed.time = 0; }
+  for (const cached of searchFeeds.values()) if (cached.value.kind === 'square') {
+    cached.value.items = visiblePosts(cached.value.items); cached.time = 0;
+  }
+  for (const [id, post] of posts) {
+    if (post.author?.accountId === accountId) { postTimes.delete(id); replies.delete(id); }
+    else if (post.quote) postTimes.delete(id);
+  }
+}
+function setBlock(accountId, blocked) {
+  session();
+  if (blockWrites.has(accountId)) return blockWrites.get(accountId);
+  const version = generation, followWrite = followWrites.get(accountId);
+  const saving = (async () => {
+    if (followWrite) await followWrite.promise.catch(() => {});
+    session();
+    if (version !== generation) throw Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' });
+    return saveBlock(accountId, blocked);
+  })().finally(() => { if (blockWrites.get(accountId) === saving) blockWrites.delete(accountId); });
+  blockWrites.set(accountId, saving);
+  return saving;
+}
+async function saveBlock(accountId, blocked) {
+  const result = await call('setSquareBlock', { accountId, blocked }, true);
+  if (result.blocked !== blocked || result.state?.accountId !== accountId || result.profile?.accountId !== accountId ||
+      result.viewer?.accountId !== users.getCachedUser()?.accountId) throw new Error('拉黑状态确认失败，请刷新后重试');
+  saveFollowState(result.state); saveFollowProfile(result.profile); saveFollowProfile(result.viewer);
+  rememberBlock(accountId, blocked);
+  users.invalidatePublicProfile?.(accountId);
+  emitFollow(accountId);
+  return result;
 }
 let profilePin = null, pinRevision = 0, pinWrite = null;
 function orderProfileItems(items, pinnedPostId) {
@@ -56,6 +109,7 @@ function subscribeAI(listener) { aiListeners.add(listener); return () => aiListe
 function session() {
   const current = users.getCachedUser();
   const key = `${current ? current._id : 'guest'}:${users.getSessionVersion()}`;
+  if (key !== owner) { blockedAccounts.clear(); blockWrites.clear(); blockRevision++; }
   if (key !== owner) { ownHistory = null; historyRevision++; profilePin = null; pinRevision++; pinWrite = null; newsFeeds.clear(); newsTranslations.clear(); profileVideos.clear(); videosRevision++; }
   if (key !== owner) { for (const write of followWrites.values()) write.reject(Object.assign(new Error('登录状态已变更，请重试'), { code: 'SESSION_CHANGED' })); followWorker = null; followStates.clear(); followProfiles.clear(); followWrites.clear(); followRevision++; followingFeed = null; owner = key; generation += 1; searchFeeds.clear(); profileFeeds.clear(); publicContent.clear(); publicHistories.clear(); publicEpoch.clear(); unavailablePublicAccounts.clear(); ownStats = null; statsRevision += 1; feed = null; ownFeed = null; albumFeed = null; published = false; posts.clear(); postTimes.clear(); replies.clear(); children.clear(); comments.clear(); commentVersions.clear(); commentWrites.clear(); aiWrites.clear(); pending.clear(); revisions.clear(); deleted.clear(); deletedComments.clear(); commentRemovals = 0; likeWrites.clear(); }
   return key;
@@ -63,6 +117,7 @@ function session() {
 function subscribeFollow(listener) { followListeners.add(listener); return () => followListeners.delete(listener); }
 function cachedFollowState(accountId) {
   session(); const confirmed = followStates.get(accountId)?.value || null, write = followWrites.get(accountId);
+  if (blockedAccounts.has(accountId)) return { ...(confirmed || { accountId, version: 0 }), following: false };
   return write ? { ...(confirmed || { accountId, version: 0 }), following: write.desired, pending: true } : confirmed;
 }
 function cachedFollowProfile(accountId) {
@@ -130,6 +185,8 @@ function setFollow(accountId, following) {
   session(); const viewer = users.getCachedUser();
   if (!viewer) return Promise.reject(Object.assign(new Error('请先登录'), { code: 'UNAUTHENTICATED' }));
   if (!/^[1-9][0-9]{7}$/.test(accountId || '') || typeof following !== 'boolean' || accountId === viewer.accountId) return Promise.reject(new Error('关注参数不正确'));
+  if (blockWrites.has(accountId)) return Promise.reject(new Error('拉黑状态正在更新，请稍后重试'));
+  if (following && blockedAccounts.has(accountId)) return Promise.reject(Object.assign(new Error('解除拉黑后才能关注该用户'), { code: 'USER_BLOCKED' }));
   let write = followWrites.get(accountId);
   if (write) {
     if (write.desired !== following) { write.desired = following; emitFollow(accountId); }
@@ -174,7 +231,7 @@ function projectFollowing(result) {
   if (!result) return null;
   return { ...result, items: result.items.filter(post => {
     const write = followWrites.get(post.author.accountId);
-    return !write || write.desired;
+    return !blockedAccounts.has(post.author.accountId) && (!write || write.desired);
   }) };
 }
 function cachedFollowingFeed() { session(); return projectFollowing(followingFeed?.value || null); }
@@ -231,11 +288,15 @@ function cachedOwnFeed(postType = 'all') {
     }
   }
   if (!cached) return null;
-  cached.value.items = cached.value.items.map(post => posts.has(post._id) ? previewPost(posts.get(post._id)) : post);
+  cached.value.items = visiblePosts(cached.value.items.map(post => posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
   if (postType === 'posts' && profilePin) Object.assign(cached.value, profilePin, { items: orderProfileItems(cached.value.items, profilePin.pinnedPostId) });
   return cached.value;
 }
-function cachedPost(id) { session(); return posts.get(id) || (feed && feed.value.items.find(item => item._id === id)) || null; }
+function cachedPost(id) {
+  session();
+  const post = posts.get(id) || feed?.value.items.find(item => item._id === id);
+  return post ? visiblePosts([post])[0] || null : null;
+}
 function cachedReplies(id) { session(); return replies.get(id) || null; }
 function cachedOwnReplies() { session(); return ownHistory && ownHistory.value; }
 function listOwnReplies({ cursor = '', force = false, profileAccountId = '' } = {}) {
@@ -390,10 +451,11 @@ function updatePost(post, prepend = false) {
 }
 function unavailable(id) {
   if (deleted.has(id)) throw Object.assign(new Error('动态不存在或已不可见'), { code: 'POST_NOT_FOUND' });
+  if (blockedAccounts.has(posts.get(id)?.author?.accountId)) throw Object.assign(new Error('对方已被你拉黑'), { code: 'USER_BLOCKED' });
 }
 function removedQuote(quote, id) {
   if (!quote) return quote;
-  if (quote._id === id || deleted.has(quote._id)) return quote.unavailable ? quote : { _id: quote._id, unavailable: true };
+  if (quote._id === id || deleted.has(quote._id) || blockedAccounts.has(quote.author?.accountId)) return quote.unavailable ? quote : { _id: quote._id, unavailable: true };
   const nested = removedQuote(quote.quote, id);
   return nested === quote.quote ? quote : { ...quote, quote: nested };
 }
@@ -470,6 +532,8 @@ async function call(action, data = {}, authenticated = false) {
       action === 'listNewsPosts' ? '全球新闻服务尚未部署，请联系管理员' :
         ['processSquareAIReply', 'optimizeSquareContent', 'translateNews'].includes(action) ? 'AI 服务需要更新，请重新部署整个 userService' : action === 'listSquareAlbum' ? '相册服务需要更新，请重新部署 userService 云函数' :
         action === 'listSquareVideos' ? '视频服务需要更新，请重新部署 userService 云函数' :
+        action === 'reportSquareUser' ? '用户举报服务需要更新，请重新部署 userService 云函数' :
+        action === 'setSquareBlock' ? '拉黑服务需要更新，请重新部署 userService 云函数' :
         ['listSquareReplyChildren', 'setSquareCommentState', 'listSquareOwnReplies', 'getSquareReplyContext'].includes(action) ? '评论服务需要更新，请重新部署 userService 云函数' : '动态广场暂时无法连接，请稍后重试'), { code: result && result.code });
   }
   if (!result.square) throw new Error('动态读取失败，请重试');
@@ -540,9 +604,10 @@ function listNews({ language = 'en', offset = 0, anchor = 0, force = false } = {
 }
 function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}) {
   session();
+  const blockVersion = blockRevision;
   const cached = mine ? ownCache(postType) : feed;
   if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cached.value);
-  return merged(`${mine ? 'own:' + postType : 'feed'}:${offset}`, async () => {
+  return merged(`${mine ? 'own:' + postType : 'feed'}:${offset}:${blockVersion}`, async () => {
     const pinBefore = pinRevision;
     const revision = mutation;
     const before = new Map(revisions);
@@ -555,11 +620,12 @@ function list({ force = false, offset = 0, mine = false, postType = 'all' } = {}
       if (removalVersion !== removals) throw new Error('动态列表已更新，请刷新后重试');
     }
     if (mine && (result.mine !== true || postType !== 'all' && result.postType !== postType)) throw new Error('个人动态服务需要更新，请重新部署 userService 云函数');
+    if (!mine && blockVersion !== blockRevision) throw Object.assign(new Error('拉黑关系已更新，请刷新'), { code: 'BLOCK_CHANGED' });
     if (mine && postType === 'posts') {
       if (pinBefore !== pinRevision || profilePin && Number.isSafeInteger(result.pinVersion) && result.pinVersion < profilePin.pinVersion) throw Object.assign(new Error('置顶状态已更新，请重试'), { code: 'PIN_CHANGED' });
       if (typeof result.pinnedPostId === 'string') saveProfilePin(result);
     }
-    const currentItems = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
+    const currentItems = visiblePosts(result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post)));
     const timestamp = post => new Date(post.createdAt && post.createdAt.$date || post.createdAt).getTime() || 0;
     const latest = mine ? ownCache(postType) : feed;
     const items = (requestOffset || revision !== mutation) && latest ? [...new Map([...latest.value.items, ...currentItems].map(item => [item._id, item])).values()].sort((a, b) => timestamp(b) - timestamp(a)) : currentItems;
@@ -582,20 +648,20 @@ function searchKey(keyword, accountId, kind) { return JSON.stringify([String(key
 function cachedSearch({ keyword = '', accountId = '', kind = 'square' } = {}) {
   session(); const cached = searchFeeds.get(searchKey(keyword, accountId, kind));
   if (!cached) return null;
-  if (kind === 'square') cached.value.items = cached.value.items.filter(row => !deleted.has(row._id)).map(row => posts.has(row._id) ? previewPost(posts.get(row._id)) : row);
+  if (kind === 'square') cached.value.items = visiblePosts(cached.value.items.filter(row => !deleted.has(row._id)).map(row => posts.has(row._id) ? previewPost(posts.get(row._id)) : row));
   return cached.value;
 }
 function searchContent({ keyword = '', accountId = '', kind = 'square', cursor = '', force = false } = {}) {
   session(); keyword = String(keyword).trim(); const key = searchKey(keyword, accountId, kind), cached = searchFeeds.get(key);
   if (!force && !cursor && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedSearch({ keyword, accountId, kind }));
-  const revision = removals, epoch = publicEpoch.get(accountId) || 0, before = new Map(revisions);
-  return merged(`search:${key}:${cursor}:${revision}:${epoch}`, async () => {
+  const revision = removals, epoch = publicEpoch.get(accountId) || 0, before = new Map(revisions), blockVersion = blockRevision;
+  return merged(`search:${key}:${cursor}:${revision}:${epoch}:${blockVersion}`, async () => {
     let result;
     try { result = await call('searchSquareContent', { keyword, accountId, kind, cursor }, Boolean(accountId || kind === 'users')); }
     catch (error) { if (accountId && error.code === 'PROFILE_NOT_FOUND') { clearPublicAccount(accountId); if (typeof users.invalidatePublicProfile === 'function') users.invalidatePublicProfile(accountId, { unavailable: true }); } throw error; }
-    if (revision !== removals || epoch !== (publicEpoch.get(accountId) || 0)) throw Object.assign(new Error('搜索内容已更新，请重试'), { code: 'SEARCH_CHANGED' });
+    if (revision !== removals || epoch !== (publicEpoch.get(accountId) || 0) || kind === 'square' && blockVersion !== blockRevision) throw Object.assign(new Error('搜索内容已更新，请重试'), { code: 'SEARCH_CHANGED' });
     if (result.kind !== kind || result.keyword !== keyword || result.accountId !== accountId || !Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' || result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('搜索服务需要更新，请部署完整 userService');
-    const rows = kind === 'square' ? result.items.filter(row => !deleted.has(row._id)).map(row => pendingLike(before.get(row._id) !== revisions.get(row._id) && posts.has(row._id) ? previewPost(posts.get(row._id)) : row)) : result.items;
+    const rows = kind === 'square' ? visiblePosts(result.items.filter(row => !deleted.has(row._id)).map(row => pendingLike(before.get(row._id) !== revisions.get(row._id) && posts.has(row._id) ? previewPost(posts.get(row._id)) : row))) : result.items;
     const previous = searchFeeds.get(key), id = row => kind === 'square' ? row._id : row.accountId;
     const items = [...new Map([...(cursor && previous ? previous.value.items : []), ...rows].map(row => [id(row), row])).values()];
     searchFeeds.set(key, { value: { ...result, items }, time: Date.now() });
@@ -605,10 +671,10 @@ function searchContent({ keyword = '', accountId = '', kind = 'square', cursor =
   });
 }
 
-function cachedProfileReplies(accountId) { session(); return unavailablePublicAccounts.has(accountId) ? null : publicHistories.get(accountId)?.value || null; }
+function cachedProfileReplies(accountId) { session(); return unavailablePublicAccounts.has(accountId) || blockedAccounts.has(accountId) ? null : publicHistories.get(accountId)?.value || null; }
 function cachedPublicContent(accountId, kind) {
   session();
-  if (!users.getCachedUser() || unavailablePublicAccounts.has(accountId)) return null;
+  if (!users.getCachedUser() || unavailablePublicAccounts.has(accountId) || blockedAccounts.has(accountId)) return null;
   const key = `${accountId}:${kind}`;
   let cached = publicContent.get(key);
   if (!cached && ['posts', 'quotes', 'album'].includes(kind)) {
@@ -626,12 +692,12 @@ function listPublicContent(accountId, kind, { force = false, offset = 0 } = {}) 
   if (!/^[1-9][0-9]{7}$/.test(accountId || '') || !['posts', 'quotes', 'album'].includes(kind)) return Promise.reject(new Error('个人主页参数不正确'));
   const key = `${accountId}:${kind}`, cached = publicContent.get(key);
   if (!force && !offset && cached && Date.now() - cached.time < TTL) return Promise.resolve(cachedPublicContent(accountId, kind));
-  return merged(`public:${key}:${offset}`, async () => {
+  return merged(`public:${key}:${offset}:${publicEpoch.get(accountId) || 0}`, async () => {
     const removalVersion = removals, before = new Map(revisions), epoch = publicEpoch.get(accountId) || 0;
     let result;
     try { result = await call(kind === 'album' ? 'listSquareAlbum' : 'listSquarePosts', { profileAccountId: accountId, offset,
       ...(kind !== 'album' ? { postType: kind } : {}) }, true); }
-    catch (error) { if (error.code === 'PROFILE_NOT_FOUND') clearPublicAccount(accountId); throw error; }
+    catch (error) { if (epoch === (publicEpoch.get(accountId) || 0) && error.code === 'PROFILE_NOT_FOUND') clearPublicAccount(accountId); throw error; }
     if (epoch !== (publicEpoch.get(accountId) || 0)) throw Object.assign(new Error('个人主页状态已变化'), { code: 'PROFILE_CHANGED' });
     if (result.profileAccountId !== accountId || !Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || !Number.isSafeInteger(result.nextOffset)) throw new Error('个人主页服务需要更新，请部署 userService');
     if (removalVersion !== removals) throw new Error('动态已更新，请刷新后重试');
@@ -652,8 +718,9 @@ function listPublicContent(accountId, kind, { force = false, offset = 0 } = {}) 
 function detail(id, force = false) {
   session();
   try { unavailable(id); } catch (error) { return Promise.reject(error); }
-  if (!force && posts.has(id) && (!id.startsWith('n_') || (posts.get(id).detailReady && !posts.get(id).bodyMissing)) && Date.now() - postTimes.get(id) < TTL) return Promise.resolve(posts.get(id));
-  return merged(`post:${id}`, async () => {
+  if (!force && posts.has(id) && (!id.startsWith('n_') || (posts.get(id).detailReady && !posts.get(id).bodyMissing)) && Date.now() - postTimes.get(id) < TTL) return Promise.resolve(cachedPost(id));
+  const blockVersion = blockRevision;
+  return merged(`post:${id}:${blockVersion}`, async () => {
     const revision = revisions.get(id);
     let result;
     try { result = await call('getSquarePost', { postId: id }); }
@@ -665,6 +732,8 @@ function detail(id, force = false) {
       throw error;
     }
     unavailable(id);
+    if (blockedAccounts.has(result.post?.author?.accountId)) throw Object.assign(new Error('对方已被你拉黑'), { code: 'USER_BLOCKED' });
+    if (!id.startsWith('n_') && blockVersion !== blockRevision) throw Object.assign(new Error('拉黑关系已更新，请重试'), { code: 'BLOCK_CHANGED' });
     if (revision !== revisions.get(id) && posts.has(id)) {
       if (!id.startsWith('n_')) return posts.get(id);
       const { liked, bookmarked, likeCount, replyCount } = posts.get(id);
@@ -757,7 +826,7 @@ function album({ force = false, offset = 0 } = {}) {
 }
 function cachedProfileVideos(accountId = '') {
   session();
-  return unavailablePublicAccounts.has(accountId) ? null : profileVideos.get(accountId)?.value || null;
+  return unavailablePublicAccounts.has(accountId) || blockedAccounts.has(accountId) ? null : profileVideos.get(accountId)?.value || null;
 }
 function listProfileVideos(accountId = '', { force = false, cursor = '' } = {}) {
   session();
@@ -1031,6 +1100,7 @@ async function deleteReply(id, replyId) {
   return result;
 }
 function reportReply(id, replyId, reason) { return call('reportSquareReply', { postId: id, replyId, reason }, true); }
+function reportUser(accountId, reason) { return call('reportSquareUser', { accountId, reason }, true); }
 function optimizeContent(content, images = []) {
   session();
   if (typeof content !== 'string' || Array.from(content).length > 150 || !Array.isArray(images) || images.length > 9 ||
@@ -1050,4 +1120,4 @@ async function reportPost(id, reason) {
   return call('reportSquarePost', { postId: id, reason }, true);
 }
 function consumePublication() { session(); const value = published; published = false; return value; }
-module.exports = { cachedNews, listNews, bookmarkNews, cachedNewsTranslation, translateNews, cachedSearch, searchContent, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, subscribeOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedProfileVideos, listProfileVideos, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, deleteReply, reportReply, optimizeContent };
+module.exports = { cachedNews, listNews, bookmarkNews, cachedNewsTranslation, translateNews, cachedSearch, searchContent, setBlock, isBlocked, rememberBlock, visiblePosts, subscribeFollow, cachedFollowState, cachedFollowProfile, getFollowProfile, getFollowStates, setFollow, cachedFollowingFeed, listFollowing, clearPublicAccount, cachedPublicContent, listPublicContent, cachedProfileReplies, cachedProfilePin, setProfilePin, cachedOwnReplies, listOwnReplies, subscribeHistory, replyContext, replyWindow, cachedOwnStats, getOwnStats, subscribeOwnStats, cachedFeed, cachedOwnFeed, cachedAlbum, album, cachedProfileVideos, listProfileVideos, cachedPost, cachedReplies, cachedChildren, cachedComment, subscribePost, subscribeComment, subscribeAI, processAIReply, warmReplyChildren, consumePublication, list, detail, listReplies, listChildren, commentState, publish, react, reply, deletePost, reportPost, reportUser, deleteReply, reportReply, optimizeContent };

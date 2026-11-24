@@ -23,12 +23,13 @@ module.exports = { methods: {
       this.closeComments();
       this.setData({ profileUser: null, coverFileID: '', ownPosts: [], quotePosts: [], albumImages: [], pinnedPostId: '',
         postsHasMore: false, quotesHasMore: false, albumHasMore: false, postsOffset: 0, quotesOffset: 0, albumOffset: 0, postCountText: '帖子',
-        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
+        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, profileBlocked: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
     }
     this._publicViewerVersion = users.getSessionVersion();
     this.setData({ user: viewer, identity: describeUser(viewer), authChecking: Boolean(checking && !viewer), loginSheetOpen: Boolean(!viewer && !checking) });
     this.setAuthBlocked(!viewer);
     if (viewer) {
+      if (square.isBlocked?.(this.data.profileAccountId)) this.applyProfileBlock(true);
       const cached = users.getCachedPublicProfile(this.data.profileAccountId);
       if (cached) this.applyPublicProfile(cached);
       this.prefillPublicContent();
@@ -43,10 +44,28 @@ module.exports = { methods: {
       likeCount: Number.isSafeInteger(profile.receivedLikes) ? profile.receivedLikes : '—' };
     if (this.data.coverFileID !== (profile.coverFileID || '')) Object.assign(patch, { coverFileID: profile.coverFileID || '', coverFailed: false });
     if (Number.isSafeInteger(profile.postCount)) patch.postCountText = `${profile.postCount} 条帖子`;
-    this.setData(patch); this.measureProfileNavigation(); this.refreshFollowPresentation();
+    this.setData(patch);
+    if (typeof profile.blocked === 'boolean') square.rememberBlock?.(profile.accountId, profile.blocked);
+    this.applyProfileBlock(Boolean(profile.blocked || square.isBlocked?.(profile.accountId)));
+    this.measureProfileNavigation(); this.refreshFollowPresentation();
+  },
+  applyProfileBlock(blocked) {
+    if (blocked === Boolean(this.data.profileBlocked)) return;
+    this._publicContentRequests = {};
+    if (blocked) {
+      this.resetProfileVideos();
+      this.closeComments();
+      this.closeUnfollowPrompt(true);
+      this.setData({ ownPosts: [], quotePosts: [], albumImages: [], pinnedPostId: '', profileFollowing: false,
+        postsLoading: false, quotesLoading: false, albumLoading: false, postsMoreLoading: false,
+        quotesMoreLoading: false, albumMoreLoading: false, postsHasMore: false, quotesHasMore: false,
+        albumHasMore: false, postsOffset: 0, quotesOffset: 0, albumOffset: 0, postsError: '', quotesError: '',
+        albumError: '', postsMenuOpen: false, mediaMenuOpen: false });
+    }
+    this.setData({ profileBlocked: blocked });
   },
   prefillPublicContent() {
-    if (!this.data.user) return;
+    if (!this.data.user || this.data.profileBlocked || square.isBlocked?.(this.data.profileAccountId)) return;
     for (const kind of ['posts', 'quotes', 'album']) {
       const cached = square.cachedPublicContent(this.data.profileAccountId, kind);
       if (cached) this.showPublicContent(kind, cached);
@@ -76,6 +95,7 @@ module.exports = { methods: {
         const profile = await users.getPublicProfile(request.accountId, { force: force !== false });
         if (!current()) return;
         this.applyPublicProfile(profile);
+        if (this.data.profileBlocked) return;
         const tab = this.data.selectedContent;
         if (tab === 'album' && this.data.mediaTab === 'videos') { await this.loadProfileVideos(force); return; }
         const kind = tab === 'reposts' ? 'quotes' : tab === 'replies' ? null : tab;
@@ -101,9 +121,19 @@ module.exports = { methods: {
       postsLoading: false, quotesLoading: false, albumLoading: false, postsMoreLoading: false, quotesMoreLoading: false, albumMoreLoading: false, error: message || '该用户暂不可查看' });
     this.closeComments();
   },
-  publicProfileUnavailable(event) { if (this.data.isVisitor) this.markPublicUnavailable(event.detail.message); },
+  publicProfileUnavailable(event) {
+    if (!this.data.isVisitor) return;
+    if (event.detail.code !== 'USER_BLOCKED') { this.markPublicUnavailable(event.detail.message); return; }
+    this.markProfileBlocked();
+  },
+  markProfileBlocked() {
+    const accountId = this.data.profileAccountId;
+    users.invalidatePublicProfile?.(accountId);
+    square.rememberBlock?.(accountId, true);
+    this.applyProfileBlock(true);
+  },
   loadPublicContent(kind, force = false, append = false) {
-    if (this._unloaded || this._visible === false || !this.data.user || this.interactionBlocked() || this.data.profileUnavailable) return Promise.resolve();
+    if (this._unloaded || this._visible === false || !this.data.user || this.interactionBlocked() || this.data.profileUnavailable || this.data.profileBlocked) return Promise.resolve();
     const requests = this._publicContentRequests || (this._publicContentRequests = {});
     if (requests[kind]) return requests[kind].promise;
     const prefix = kind === 'quotes' ? 'quotes' : kind === 'album' ? 'album' : 'posts';
@@ -116,7 +146,8 @@ module.exports = { methods: {
     request.promise = square.listPublicContent(this.data.profileAccountId, kind, { force, offset: append ? this.data[prefix + 'Offset'] : 0 }).then(result => {
       if (current()) this.showPublicContent(kind, result);
     }).catch(error => {
-      if (current() && error.code === 'PROFILE_NOT_FOUND') this.markPublicUnavailable(error.message);
+      if (current() && error.code === 'USER_BLOCKED') this.markProfileBlocked();
+      else if (current() && error.code === 'PROFILE_NOT_FOUND') this.markPublicUnavailable(error.message);
       else if (current() && error.code !== 'SESSION_CHANGED') this.setData({ [prefix + 'Error']: error.message || '内容读取失败，请重试' });
     }).finally(() => {
       if (current()) { requests[kind] = null; this.setData({ [prefix + 'Loading']: false, [prefix + 'MoreLoading']: false }); }

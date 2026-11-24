@@ -42,6 +42,8 @@ Page({
       this.closeComments(); this.closeUnfollowPrompt(true);
       this.setData({ user: users.getCachedUser(), posts: [], userRows: [], composerOpen: false, needsLogin: false });
     } else this.setData({ user: users.getCachedUser() });
+    const visible = square.visiblePosts?.(this.data.posts);
+    if (visible && (visible.length !== this.data.posts.length || visible.some((row, index) => row !== this.data.posts[index]))) this.setData({ posts: visible });
     this.prefillResults();
   },
   // 搜索页没有个人统计展示，不额外请求当前账号的关注总数。

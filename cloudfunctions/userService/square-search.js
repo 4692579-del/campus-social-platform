@@ -2,7 +2,7 @@ const ACTION = 'searchSquareContent';
 const CODES = ['INVALID_SEARCH', 'SEARCH_SCOPE_UNAVAILABLE'];
 const accountIdPattern = /^[1-9][0-9]{7}$/;
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function createSearch(db, { active, fail, profileOwner, recheckProfile, present }) {
+function createSearch(db, { active, fail, profileOwner, recheckProfile, present, blockedAccounts, excludeBlockedPosts }) {
   const person = user => ({ accountId: user.accountId, nickname: user.nickname, avatarFileID: user.avatarFileID || '', bio: user.bio || '',
     isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
     ...(user.officialVerified === true ? { officialVerified: true } : {}) });
@@ -30,10 +30,11 @@ function createSearch(db, { active, fail, profileOwner, recheckProfile, present 
       return { ...query, items: rows.filter(row => accountIdPattern.test(row.accountId || '')).map(person), hasMore: all.length > 20,
         nextCursor: all.length > 20 ? rows[rows.length - 1]._id : '' };
     }
+    if (owner && (await blockedAccounts(viewer, [accountId])).has(accountId)) return { ...query, items: [], hasMore: false, nextCursor: '' };
     const filter = { scope: 'square', status: 'published', ...(owner ? { authorId: owner._id } : {}),
       ...(keyword ? { content: db.RegExp({ regexp: escapeRegExp(keyword), options: 'i' }) } : {}), ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
     const rows = (await db.collection('square_posts').where(filter).orderBy('sortKey', 'desc').limit(21).get()).data;
-    const items = (await present(rows.slice(0, 20), viewer, true)).filter(row => accountIdPattern.test(row.author && row.author.accountId || ''));
+    const items = (await present(await excludeBlockedPosts(rows.slice(0, 20), viewer), viewer, true)).filter(row => accountIdPattern.test(row.author && row.author.accountId || ''));
     if (owner) await recheckProfile(owner);
     return { ...query, items, hasMore: rows.length > 20, nextCursor: rows.length > 20 ? rows[19].sortKey : '' };
   };

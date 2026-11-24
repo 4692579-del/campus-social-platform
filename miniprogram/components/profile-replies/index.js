@@ -64,7 +64,7 @@ Component({
       }).catch(error => {
         if (current()) {
           this._failedMore = more;
-          if (this.data.accountId && error.code === 'PROFILE_NOT_FOUND') { this.setData({ items: [], hasMore: false }); this.triggerEvent('unavailable', { message: error.message }); }
+          if (this.data.accountId && ['PROFILE_NOT_FOUND', 'USER_BLOCKED'].includes(error.code)) { this.setData({ items: [], hasMore: false }); this.triggerEvent('unavailable', { message: error.message, code: error.code }); }
           if (error.code === 'HISTORY_CHANGED') this._reload = true;
           else this.setData({ error: error.message || '回复读取失败，请重试' });
         }

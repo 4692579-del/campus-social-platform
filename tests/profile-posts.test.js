@@ -24,6 +24,7 @@ function fixture(options = {}) {
     react: async () => ({ ...post, liked: true, likeCount: 1 }),
     cachedOwnStats: () => options.cachedStats || null,
     getOwnStats: options.getOwnStats,
+    reportUser: options.reportUser,
     subscribeOwnStats(listener) { statsListeners.add(listener); return () => statsListeners.delete(listener); },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
@@ -31,11 +32,45 @@ function fixture(options = {}) {
     require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, { showToast() {}, navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } :
       name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('post-images') ? { resolveVideoPlayback: options.resolveVideoPlayback } : users,
     wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
-      navigateTo: args => routes.push(args.url), showToast() {}, stopPullDownRefresh() {} },
+      navigateTo: args => routes.push(args.url), showToast: options.showToast || (() => {}),
+      showActionSheet: options.showActionSheet, showModal: options.showModal, stopPullDownRefresh() {} },
   });
   const page = { ...definition, data: structuredClone(definition.data), setData: values => applyPageData(page.data, values) };
   return { page, calls, routes, statsListeners, setUser: value => { if ((current && current._id) !== (value && value._id)) { session++; cached = null; albumCache = null; quoteCache = null; options.cachedStats = null; } current = value; page.applyUser(value); } };
 }
+
+test('访客主页菜单在确认后才提交用户举报，取消和过期确认不写数据', async () => {
+  const sheets = [], reports = [], toasts = [];
+  let menuChoice = 1, confirm;
+  const f = fixture({
+    showActionSheet(args) { sheets.push(Array.from(args.itemList)); args.success({ tapIndex: args.itemList.length === 2 ? menuChoice : 0 }); },
+    showModal(args) { confirm = args.success; },
+    reportUser: async (...args) => { reports.push(args); return { alreadyReported: false }; },
+    showToast: args => toasts.push(args.title),
+  });
+  f.page.onLoad();
+  await f.page.openProfileUserMenu();
+  assert.equal(sheets.length, 0);
+  Object.assign(f.page.data, { isVisitor: true, profileUser: { accountId: '10000002' } });
+  const canceled = f.page.openProfileUserMenu();
+  await Promise.resolve();
+  confirm({ confirm: false }); await canceled;
+  assert.deepEqual(sheets[0], ['举报用户', '拉黑用户']);
+  assert.deepEqual(toasts, []);
+  assert.equal(reports.length, 0);
+  menuChoice = 0;
+  const first = f.page.openProfileUserMenu();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(reports.length, 0);
+  confirm({ confirm: true }); await first;
+  assert.deepEqual(reports, [['10000002', 'spam']]);
+  assert.equal(toasts.at(-1), '举报已提交');
+  const stale = f.page.openProfileUserMenu();
+  await Promise.resolve(); await Promise.resolve();
+  f.page._visible = false;
+  confirm({ confirm: true }); await stale;
+  assert.equal(reports.length, 1);
+});
 
 test('本人主页首帧复用侧栏获赞缓存，统计失效后只更新数字，失败保留已有值', async () => {
   let fail = false, receivedLikes = 8;

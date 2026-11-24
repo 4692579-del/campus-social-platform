@@ -1,5 +1,5 @@
 // 本人的回复时间线。作者只取可信会话，分页使用不可变的发布时间键。
-function createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor }) {
+function createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor, excludeBlockedPosts }) {
   const published = row => row && row.status === 'published' && row.scope === 'square';
   async function readIds(table, ids) {
     const unique = [...new Set(ids.filter(Boolean))], result = new Map();
@@ -42,7 +42,8 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
         readIds('square_posts', page.map(row => row.postId)),
         commentsById(page.flatMap(row => [row.rootId, row.replyToId, ...(row.ancestorIds || [])].filter(Boolean))),
       ]);
-      const valid = page.filter(row => published(posts.get(row.postId)) && (!row.rootId ||
+      const visibleIds = new Set((await excludeBlockedPosts([...posts.values()], user)).map(row => row._id));
+      const valid = page.filter(row => visibleIds.has(row.postId) && published(posts.get(row.postId)) && (!row.rootId ||
         published(context.get(row.rootId)) && context.get(row.rootId).postId === row.postId));
       const safeContext = [...context.values()].filter(row => published(row) && posts.has(row.postId));
       const presented = await views([...valid, ...safeContext], user);
@@ -61,7 +62,7 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
       return { ...(profileAuthorId ? { profileAccountId: event.profileAccountId } : {}), items, hasMore: all.length > 20, nextCursor: page.length ? page[page.length - 1].sortKey : cursor };
     }
     const id = postId(event.postId), targetId = commentId(event.replyId);
-    const post = await getPost(id);
+    const post = await getPost(id, user);
     const prefix = post.scope;
     const publishedComment = row => row?.status === 'published' && row.scope === prefix;
     const target = await getComment(targetId, id), root = target.rootId ? await getComment(target.rootId, id) : target;
@@ -84,7 +85,7 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
     for (const row of window) if ((row.ancestorIds || []).some(key => ancestorViews.get(key)?.folded))
       presented.set(row._id, { ...presented.get(row._id), content: '', images: [], folded: true, hiddenByAncestor: true });
     if (!presented.has(targetId)) fail('POST_NOT_FOUND', '评论已更新，请重试');
-    await getPost(id); await getComment(root._id, id); await getComment(targetId, id);
+    await getPost(id, user); await getComment(root._id, id); await getComment(targetId, id);
     return { root: contextViews.get(root._id), targetId, items: [...presented.values()],
       startOffset, nextOffset: startOffset + Math.min(rows.length, 20), hasMore: rows.length > 20 };
   };

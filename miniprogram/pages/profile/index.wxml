@@ -28,11 +28,14 @@
 
   <view class="profile-white {{pullDragging ? 'is-pulling' : ''}}" style="transform: translateY({{profilePullOffset}}px);">
   <view class="profile-body">
-    <view class="profile-avatar"><image class="profile-avatar-photo avatar-outline" src="{{profileUser.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /></view>
+    <view class="profile-avatar-row">
+      <view class="profile-avatar"><image class="profile-avatar-photo avatar-outline" src="{{profileUser.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /></view>
+      <button wx:if="{{isVisitor && user && profileUser.accountId && !profileUnavailable}}" class="profile-user-menu" bindtap="openProfileUserMenu" aria-label="更多用户操作" hover-class="visitor-action-pressed"><image src="/images/interface/menu-two.svg" mode="aspectFit" aria-hidden="true" /></button>
+    </view>
     <view wx:if="{{error && !loginSheetOpen}}" class="cs-error profile-error">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading || coverBusy}}">重新读取</button></view>
     <view class="profile-heading">
       <view class="nickname">{{profileUnavailable ? '该用户暂不可查看' : profileUser ? profileUser.nickname : loading ? '正在读取资料…' : isVisitor ? '个人主页' : '你好，新同学'}}</view>
-      <view wx:if="{{profileUser.officialVerified}}" class="verified-badge"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>Cui官方</text></view>
+      <view wx:if="{{profileUser.officialVerified || profileUser.accountId === '19090448' || profileUser.accountId === '58732480' || profileUser.accountId === '45214114'}}" class="verified-badge"><image class="verification-icon" src="/images/verification/verified.png" mode="aspectFit" /><text>Cui官方</text></view>
       <view wx:elif="{{isVerified}}" class="profile-student-badge" bindtap="openCertification" aria-role="{{isVisitor ? 'img' : 'button'}}" aria-label="学生已认证"><image src="/images/verification/student.svg" mode="aspectFit" /></view>
       <view wx:elif="{{!isVisitor && identity.isAdmin}}" class="role-badge">管理员</view>
       <view wx:elif="{{profileUser && !isVisitor}}" class="verified-badge unverified-badge" bindtap="openCertification" aria-role="button" aria-label="未认证，查看学校认证"><image class="verification-icon" src="/images/verification/unverified.png" mode="aspectFit" /><text>未认证</text></view>
@@ -42,7 +45,7 @@
     <view wx:if="{{joinedText}}" class="joined-row" bindtap="openAccountAbout" aria-role="button" aria-label="查看关于此账号"><image class="calendar-icon" src="/images/interface/calendar-muted.svg" mode="aspectFit" /><text>{{joinedText}}</text><image class="account-chevron" src="/images/interface/chevron-right-muted.svg" mode="aspectFit" /></view>
     <view wx:if="{{!profileUnavailable}}" class="profile-stats"><view><text class="stat-count">{{profileUser.officialVerified ? profileCount.formatKnown(likeCount) : likeCount}}</text><text>获赞</text></view><view><text class="stat-count">{{followingCount}}</text><text>关注</text></view><view><text class="stat-count">{{profileUser.officialVerified ? profileCount.formatKnown(followerCount) : followerCount}}</text><text>粉丝</text></view></view>
 
-    <view wx:if="{{isVisitor && user && profileUser && !profileUnavailable}}" class="visitor-actions {{profileFollowing ? 'is-followed' : ''}}">
+    <view wx:if="{{isVisitor && user && profileUser && !profileUnavailable && !profileBlocked}}" class="visitor-actions {{profileFollowing ? 'is-followed' : ''}}">
       <view class="visitor-follow-group">
         <button class="visitor-follow" bindtap="toggleProfileFollow" hover-class="visitor-action-pressed">{{profileFollowing ? '已关注' : '关注'}}</button>
         <view class="visitor-message-slot"><button class="visitor-message" bindtap="openProfileMessage" disabled="{{!profileFollowing}}" aria-hidden="{{!profileFollowing}}" hover-class="visitor-action-pressed">私信</button></view>
@@ -66,7 +69,7 @@
       <image class="content-tab-icon" src="{{item.key === 'album' && mediaTab === 'videos' ? '/images/profile-tabs/videos' : item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
       <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}</text>
       <image wx:if="{{!isVisitor && item.key === 'posts' && selectedContent === 'posts'}}" class="tab-dropdown-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
-      <view wx:if="{{item.key === 'album'}}" class="media-menu-trigger" catchtap="toggleMediaMenu" aria-role="button" aria-label="切换相册或视频" aria-expanded="{{mediaMenuOpen}}"><image class="tab-dropdown-chevron {{mediaMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view>
+      <view wx:if="{{item.key === 'album' && !profileBlocked}}" class="media-menu-trigger" catchtap="toggleMediaMenu" aria-role="button" aria-label="切换相册或视频" aria-expanded="{{mediaMenuOpen}}"><image class="tab-dropdown-chevron {{mediaMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view>
     </button>
     <view class="content-tab-indicator" style="left: {{contentIndex * 25 + 4.5}}%;" aria-hidden="true"></view>
     <view wx:if="{{postsMenuOpen}}" class="posts-menu tab-dropdown" aria-label="动态来源">
@@ -79,7 +82,11 @@
     </view>
   </view>
   <view class="profile-panels-viewport" style="min-height: calc(100vh - {{navHeight}}px - 94rpx);">
-  <view class="profile-panels" style="left: {{-contentIndex * 100}}%;">
+  <view wx:if="{{profileBlocked}}" class="profile-blocked" role="status">
+    <image src="/images/interface/user-block.svg" mode="aspectFit" aria-hidden="true" />
+    <text>对方已被你拉黑</text>
+  </view>
+  <view wx:else class="profile-panels" style="left: {{-contentIndex * 100}}%;">
   <view class="profile-panel {{selectedContent === 'posts' ? 'is-active' : ''}}" style="left: 0%;" aria-hidden="{{selectedContent !== 'posts'}}">
   <block wx:if="{{postScope === 'square'}}">
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>

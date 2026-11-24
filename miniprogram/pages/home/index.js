@@ -516,7 +516,8 @@ Page({
     if (this.isSquareFeed()) this.loadFeed(false);
   },
   showFeed(result) {
-    const items = result.items.map(postPreview);
+    const visible = square.visiblePosts?.(result.items) || result.items;
+    const items = visible.map(postPreview);
     const values = {};
     // 返回时缓存和后台结果常相同，不重复替换整组图文组件。
     if (JSON.stringify(items) !== JSON.stringify(this.data.posts)) values.posts = items;
@@ -525,7 +526,7 @@ Page({
     if (this.data.feedOffset !== result.nextOffset) values.feedOffset = result.nextOffset;
     if (Object.keys(values).length) this.setData(values);
     this.refreshFollowPreviews();
-    this.hydrateFollowAuthors(result.items);
+    this.hydrateFollowAuthors(visible);
   },
   loadFeed(force = false, append = false) {
     if (this._feedBusy) return this._feedPromise;
@@ -542,7 +543,7 @@ Page({
         const result = following ? await square.listFollowing({ force, cursor: append ? this.data.feedCursor || '' : '' }) : await square.list({ force, offset: append ? this.data.feedOffset : 0 });
         if (this.currentView(version) && epoch === (this._feedEpoch || 0)) this.showFeed(result);
       } catch (error) {
-        if (this.currentView(version) && epoch === (this._feedEpoch || 0) && error.code !== 'SESSION_CHANGED') this.setData({ feedError: error.message || '动态读取失败，请稍后重试' });
+        if (this.currentView(version) && epoch === (this._feedEpoch || 0) && !['SESSION_CHANGED', 'BLOCK_CHANGED'].includes(error.code)) this.setData({ feedError: error.message || '动态读取失败，请稍后重试' });
       } finally {
         if (this.currentView(version) && epoch === (this._feedEpoch || 0)) {
           this._feedBusy = false; this._feedPromise = null; patchState(this, { feedLoading: false, feedMoreLoading: false });

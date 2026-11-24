@@ -1,17 +1,18 @@
 const crypto = require('crypto');
-const ACTIONS = ['getSquareFollowProfile', 'getSquareFollowStates', 'setSquareFollow', 'listSquareFollowing'];
-const CODES = ['INVALID_FOLLOW', 'FOLLOW_SELF', 'FOLLOW_CHANGED'];
+const ACTIONS = ['getSquareFollowProfile', 'getSquareFollowStates', 'setSquareFollow', 'setSquareBlock', 'listSquareFollowing'];
+const CODES = ['INVALID_FOLLOW', 'FOLLOW_SELF', 'FOLLOW_CHANGED', 'USER_BLOCKED'];
 const edgeId = (from, to) => 'f_' + crypto.createHash('sha256').update(`${from}:${to}`).digest('hex');
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
 
+async function readEdges(db, viewer, ids) {
+  const rows = [];
+  for (let start = 0; start < ids.length; start += 20) rows.push(...(await db.collection('user_follows').where({ _id: db.command.in(ids.slice(start, start + 20).map(id => edgeId(viewer._id, id))) }).limit(20).get()).data);
+  return new Map(rows.map(row => [row.targetAccountId, row]));
+}
+
 function createFollows(db, { active, fail, profileOwner, recheckProfile, present }) {
-  const edges = () => db.collection('user_follows');
   const stats = user => ({ accountId: user.accountId, followingCount: count(user.followingCount), followerCount: count(user.followerCount), version: count(user.followStatsVersion) });
-  async function states(viewer, ids) {
-    const rows = [];
-    for (let start = 0; start < ids.length; start += 20) rows.push(...(await edges().where({ _id: db.command.in(ids.slice(start, start + 20).map(id => edgeId(viewer._id, id))) }).limit(20).get()).data);
-    return new Map(rows.map(row => [row.targetAccountId, row]));
-  }
+  const states = (viewer, ids) => readEdges(db, viewer, ids);
   return async (action, event, viewer) => {
     active(viewer);
     if (action === 'getSquareFollowStates') {
@@ -27,10 +28,11 @@ function createFollows(db, { active, fail, profileOwner, recheckProfile, present
       await recheckProfile(target);
       return { profile: { ...stats(target), following: Boolean(row && row.active), relationVersion: count(row && row.version) } };
     }
-    if (action === 'setSquareFollow') {
-      if (typeof event.following !== 'boolean') fail('INVALID_FOLLOW', '关注参数不正确');
+    if (action === 'setSquareFollow' || action === 'setSquareBlock') {
+      const blocking = action === 'setSquareBlock';
+      if (typeof (blocking ? event.blocked : event.following) !== 'boolean') fail('INVALID_FOLLOW', '关系参数不正确');
       const target = await profileOwner(event.accountId, viewer);
-      if (target._id === viewer._id) fail('FOLLOW_SELF', '不能关注自己');
+      if (target._id === viewer._id) fail('FOLLOW_SELF', blocking ? '不能拉黑自己' : '不能关注自己');
       let result;
       await db.runTransaction(async tx => {
         // 事务内串行读取，始终使用可信会话，不接受客户端的用户主键或统计值。
@@ -39,17 +41,25 @@ function createFollows(db, { active, fail, profileOwner, recheckProfile, present
         const targetRef = tx.collection('users').doc(target._id), current = (await targetRef.get()).data;
         if (!current || current.accountId !== target.accountId || current.status !== 'active' || !['user', 'student', 'admin'].includes(current.role)) fail('PROFILE_NOT_FOUND', '该用户暂不可查看');
         const ref = tx.collection('user_follows').doc(edgeId(viewer._id, target.accountId)), old = (await ref.get()).data;
-        const changed = Boolean(old && old.active) !== event.following;
-        const version = count(old && old.version) + Number(changed);
+        const wasFollowing = Boolean(old?.active), wasBlocked = Boolean(old?.blocked);
+        const blocked = blocking ? event.blocked : wasBlocked;
+        const following = blocking ? !blocked && wasFollowing : event.following;
+        if (blocked && following) fail('USER_BLOCKED', '解除拉黑后才能关注该用户');
+        const changed = wasFollowing !== following;
+        const blockChanged = wasBlocked !== blocked;
+        const version = count(old?.version) + Number(changed || blockChanged);
+        if (changed || blockChanged) {
+          await ref.set({ data: { followerId: actor._id, targetId: current._id, targetAccountId: current.accountId, active: following,
+            ...(blocked ? { blocked: true } : {}), version, updatedAt: db.serverDate() } });
+        }
         if (changed) {
-          const delta = event.following ? 1 : -1;
+          const delta = following ? 1 : -1;
           actor.followingCount = Math.max(0, count(actor.followingCount) + delta); actor.followStatsVersion = count(actor.followStatsVersion) + 1;
           current.followerCount = Math.max(0, count(current.followerCount) + delta); current.followStatsVersion = count(current.followStatsVersion) + 1;
-          await ref.set({ data: { followerId: actor._id, targetId: current._id, targetAccountId: current.accountId, active: event.following, version, updatedAt: db.serverDate() } });
           await actorRef.update({ data: { followingCount: actor.followingCount, followStatsVersion: actor.followStatsVersion } });
           await targetRef.update({ data: { followerCount: current.followerCount, followStatsVersion: current.followStatsVersion } });
         }
-        result = { state: { accountId: target.accountId, following: event.following, version }, viewer: stats(actor), profile: { ...stats(current), following: event.following, relationVersion: version } };
+        result = { ...(blocking ? { blocked } : {}), state: { accountId: target.accountId, following, version }, viewer: stats(actor), profile: { ...stats(current), following, relationVersion: version } };
       });
       return result;
     }
@@ -69,7 +79,7 @@ function createFollows(db, { active, fail, profileOwner, recheckProfile, present
         for (let start = 0; start < authors.length; start += 20) {
           const people = (await db.collection('users').where({ _id: db.command.in(authors.slice(start, start + 20)) }).limit(20).get()).data.filter(user => user.status === 'active');
           const found = await states(viewer, people.map(user => user.accountId).filter(Boolean));
-          for (const person of people) if (found.get(person.accountId)?.active) followed.add(person._id);
+          for (const person of people) if (found.get(person.accountId)?.active && !found.get(person.accountId)?.blocked) followed.add(person._id);
         }
         let used = 0;
         for (const row of rows) { after = row.sortKey; used++; if (followed.has(row.authorId)) selected.push(row); if (selected.length === 20) break; }
@@ -83,4 +93,4 @@ function createFollows(db, { active, fail, profileOwner, recheckProfile, present
     }
   };
 }
-module.exports = { createFollows, ACTIONS, CODES, edgeId };
+module.exports = { createFollows, readEdges, ACTIONS, CODES, edgeId };

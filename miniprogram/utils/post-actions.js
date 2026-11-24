@@ -175,7 +175,7 @@ module.exports = {
     return request;
   },
   toggleProfileFollow() {
-    if (!this.data.isVisitor || this.data.profileUnavailable || !this.data.profileUser || this.interactionBlocked() || !login(this)) return;
+    if (!this.data.isVisitor || this.data.profileUnavailable || this.data.profileBlocked || !this.data.profileUser || this.interactionBlocked() || !login(this)) return;
     const id = this.data.profileAccountId, state = square.cachedFollowState(id);
     if (state ? state.following : this.data.profileFollowing) return this.requestUnfollowConfirmation(this.data.profileUser);
     return this.persistFollowIntent(id, true);

@@ -35,7 +35,7 @@ Component({
       if (state.phase === 'pulling' || state.phase === 'settling') {
         this._progress = clamp(state.progress); this.paint({ progress: this._progress }); return;
       }
-      const start = state.startedAt ?? Date.now(), from = this._progress || 0;
+      const start = state.startedAt ?? Date.now(), from = clamp(state.progress ?? this._progress);
       const tick = () => {
         if (this._dead || this._state !== state) return;
         const elapsed = Math.max(0, Date.now() - start);

@@ -161,3 +161,15 @@ test('未拉满恢复从当前进度倒退，刷新回蓝使用同一正向路�
   await f.time.advance(300); f.frame(); assert.equal(f.paints.at(-1).progress, .5); assert.equal(f.paints.at(-1).refill, true);
   f.definition.pageLifetimes.hide.call(f.component); assert.equal(f.frames.size, 0);
 });
+
+test('搜索字标在松手后才完成画布初始化时，仍从松手时的进度回蓝', async () => {
+  const f = rendererFixture();
+  f.component.initializeCanvas();
+  f.component.setState({ phase: 'returning', progress: .5, duration: 240, startedAt: 0 });
+  await f.time.advance(60);
+  f.measure();
+  assert.ok(f.paints.at(-1).progress > 0 && f.paints.at(-1).progress < .5);
+  await f.time.advance(180);
+  f.frame();
+  assert.equal(f.paints.at(-1).progress, 0);
+});

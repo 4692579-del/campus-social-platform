@@ -4,14 +4,16 @@ const tabSelection = require('../../utils/tab-selection');
 const { resultUrl } = require('../../utils/search-query');
 const hotboard = require('../../services/hotboard');
 const square = require('../../services/square');
+const postActions = require('../../utils/post-actions');
 const { accountMenuRoutes, menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const { patchState } = require('../../utils/tab-page-layout');
 const searchRefresh = require('./refresh');
 const base = secondaryTabPage(3);
-const DEFAULT_HOT_VISIBLE = 15;
+const DEFAULT_HOT_VISIBLE = 10;
 const HOT_VISIBLE_INCREMENT = 10;
-const HOT_BOARD_INDEX = 1;
+const HOT_BOARD_INDEX = 2;
 const CUI_HOT_TYPE = 'toutiao';
+const RECOMMENDED_ACCOUNTS = ['10000001', '19090448', '58732480', '45214114'];
 const DEFAULT_AVATAR = '/images/avatar.png';
 const CUI_PROMO_FILE = 'cloud://campus-social-dev-d3dmcsfefdcae4.6361-campus-social-dev-d3dmcsfefdcae4-1531135264/square-media/cui-brand/cui-promo.mp4';
 // 账号 10000001 发布的「你好，欢迎来到『萃』」宣传动态。
@@ -25,15 +27,17 @@ Page({
     menuOpen:false, menuInstant:false, authChecking:false, loginSheetOpen:false, confirmingLogout:false, membershipOpen:false,
     menuLikeCount:'—', followerCount:'—', followingCount:'—', menuItems, utilityMenuItems,
     hotPlatforms: [{ key:'weibo', label:'微博' }, { key:'zhihu', label:'知乎' }, { key:'bilibili', label:'B站' }, { key:'baidu', label:'百度' }],
-    hotType:'weibo', hotRows:[], hotHasMore:false, hotLoading:false, hotError:'', hotWarning:'', hotUpdateText:'',
-    cuiHotRows:[], cuiHotHasMore:false, cuiHotLoading:false, cuiHotError:'', cuiHotWarning:'', cuiHotUpdateText:'',
+    hotType:'weibo', hotRows:[], hotHasMore:false, hotLoading:false, hotError:'', hotWarning:'',
+    cuiHotRows:[], cuiHotHasMore:false, cuiHotLoading:false, cuiHotError:'', cuiHotWarning:'',
     boardMinHeight:300,
     cuiPromoSrc:'', cuiPromoError:false, cuiPromoLoading:false, cuiPromoMuted:true,
-    boardIndex:0, boardTabs:['Cui热榜','探索','校园热榜'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
+    recommendations:[],
+    boardIndex:0, boardTabs:['Cui热榜','校园热榜','探索'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
   },
   onLoad() { base.onLoad.call(this); this._searchSession = users.searchSessionKey(); this.applyMenuUser(users.getCachedUser()); },
   onShow() {
     this._openingNews = false;
+    this._openingAuthor = false;
     this._openingCuiPromoPost = false;
     const returningFromMenu = this._menuNavigating || this._menuReturning;
     const session = users.searchSessionKey(), entry = users.consumeSearchEntry();
@@ -47,6 +51,10 @@ Page({
     this.setData({ ...(returningFromMenu ? {} : { chromeCompact:false }), menuOpen:false, menuInstant:true,
       platformMenuOpen:false, searchActive:true, cuiPromoMuted:true, ...(enteredFromTabBar ? { boardIndex:0 } : {}) });
     base.onShow.call(this);
+    this._stopRecommendationFollows?.();
+    this._stopRecommendationFollows = square.subscribeFollow?.(({ accountId }) => {
+      if (RECOMMENDED_ACCOUNTS.includes(accountId) && this.data.searchActive && this.data.boardIndex === 0) this.syncRecommendations();
+    });
     this.refreshMenuAvatar();
     this.measureSearchLayout();
     this._hotView = (this._hotView || 0) + 1; this._hotRequest = null;
@@ -57,6 +65,7 @@ Page({
   onReady() { base.onReady?.call(this); this.measureSearchLayout(); },
   onResize() { base.onResize?.call(this); this.measureSearchLayout(); },
   onHide() {
+    this.stopRecommendations();
     this.closeMembership();
     this.stopSearchRefresh();
     this.pauseCuiPromo();
@@ -71,6 +80,7 @@ Page({
     base.onHide.call(this);
   },
   onUnload() {
+    this.stopRecommendations();
     this.closeMembership();
     this.stopSearchRefresh();
     this.pauseCuiPromo();
@@ -88,6 +98,11 @@ Page({
     patchState(this, { user, ...(changed || this._menuAvatar !== avatar ? { avatarSource:avatar, avatarReady:avatar === DEFAULT_AVATAR } : {}),
       ...(changed ? { menuLikeCount:'—', followerCount:'—', followingCount:'—' } : {}) });
     this._menuAvatar = avatar;
+    const session = users.searchSessionKey();
+    if (this._recommendationSession !== session || changed) {
+      this.syncRecommendations();
+      if (this.data.searchActive && this.data.boardIndex === 0) this.loadRecommendations();
+    }
   },
   async refreshMenuAvatar() {
     const request = this._menuAvatarRequest = {};
@@ -252,14 +267,77 @@ Page({
   },
   activateCuiBoard() {
     this.playCuiPromo();
+    this.loadRecommendations();
     const cached = hotboard.cached(CUI_HOT_TYPE);
     if (cached) this.showCuiHotboard(cached);
     return this.loadCuiHotboard();
   },
+  syncRecommendations() {
+    const session = users.searchSessionKey(), viewer = users.getCachedUser();
+    if (session !== this._recommendationSession) {
+      this._recommendationSession = session;
+      this._recommendationsRequest = null;
+    }
+    const ids = viewer && this.data.user?._id === viewer._id
+      ? RECOMMENDED_ACCOUNTS.filter(id => id !== viewer.accountId && !square.isBlocked?.(id)) : [];
+    const recommendations = ids.flatMap(accountId => {
+      const profile = users.getCachedPublicProfile?.(accountId);
+      if (!profile || profile.blocked) return [];
+      return [{ accountId, nickname: profile.nickname, avatarFileID: profile.avatarFileID || '',
+        verified: Boolean(profile.isVerified), officialVerified: Boolean(profile.officialVerified),
+        following: Boolean(square.cachedFollowState?.(accountId)?.following) }];
+    });
+    if (JSON.stringify(recommendations) !== JSON.stringify(this.data.recommendations)) this.setData({ recommendations });
+    return ids;
+  },
+  loadRecommendations() {
+    const ids = this.syncRecommendations();
+    if (!ids.length || !this.data.searchActive || this.data.boardIndex !== 0 || this._unloaded) return;
+    if (this._recommendationsRequest) return this._recommendationsRequest.promise;
+    const request = this._recommendationsRequest = { session: this._recommendationSession };
+    const paint = () => {
+      if (this._recommendationsRequest === request && request.session === users.searchSessionKey() &&
+          this.data.searchActive && this.data.boardIndex === 0) this.syncRecommendations();
+    };
+    const profiles = Promise.allSettled(ids.map(id => users.getPublicProfile(id))).then(paint);
+    const follows = square.getFollowStates(ids).then(paint).catch(() => { /* 保留当前关注状态。 */ });
+    request.promise = Promise.all([profiles, follows]).finally(() => {
+      if (this._recommendationsRequest === request) this._recommendationsRequest = null;
+    });
+    return request.promise;
+  },
+  stopRecommendations() {
+    this._recommendationsRequest = null;
+    this._stopRecommendationFollows?.();
+    this._stopRecommendationFollows = null;
+  },
+  canUseRecommendations() {
+    const viewer = users.getCachedUser();
+    return !this._unloaded && this._visible !== false && this.data.searchActive && this.data.boardIndex === 0 &&
+      !this.data.menuOpen && !this.interactionBlocked() && !this._openingAuthor && !this._openingSearchEntry &&
+      !this._openingResults && !this._openingCuiPromoPost && viewer && this.data.user?._id === viewer._id &&
+      this._recommendationSession === users.searchSessionKey();
+  },
+  openRecommendation(event) {
+    if (!this.canUseRecommendations()) return;
+    const author = this.data.recommendations.find(row => row.accountId === event.currentTarget.dataset.accountId);
+    if (!author) return;
+    this.stopSearchRefresh();
+    postActions.viewAuthorProfile.call(this, { detail: { author } });
+  },
+  followRecommendation(event) {
+    if (!this.canUseRecommendations()) return;
+    const accountId = event.currentTarget.dataset.accountId;
+    if (!this.data.recommendations.some(row => row.accountId === accountId && !row.following) || square.cachedFollowState(accountId)?.following) return;
+    return postActions.persistFollowIntent.call(this, accountId, true);
+  },
+  paintFollowPresentation(accountId) {
+    if (RECOMMENDED_ACCOUNTS.includes(accountId) && this._visible !== false && this.data.searchActive && this.data.boardIndex === 0) this.syncRecommendations();
+  },
   showCuiHotboard(board) {
     const count = this._cuiHotVisible || DEFAULT_HOT_VISIBLE;
     this.setData({ cuiHotRows:board.list.slice(0, count), cuiHotHasMore:count < board.list.length, cuiHotError:'',
-      cuiHotWarning:board.stale ? '更新暂不可用，显示上次获取的榜单' : '', cuiHotUpdateText:hotboard.updateText(board.updateTime) });
+      cuiHotWarning:board.stale ? '更新暂不可用，显示上次获取的榜单' : '' });
   },
   loadCuiHotboard(force = false) {
     if (this._unloaded || this._visible === false || this.data.boardIndex !== 0) return;
@@ -289,7 +367,7 @@ Page({
     if (board.type !== this.data.hotType) return;
     const count = Math.min(this._hotVisible?.[board.type] || DEFAULT_HOT_VISIBLE, board.list.length);
     this.setData({ hotRows:board.list.slice(0, count), hotHasMore:count < board.list.length, hotError:'',
-      hotWarning:board.stale ? '更新暂不可用，显示上次获取的榜单' : '', hotUpdateText:hotboard.updateText(board.updateTime) });
+      hotWarning:board.stale ? '更新暂不可用，显示上次获取的榜单' : '' });
   },
   showMoreHotwords() {
     if (this._visible === false || this._unloaded || !this.data.hotHasMore) return;
@@ -316,7 +394,7 @@ Page({
     this.stopSearchRefresh();
     this._hotView = (this._hotView || 0) + 1; this._hotRequest = null;
     const cached = hotboard.cached(type);
-    this.setData({ hotType:type, hotRows:[], hotHasMore:false, hotError:'', hotWarning:'', hotUpdateText:'' });
+    this.setData({ hotType:type, hotRows:[], hotHasMore:false, hotError:'', hotWarning:'' });
     if (cached) this.showHotboard(cached);
     return this.loadHotboard();
   },

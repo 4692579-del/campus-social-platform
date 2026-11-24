@@ -28,7 +28,7 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 SQUARE_CODES.push('QUOTE_UNAVAILABLE');
 SQUARE_CODES.push('INVALID_MEDIA', 'VIDEO_UPLOAD_UNAVAILABLE', ...Object.keys(VIDEO_ERRORS));
 SQUARE_ACTIONS.push('setSquareProfilePin');
-SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo');
+SQUARE_ACTIONS.push('getSquarePublicProfile', 'getSquarePublicAccountInfo', 'reportSquareUser');
 SQUARE_ACTIONS.push('listNewsPosts', 'translateNews', 'listSquareVideos');
 SQUARE_CODES.push(...NEWS_CODES, ...TRANSLATION_CODES);
 SQUARE_ACTIONS.push(searchModule.ACTION, ...followsModule.ACTIONS);
@@ -120,8 +120,8 @@ function createSquareService(db, options = {}) {
     if (!owner || owner.status !== 'active' || owner.accountId !== accountId || !['user', 'student', 'admin'].includes(owner.role)) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
     return owner;
   }
-  async function recheckProfile(owner) {
-    const current = (await db.collection('users').doc(owner._id).get()).data;
+  async function recheckProfile(owner, source = db) {
+    const current = (await source.collection('users').doc(owner._id).get()).data;
     if (!current || current.accountId !== owner.accountId || current.status !== 'active' || !['user', 'student', 'admin'].includes(current.role)) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
     return current;
   }
@@ -136,8 +136,33 @@ function createSquareService(db, options = {}) {
     }
     return new Map(await Promise.all(ids.map(async id => [id, await profileReads.get(id)])));
   }
+  async function blockedAccounts(viewer, ids) {
+    if (!viewer || !ids.length) return new Set();
+    const edges = await followsModule.readEdges(db, viewer, [...new Set(ids.filter(Boolean))]);
+    return new Set([...edges].filter(([, edge]) => edge.blocked === true).map(([id]) => id));
+  }
+  async function excludeBlockedPosts(rows, viewer) {
+    if (!viewer || !rows.length) return rows;
+    const authors = await profilesFor([...new Set(rows.map(row => row.authorId))]);
+    const blocked = await blockedAccounts(viewer, [...authors.values()].map(profile => profile.accountId));
+    return rows.filter(row => !blocked.has(authors.get(row.authorId)?.accountId));
+  }
+  async function requireVisibleProfile(viewer, accountId) {
+    if ((await blockedAccounts(viewer, [accountId])).has(accountId)) fail('USER_BLOCKED', '对方已被你拉黑');
+  }
+  async function postAuthorBlocked(row, viewer, source) {
+    if (row.authorId === viewer._id || row.scope !== 'square') return false;
+    const target = (await source.collection('users').doc(row.authorId).get()).data;
+    if (!target?.accountId) return false;
+    const edge = (await source.collection('user_follows').doc(followsModule.edgeId(viewer._id, target.accountId)).get()).data;
+    return edge?.blocked === true;
+  }
   const postRef = (source, id) => source.collection(tableFor(id, 'square_posts')).doc(id);
-  async function getPost(id) { return visible((await postRef(db, postId(id)).get()).data, id); }
+  async function getPost(id, viewer) {
+    const row = visible((await postRef(db, postId(id)).get()).data, id);
+    if (!isNewsId(id) && !(await excludeBlockedPosts([row], viewer)).length) fail('USER_BLOCKED', '对方已被你拉黑');
+    return row;
+  }
   async function getComment(id, parentId, source = db) {
     commentId(id);
     const row = (await source.collection(tableFor(parentId, commentTable(id))).doc(id).get()).data;
@@ -168,7 +193,7 @@ function createSquareService(db, options = {}) {
     catch (error) { fail('CONTENT_CHECK_UNAVAILABLE', checkUnavailableMessage(error)); }
     if (!permitted) fail('CONTENT_REJECTED', '这段内容暂时无法发布，请修改后重试');
   }
-  const quoteViews = createQuoteReader(db, profilesFor, DECLARATIONS);
+  const quoteViews = createQuoteReader(db, profilesFor, DECLARATIONS, excludeBlockedPosts);
   async function presentNews(rows, viewer, detail = false) {
     if (!rows.length) return [];
     const states = viewer ? (await db.collection('news_interactions').where({ userId: viewer._id,
@@ -176,11 +201,11 @@ function createSquareService(db, options = {}) {
     return rows.map(row => ({ ...newsView(row, detail), liked: states.some(state => state.postId === row._id && state.kind === 'like'),
       bookmarked: states.some(state => state.postId === row._id && state.kind === 'bookmark') }));
   }
-  async function present(rows, viewer, preview = false) {
+  async function present(rows, viewer, preview = false, visibilityViewer = viewer) {
     if (!rows.length) return [];
     if (isNewsId(rows[0]._id)) return presentNews(rows, viewer);
     const authorIds = [...new Set(rows.map(row => row.authorId))];
-    const [authors, quotes, states, quoted] = await Promise.all([profilesFor(authorIds), quoteViews(rows), viewer ? reactions.where({ userId: viewer._id, postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get().then(result => result.data) : Promise.resolve([]),
+    const [authors, quotes, states, quoted] = await Promise.all([profilesFor(authorIds), quoteViews(rows, visibilityViewer), viewer ? reactions.where({ userId: viewer._id, postId: db.command.in(rows.map(row => row._id)), active: true }).limit(40).get().then(result => result.data) : Promise.resolve([]),
       viewer ? posts.aggregate().match({ scope: 'square', status: 'published', authorId: viewer._id,
         quotePostId: db.command.in(rows.map(row => row._id)) }).group({ _id: '$quotePostId' }).end().then(result => new Set(result.list.map(row => row._id))) : Promise.resolve(new Set())]);
     return rows.map(row => ({ _id: row._id, content: preview ? Array.from(row.content).slice(0, 280).join('') : row.content,
@@ -200,11 +225,11 @@ function createSquareService(db, options = {}) {
   async function optionalPost(id, viewer) {
     if (!id) return null;
     const row = (await posts.doc(id).get()).data;
-    return row && row.scope === 'square' && row.status === 'published' ? (await present([row], viewer))[0] : null;
+    return row && row.scope === 'square' && row.status === 'published' && (await excludeBlockedPosts([row], viewer)).length ? (await present([row], viewer))[0] : null;
   }
-  const search = searchModule.createSearch(db, { active, fail, profileOwner, recheckProfile, present });
+  const search = searchModule.createSearch(db, { active, fail, profileOwner, recheckProfile, present, blockedAccounts, excludeBlockedPosts });
   const follows = followsModule.createFollows(db, { active, fail, profileOwner, recheckProfile, present });
-  const history = createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor });
+  const history = createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor, excludeBlockedPosts });
   return async function square(action, event, user, identity) {
     // 仅复用本次可信身份查询的资料，不跨请求缓存认证或账号状态。
     if (user) profileReads.set(user._id, Promise.resolve(author(user)));
@@ -239,24 +264,27 @@ function createSquareService(db, options = {}) {
       const filter = { scope: 'square', status: 'published', authorId: owner._id };
       const [count, likes] = await Promise.all([posts.where(filter).count(), posts.aggregate().match(filter).group({ _id: null, receivedLikes: db.command.aggregate.sum('$likeCount') }).end()]);
       owner = await recheckProfile(owner);
+      const blocked = (await blockedAccounts(user, [owner.accountId])).has(owner.accountId);
       return { profile: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '', coverFileID: owner.coverFileID || '',
         bio: owner.bio || '', ...joinDateFields(owner), isVerified: author(owner).verified,
         ...(owner.officialVerified === true ? { officialVerified: true } : {}),
-        postCount: count.total, receivedLikes: Math.max(0, likes.list[0] && likes.list[0].receivedLikes || 0) } };
+        blocked, postCount: count.total, receivedLikes: Math.max(0, likes.list[0] && likes.list[0].receivedLikes || 0) } };
     }
     if (action === 'listSquareOwnReplies' || action === 'getSquareReplyContext') {
       const owner = action === 'listSquareOwnReplies' && event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : null;
+      if (owner) await requireVisibleProfile(user, owner.accountId);
       const result = await history(action, event, user, owner && owner._id);
-      if (owner) await recheckProfile(owner);
+      if (owner) { await recheckProfile(owner); await requireVisibleProfile(user, owner.accountId); }
       return result;
     }
     if (action === 'listSquareAlbum') {
       active(user);
       const owner = event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : user;
+      if (event.profileAccountId !== undefined) await requireVisibleProfile(user, owner.accountId);
       const offset = pagination(event);
       const rows = (await posts.where({ scope: 'square', status: 'published', authorId: owner._id, hasImages: true })
         .orderBy('sortKey', 'desc').skip(offset).limit(21).get()).data;
-      if (event.profileAccountId !== undefined) await recheckProfile(owner);
+      if (event.profileAccountId !== undefined) { await recheckProfile(owner); await requireVisibleProfile(user, owner.accountId); }
       return { ...(event.profileAccountId !== undefined ? { profileAccountId: owner.accountId } : {}), items: rows.slice(0, 20).flatMap(row => (row.images || []).map((fileID, index) => ({
         _id: `${row._id}_${index}`, postId: row._id, fileID, createdAt: row.createdAt, index,
       }))), hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
@@ -265,12 +293,14 @@ function createSquareService(db, options = {}) {
       active(user);
       const profile = event.profileAccountId !== undefined;
       const owner = profile ? await profileOwner(event.profileAccountId, user) : user;
+      if (profile) await requireVisibleProfile(user, owner.accountId);
       const { cursor = '' } = event;
       if (typeof cursor !== 'string' || cursor.length > 100 || /[\u0000-\u0020]/.test(cursor)) fail('INVALID_POST', '视频分页参数不正确');
       const filter = { scope: 'square', status: 'published', authorId: owner._id, media: db.command.elemMatch({ type: 'video' }),
         ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
       const rows = (await posts.where(filter).orderBy('sortKey', 'desc').limit(21).get()).data;
       await recheckProfile(owner);
+      if (profile) await requireVisibleProfile(user, owner.accountId);
       const publicMedia = file => typeof file === 'string' && file.startsWith(`cloud://${identity.env}.`) &&
         Boolean(identity.env) && file.slice(file.indexOf('/', 8) + 1).startsWith('square-media/');
       const items = rows.slice(0, 20).flatMap(row => row.media.flatMap((item, index) => {
@@ -286,6 +316,7 @@ function createSquareService(db, options = {}) {
       const offset = pagination(event);
       const mine = event.mine === true;
       const profile = event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : null;
+      if (profile) await requireVisibleProfile(user, profile.accountId);
       if (mine && profile) fail('INVALID_POST', '动态来源参数不正确');
       const postType = event.postType === undefined ? 'all' : event.postType;
       if (!['all', 'posts', 'quotes'].includes(postType) || !mine && !profile && postType !== 'all') fail('INVALID_POST', '动态分类参数不正确');
@@ -300,7 +331,7 @@ function createSquareService(db, options = {}) {
         (mine || profile) && !offset && postType !== 'all' ? posts.where(base).count().catch(() => null) : Promise.resolve(null),
       ]);
       const rows = result.data;
-      let items = rows.slice(0, 20), profilePin = {};
+      let items = await excludeBlockedPosts(rows.slice(0, 20), mine || profile ? null : user), profilePin = {};
       if ((mine || profile) && postType === 'posts') {
         const owner = profile || (await db.collection('users').doc(user._id).get()).data;
         active(owner);
@@ -312,21 +343,21 @@ function createSquareService(db, options = {}) {
         items = items.filter(row => row._id !== pinnedPostId);
         if (valid) items.unshift(pinned);
       }
-      const presented = await present(items, mine || profile || event.personalize === true ? user : null, true);
-      if (profile) await recheckProfile(profile);
+      const presented = await present(items, mine || profile || event.personalize === true ? user : null, true, user);
+      if (profile) { await recheckProfile(profile); await requireVisibleProfile(user, profile.accountId); }
       return { ...profilePin, ...(profile ? { profileAccountId: profile.accountId, postType } : {}), ...(mine ? { mine: true, postType } : {}), ...(count ? { total: count.total } : {}), ...(allCount ? { allTotal: allCount.total } : {}), items: presented, hasMore: rows.length > 20, nextOffset: offset + Math.min(rows.length, 20) };
     }
     if (action === 'getSquarePost') {
-      const article = await getPost(event.postId);
+      const article = await getPost(event.postId, user);
       const row = newsTarget && options.news ? visible(await options.news.enrich(article), targetId) : article;
       const viewer = event.personalize === true ? user : null;
-      return { post: (await (newsTarget ? presentNews([row], viewer, true) : present([row], viewer)))[0] };
+      return { post: (await (newsTarget ? presentNews([row], viewer, true) : present([row], viewer, false, user)))[0] };
     }
     if (action === 'listSquareReplies' || action === 'listSquareReplyChildren') {
       const id = postId(event.postId), offset = pagination(event);
       const children = action === 'listSquareReplyChildren';
       if (children) commentId(event.rootId);
-      const [post, root, result] = await Promise.all([getPost(id), children ? getComment(event.rootId, id) : Promise.resolve(null),
+      const [post, root, result] = await Promise.all([getPost(id, user), children ? getComment(event.rootId, id) : Promise.resolve(null),
         db.collection(tableFor(id, children ? 'square_reply_children' : 'square_replies')).where({ postId: id, status: 'published',
           ...(children ? { rootId: event.rootId } : {}) }).orderBy('sortKey', children ? 'asc' : 'desc').skip(offset).limit(21).get()]);
       if (root && root.rootId) fail('INVALID_POST', '回复分组不正确');
@@ -481,6 +512,23 @@ function createSquareService(db, options = {}) {
       const quotedPost = await optionalPost(quotedId, user);
       return { deletedId: id, ...(quotedPost ? { quotedPost } : {}) };
     }
+    if (action === 'reportSquareUser') {
+      const reason = event.reason;
+      if (!REPORT_REASONS.includes(reason)) fail('INVALID_POST', '请选择举报原因');
+      const target = await profileOwner(event.accountId, user);
+      if (target._id === user._id) fail('FORBIDDEN', '不能举报自己');
+      const refId = hash(`report:user:${user._id}:${target._id}`);
+      const result = await db.runTransaction(async transaction => {
+        active((await transaction.collection('users').doc(user._id).get()).data);
+        const reported = await recheckProfile(target, transaction);
+        const ref = transaction.collection('square_reports').doc(refId);
+        if ((await ref.get()).data) return { alreadyReported: true };
+        await ref.set({ data: { targetType: 'user', reporterId: user._id, authorId: reported._id,
+          accountId: reported.accountId, nickname: reported.nickname || '', reason, status: 'pending', createdAt: db.serverDate() } });
+        return { alreadyReported: false };
+      });
+      return result.result ?? result;
+    }
     if (action === 'reportSquarePost') {
       const id = postId(event.postId), reason = event.reason;
       if (!REPORT_REASONS.includes(reason)) fail('INVALID_POST', '请选择举报原因');
@@ -513,7 +561,7 @@ function createSquareService(db, options = {}) {
       async function quoted(source = db) {
         if (!quoteId) return null;
         const row = (await source.collection('square_posts').doc(quoteId).get()).data;
-        if (!row || row.scope !== 'square' || row.status !== 'published') fail('QUOTE_UNAVAILABLE', '被引用的动态已删除或不可见，请移除引用后重试');
+        if (!row || row.scope !== 'square' || row.status !== 'published' || await postAuthorBlocked(row, user, source)) fail('QUOTE_UNAVAILABLE', '被引用的动态已删除或不可见，请移除引用后重试');
         return row;
       }
       if (input.media !== undefined && input.images !== undefined) fail('INVALID_MEDIA', '请使用同一组媒体文件发布');
@@ -530,7 +578,7 @@ function createSquareService(db, options = {}) {
       const id = isReply ? `${child ? 'c' : 'r'}_${hash(`${user._id}:${parentId}:${token}`).slice(0, 40)}` : squarePostId(user._id, token);
       if (quoteId === id) fail('INVALID_POST', '不能引用本次发布的动态');
       const collectionName = tableFor(parentId, child ? 'square_reply_children' : isReply ? 'square_replies' : 'square_posts');
-      const [parent, target, previous] = await Promise.all([isReply ? getPost(parentId) : Promise.resolve(null),
+      const [parent, target, previous] = await Promise.all([isReply ? getPost(parentId, user) : Promise.resolve(null),
         child ? getComment(input.replyToId, parentId) : Promise.resolve(null), db.collection(collectionName).doc(id).get()]);
       if (target && (target.ancestorIds || []).length >= 64) fail('INVALID_POST', '回复层级过多，请直接回复这条一级评论');
       const rootId = target ? target.rootId || target._id : '';
@@ -589,7 +637,10 @@ function createSquareService(db, options = {}) {
           if (conflicts(saved)) fail('REQUEST_CONFLICT', '本次内容已提交，请勿重复修改请求');
           return;
         }
-        if (latestParent) await requireOpenComments(transaction, latestParent);
+        if (latestParent) {
+          if (await postAuthorBlocked(latestParent, user, transaction)) fail('USER_BLOCKED', '对方已被你拉黑');
+          await requireOpenComments(transaction, latestParent);
+        }
         const aiFields = isReply && !newsTarget ? await ai.enqueue(transaction, { _id: id, authorId: user._id, postId: parent._id, content, askAI,
           ancestorIds: target ? [...(latestTarget.ancestorIds || []), latestTarget._id] : [] }) : {};
         await ref.set({ data: { scope: newsTarget ? 'news' : 'square', status: 'published', authorId: user._id, content, ...aiFields,
@@ -619,6 +670,7 @@ function createSquareService(db, options = {}) {
       await db.runTransaction(async transaction => {
         active((await transaction.collection('users').doc(user._id).get()).data);
         const parentRef = postRef(transaction, id), post = visible((await parentRef.get()).data, id);
+        if (await postAuthorBlocked(post, user, transaction)) fail('USER_BLOCKED', '对方已被你拉黑');
         const stateRef = transaction.collection(tableFor(id, 'square_interactions')).doc(key), state = (await stateRef.get()).data;
         if (Boolean(state && state.active) === event.active) return;
         await stateRef.set({ data: { userId: user._id, postId: id, kind, active: event.active } });

@@ -12,13 +12,13 @@
     <view class="search-toolbar search-toolbar-inset" bindtap="tapSearchEntry" aria-role="button" aria-label="打开搜索">
       <view class="search-toolbar-field"><search-box entry="{{true}}" /></view>
     </view>
-    <view class="search-discovery-frame" bindtouchstart="beginSearchPull">
-    <view wx:if="{{searchRefreshVisible}}" class="search-refresh-anchor" style="height:{{searchRefreshThreshold}}px;" aria-hidden="true">
+    <view class="search-discovery-frame {{searchRefreshPhase === 'returning' ? 'is-refresh-returning' : ''}}" bindtouchstart="beginSearchPull">
+    <view wx:if="{{searchRefreshVisible}}" class="search-refresh-anchor" aria-hidden="true">
       <cui-refresh id="search-cui" class="search-refresh-logo" bind:ready="onSearchBrandReady" />
     </view>
     <scroll-view class="search-discovery" scroll-y="{{!menuOpen && !loginSheetOpen && !authChecking}}" enhanced bounces="{{false}}"
-      refresher-enabled="{{searchActive && boardIndex !== 2 && !menuOpen && !platformMenuOpen && !loginSheetOpen && !authChecking}}"
-      refresher-triggered="{{searchRefreshing}}" refresher-threshold="{{searchRefreshThreshold}}" refresher-default-style="none" refresher-background="#FFFFFF"
+      refresher-enabled="{{searchActive && (boardIndex === 0 || boardIndex === hotBoardIndex) && !menuOpen && !platformMenuOpen && !loginSheetOpen && !authChecking}}"
+      refresher-triggered="{{searchRefreshing}}" refresher-threshold="{{searchRefreshThreshold}}" refresher-default-style="none" refresher-background="transparent"
       bindrefresherpulling="pullSearch" bindrefresherrefresh="refreshSearch" bindrefresherrestore="cancelSearchPull" bindrefresherabort="cancelSearchPull"
       bindtouchend="releaseSearchPull" bindtouchcancel="deferSearchPullCancel" show-scrollbar="{{false}}" bindscroll="{{discovery.scroll}}" bindtouchstart="{{discovery.begin}}">
       <view class="search-discovery-content">
@@ -50,6 +50,18 @@
                 <button wx:elif="{{cuiPromoError}}" class="cui-promo-retry" bindtap="loadCuiPromo">重新加载宣传片</button>
                 <text wx:elif="{{cuiPromoLoading}}" class="cui-promo-status" role="status">正在加载宣传片…</text>
               </view>
+              <view wx:if="{{recommendations.length}}" class="cui-recommendations">
+                <view class="cui-recommendations-title" aria-role="heading">推荐关注</view>
+                <scroll-view class="cui-recommendations-scroll" scroll-x enhanced bounces="{{false}}" show-scrollbar="{{false}}" aria-label="推荐账号">
+                  <view class="cui-recommendations-track">
+                    <view wx:for="{{recommendations}}" wx:key="accountId" class="cui-recommendation">
+                      <button class="cui-recommendation-avatar" data-account-id="{{item.accountId}}" bindtap="openRecommendation" aria-label="查看{{item.nickname}}的主页" hover-class="cui-recommendation-pressed"><image src="{{item.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" aria-hidden="true" /></button>
+                      <text class="cui-recommendation-name">{{item.nickname}}</text>
+                      <button class="cui-recommendation-follow {{item.following ? 'is-following' : ''}}" data-account-id="{{item.accountId}}" bindtap="followRecommendation" disabled="{{item.following}}" aria-label="{{(item.following ? '已关注' : '关注') + item.nickname}}" hover-class="cui-recommendation-pressed">{{item.following ? '已关注' : '关注'}}</button>
+                    </view>
+                  </view>
+                </scroll-view>
+              </view>
               <view class="cui-hotboard">
                 <view wx:if="{{cuiHotWarning}}" class="hot-warning">{{cuiHotWarning}}</view>
                 <view wx:if="{{cuiHotError}}" class="hot-error"><text class="hot-error-text">{{cuiHotError}}</text><view class="hot-retry" bindtap="loadCuiHotboard" aria-role="button">重试</view></view>
@@ -57,9 +69,9 @@
                 <view wx:elif="{{!cuiHotRows.length && !cuiHotError}}" class="hot-empty">今日头条暂无热搜</view>
                 <view class="hot-list"><view wx:for="{{cuiHotRows}}" wx:key="rank" class="hot-item" data-rank="{{item.rank}}" bindtap="searchHotword" aria-role="button"><text class="hot-rank {{item.rank <= 3 ? 'is-top rank-' + item.rank : ''}}">{{item.rank}}</text><text class="hot-title">{{item.title}}</text></view></view>
                 <view wx:if="{{cuiHotHasMore}}" class="hot-more" bindtap="showMoreCuiHotwords" aria-role="button">显示更多<image class="hot-more-icon" src="/images/interface/chevron-down-muted.svg" /></view>
-                <view wx:if="{{cuiHotUpdateText}}" class="hot-updated">榜单更新于 {{cuiHotUpdateText}}{{cuiHotLoading ? ' · 更新中' : ''}}</view>
               </view>
             </view>
+            <view class="board-panel {{boardIndex === 1 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 1 ? boardMinHeight : 0}}px;"></view>
             <view class="board-panel {{boardIndex === hotBoardIndex ? 'is-active' : ''}}" style="min-height:{{boardIndex === hotBoardIndex ? boardMinHeight : 0}}px;">
               <view class="global-trends-banner {{searchActive && boardIndex === hotBoardIndex && !menuOpen ? 'is-animated' : ''}}">
                 <view class="global-trends-art" aria-hidden="true">
@@ -83,9 +95,7 @@
               <view class="hot-list"><view wx:for="{{hotRows}}" wx:key="rank" class="hot-item" data-rank="{{item.rank}}" bindtap="searchHotword" aria-role="button"><text class="hot-rank {{item.rank <= 3 ? 'is-top rank-' + item.rank : ''}}">{{item.rank}}</text><text class="hot-title">{{item.title}}</text></view></view>
               <view wx:if="{{hotHasMore}}" class="hot-more" bindtap="showMoreHotwords" aria-role="button">显示更多<image class="hot-more-icon" src="/images/interface/chevron-down-muted.svg" /></view>
               <view wx:elif="{{hotRows.length}}" class="hot-end">已显示全部热搜</view>
-              <view wx:if="{{hotUpdateText}}" class="hot-updated">榜单更新于 {{hotUpdateText}}{{hotLoading ? ' · 更新中' : ''}}</view>
             </view>
-            <view class="board-panel {{boardIndex === 2 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 2 ? boardMinHeight : 0}}px;"></view>
           </view>
         </view>
       </view>

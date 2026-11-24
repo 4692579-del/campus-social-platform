@@ -305,6 +305,28 @@ test('举报真实保存待处理原因和内容，同人重复提交不重复�
   assert.equal((await f.handle({ action: 'reportSquarePost', postId: id, reason: 'other' }, f.bob)).code, 'POST_NOT_FOUND');
 });
 
+test('用户举报只接受真实登录和可见的他人账号，并按举报人与目标去重', async () => {
+  const f = fixture(); const alice = await f.login(); const bob = await f.login(f.bob);
+  const report = { action: 'reportSquareUser', accountId: alice.accountId, reason: 'spam' };
+  assert.equal((await f.handle(report, f.alice)).code, 'FORBIDDEN');
+  assert.equal((await f.handle(report, f.admin)).code, 'NOT_REGISTERED');
+  assert.equal((await f.handle({ ...report, reason: 'invalid' }, f.bob)).code, 'INVALID_POST');
+  const results = await Promise.all([
+    f.handle({ ...report, reporterId: alice._id, status: 'approved' }, f.bob), f.handle(report, f.bob),
+  ]);
+  assert.ok(results.every(item => item.success));
+  assert.equal(results.filter(item => item.square.alreadyReported).length, 1);
+  assert.equal(f.squareReports.size, 1);
+  const saved = [...f.squareReports.values()][0];
+  assert.equal(saved.targetType, 'user'); assert.equal(saved.reporterId, bob._id);
+  assert.equal(saved.authorId, alice._id); assert.equal(saved.accountId, alice.accountId);
+  assert.equal(saved.reason, 'spam'); assert.equal(saved.status, 'pending');
+  assert.equal(Object.hasOwn(saved, 'openid'), false);
+  f.hooks.beforeTransaction = () => { f.users.get(alice._id).status = 'banned'; };
+  assert.equal((await f.handle(report, f.bob)).code, 'PROFILE_NOT_FOUND');
+  assert.equal(f.squareReports.size, 1);
+});
+
 test('动态分享接口已移除，不再创建分享记录或返回分享计数', async () => {
   const f = fixture(); await f.login();
   const id = (await publish(f)).square.post._id;

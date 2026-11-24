@@ -1,7 +1,7 @@
 const ID = /^p_[a-f0-9]{40}$/;
 // 只读取数据库中的当前成品；不保存客户端传来的引用快照或私有原图路径。
-function createQuoteReader(db, profilesFor, declarations) {
-  return async function quoteViews(rows) {
+function createQuoteReader(db, profilesFor, declarations, excludeBlockedPosts) {
+  return async function quoteViews(rows, viewer) {
     const records = new Map();
     let ids = rows.map(row => row.quotePostId).filter(id => ID.test(id || ''));
     for (let depth = 0; depth < 3 && ids.length; depth++) {
@@ -14,11 +14,13 @@ function createQuoteReader(db, profilesFor, declarations) {
       }
       ids = missing.map(id => records.get(id)?.quotePostId).filter(id => ID.test(id || ''));
     }
-    const authors = await profilesFor([...new Set([...records.values()].filter(Boolean).map(row => row.authorId))]);
+    const visible = await excludeBlockedPosts([...records.values()].filter(Boolean), viewer);
+    const allowed = new Map(visible.map(row => [row._id, row]));
+    const authors = await profilesFor([...new Set(visible.map(row => row.authorId))]);
     function view(id, seen = new Set(), depth = 0) {
       if (!ID.test(id || '')) return null;
       if (depth >= 3 || seen.has(id)) return { _id: id, collapsed: true };
-      const row = records.get(id);
+      const row = allowed.get(id);
       if (!row) return { _id: id, unavailable: true };
       const next = new Set([...seen, id]);
       return { _id: id, author: authors.get(row.authorId), content: row.content || '', images: row.images || [], ...(row.media ? { media: row.media } : {}),

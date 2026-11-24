@@ -15,7 +15,8 @@ test('访客资料严格筛选公开字段，普通未认证用户可互看；�
   f.squarePosts.set(postId(3), { _id: postId(3), authorId: bob._id, scope: 'campus', status: 'published', content: '校园', likeCount: 99, sortKey: '03' });
   const read = identity => f.handle({ action: 'getSquarePublicProfile', accountId: bob.accountId }, identity);
   const result = await read(f.alice); assert.equal(result.success, true, result.message);
-  assert.deepEqual(Object.keys(result.square.profile).sort(), ['accountId', 'nickname', 'avatarFileID', 'coverFileID', 'bio', 'createdAt', 'isVerified', 'postCount', 'receivedLikes'].sort());
+  assert.deepEqual(Object.keys(result.square.profile).sort(), ['accountId', 'nickname', 'avatarFileID', 'coverFileID', 'bio', 'createdAt', 'isVerified', 'postCount', 'receivedLikes', 'blocked'].sort());
+  assert.equal(result.square.profile.blocked, false);
   assert.equal(result.square.profile.postCount, 1); assert.equal(result.square.profile.receivedLikes, 7);
   const opposite = await f.handle({ action: 'getSquarePublicProfile', accountId: alice.accountId }, f.bob); assert.equal(opposite.success, true);
   assert.equal((await f.handle({ action: 'getSquarePublicProfile', accountId: 'bad' }, f.alice)).code, 'INVALID_ACCOUNT_ID');
@@ -121,11 +122,12 @@ function pageFixture(options = {}) {
   const contents = new Map();
   const row = { _id: postId(1), author: { accountId: target.accountId }, content: '对方动态', images: ['photo'], createdAt: '2026-11-20T00:00:00Z' };
   const square = { cachedPublicContent: (id, kind) => contents.get(id + ':' + kind),
+    setBlock: options.setBlock,
     listPublicContent: async (id, kind, args) => { calls.push({ type: kind, id, ...args }); const result = options.list ? await options.list(id, kind, args) : { profileAccountId: id, items: kind === 'posts' ? [row] : [], hasMore: false, nextOffset: 1, allTotal: 2 }; contents.set(id + ':' + kind, result); return result; },
     cachedPost: () => null, cachedOwnFeed() { throw new Error('访客不能查询本人动态缓存'); }, cachedAlbum() { throw new Error('访客不能查询本人相册'); } };
   if (options.content) contents.set(target.accountId + ':posts', options.content);
   const wx = { getWindowInfo: () => ({ windowWidth: 375, windowHeight: 800, statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
-    navigateTo: args => routes.push(args.url), navigateBack: args => routes.push({ back: args.delta }), switchTab: args => routes.push(args.url), showToast() {} };
+    navigateTo: args => routes.push(args.url), navigateBack: args => routes.push({ back: args.delta }), switchTab: args => routes.push(args.url), showToast() {}, ...options.wx };
   const context = { module: { exports: {} }, require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : require('../miniprogram/utils/user-role'), wx };
   vm.runInNewContext(fs.readFileSync('miniprogram/utils/public-profile.js', 'utf8'), context);
   vm.runInNewContext(fs.readFileSync('miniprogram/pages/profile/index.js', 'utf8'), { wx, Page: value => { definition = value; },
@@ -166,6 +168,53 @@ test('后台资料刷新保留已经确认的真实关注统计，不先清空�
   f.page.applyPublicProfile({ ...target, bio: '后台更新的简介' });
   assert.equal(f.page.data.followingCount, 18); assert.equal(f.page.data.followerCount, 36);
   assert.equal(f.page.data.profileFollowing, true);
+});
+
+test('拉黑主页四个标签共享提示，旧列表请求不会恢复内容，取消后重新读取', async () => {
+  let blocked = false, finish;
+  const f = pageFixture({ read: async () => ({ ...target, blocked }), list: () => new Promise(resolve => { finish = resolve; }) });
+  f.page.onLoad({ accountId: target.accountId });
+  const pending = f.page.onShow();
+  while (!finish) await Promise.resolve();
+  blocked = true;
+  f.page.applyPublicProfile({ ...target, blocked });
+  finish({ profileAccountId: target.accountId, items: [{ _id: postId(1), author: { accountId: target.accountId } }], hasMore: false, nextOffset: 1 });
+  await pending;
+  assert.equal(f.page.data.profileBlocked, true);
+  assert.equal(f.page.data.profileUser.accountId, target.accountId);
+  assert.equal(f.page.data.ownPosts.length, 0);
+  const count = f.calls.length;
+  for (const key of ['posts', 'replies', 'reposts', 'album']) await f.page.selectContent({ currentTarget: { dataset: { key } } });
+  assert.equal(f.calls.length, count);
+  const markup = fs.readFileSync('miniprogram/pages/profile/index.wxml', 'utf8');
+  assert.match(markup, /wx:if="{{profileBlocked}}"[\s\S]*?user-block\.svg[\s\S]*?对方已被你拉黑[\s\S]*?wx:else class="profile-panels"/);
+  f.page.applyPublicProfile({ ...target, blocked: false });
+  assert.equal(f.page.data.profileBlocked, false);
+});
+
+test('主页确认拉黑后隐藏内容，菜单可取消拉黑并重新显示动态', async () => {
+  let blocked = false;
+  const writes = [], choices = [];
+  const f = pageFixture({
+    read: async () => ({ ...target, blocked }),
+    setBlock: async (id, value) => { writes.push([id, value]); blocked = value; },
+    wx: {
+      showActionSheet(options) { choices.push(options.itemList[1]); options.success({ tapIndex: 1 }); },
+      showModal(options) { options.success({ confirm: true }); },
+    },
+  });
+  f.page.onLoad({ accountId: target.accountId });
+  await f.page.onShow();
+  assert.equal(f.page.data.ownPosts.length, 1);
+  await f.page.openProfileUserMenu();
+  assert.equal(f.page.data.profileBlocked, true);
+  assert.equal(f.page.data.ownPosts.length, 0);
+  await f.page.openProfileUserMenu();
+  assert.deepEqual(choices, ['拉黑用户', '取消拉黑']);
+  assert.deepEqual(writes, [[target.accountId, true], [target.accountId, false]]);
+  assert.equal(f.page.data.profileBlocked, false);
+  assert.equal(f.page.data.profileFollowing, false);
+  assert.equal(f.page.data.ownPosts.length, 1);
 });
 
 test('访客主页加入日期进入该账号的公开详情，连续点击不重复跳页',()=>{

@@ -51,6 +51,37 @@ test('迟到搜索不能覆盖当前点赞或恢复删除内容，换账号清�
   const late=f.service.searchContent({...q,force:true});f.login({...user,_id:'bob'});finish();await assert.rejects(late,error=>error.code==='SESSION_CHANGED');assert.equal(f.service.cachedSearch(q),null);
 });
 
+test('确认拉黑立刻过滤会话缓存，旧请求不能带回内容，公开 ID 搜索和其他账号不受影响', async () => {
+  const viewer = { ...user, accountId: '12345678' }, target = '87654321';
+  const hidden = post({ author: { accountId: target } });
+  const quote = post({ _id: 'p_' + 'b'.repeat(40), quote: hidden });
+  const ok = square => ({ result: { success: true, square } });
+  let delay = false, finish;
+  const f = client(data => {
+    if (data.action === 'setSquareBlock') return ok({ blocked: true,
+      state: { accountId: target, following: false, version: 2 },
+      profile: { accountId: target, following: false, relationVersion: 2, followingCount: 0, followerCount: 0, version: 2 },
+      viewer: { accountId: viewer.accountId, followingCount: 0, followerCount: 0, version: 2 } });
+    if (data.action === 'searchSquareContent') return ok({ ...data, items: [{ accountId: target }], hasMore: false, nextCursor: '' });
+    const page = ok({ items: [hidden, quote], hasMore: false, nextOffset: 2 });
+    return delay ? new Promise(resolve => { finish = () => resolve(page); }) : page;
+  });
+  f.login(viewer);
+  await f.service.list();
+  delay = true;
+  const stale = f.service.list({ force: true });
+  await f.service.setBlock(target, true);
+  assert.equal(f.service.cachedFeed().items.length, 1);
+  assert.equal(f.service.cachedFeed().items[0].quote.unavailable, true);
+  assert.equal(f.service.cachedPost(hidden._id), null);
+  assert.equal(f.service.cachedPublicContent(target, 'posts'), null);
+  finish(); await assert.rejects(stale, error => error.code === 'BLOCK_CHANGED');
+  assert.equal((await f.service.searchContent({ keyword: target, kind: 'users' })).items[0].accountId, target);
+  f.login({ ...viewer, _id: 'other' }); delay = false;
+  assert.equal(f.service.isBlocked(target), false);
+  assert.equal((await f.service.list()).items.length, 2);
+});
+
 test('真实关注同目标串行合并，旧关系与统计读取不能覆盖新版本，失败不伪造成功', async () => {
   const viewer = { ...user, accountId: '12345678' }, target = '87654321'; let releaseRead, releaseWrite, following = false, version = 0, delay = true;
   const ok = square => ({ result: { success: true, square } });

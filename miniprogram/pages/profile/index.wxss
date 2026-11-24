@@ -29,8 +29,14 @@ page { height: 100%; overflow: hidden; background: #fff; }
 .profile-page .cover-change { position: absolute; right: 28rpx; bottom: 56rpx; display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 0; height: 56rpx; padding: 0 22rpx; margin: 0; border-radius: 30rpx; box-sizing: border-box; background: rgba(20, 29, 40, 0.56); color: #fff; font-size: 22rpx; line-height: 1; white-space: nowrap; }
 .cover-change[disabled] { color: #fff; background: rgba(20, 29, 40, 0.56); opacity: 0.7; }
 .profile-body { position: relative; padding: 1rpx 28rpx 12rpx; background: #fff; border-radius: 32rpx 32rpx 0 0; }
-.profile-avatar { position: relative; display: block; width: 148rpx; height: 148rpx; border: 8rpx solid #fff; border-radius: 50%; background: #f0f2f4; margin-top: -22rpx; margin-left: -4rpx; box-sizing: content-box; }
+.profile-avatar-row { display: flex; align-items: center; justify-content: space-between; margin-top: -22rpx; }
+.profile-avatar { position: relative; display: block; width: 148rpx; height: 148rpx; border: 8rpx solid #fff; border-radius: 50%; background: #f0f2f4; margin-left: -4rpx; box-sizing: content-box; }
 .profile-avatar-photo { display: block; width: 100%; height: 100%; }
+.profile-page .profile-user-menu { display: flex; align-items: center; justify-content: center; flex: 0 0 56rpx; width: 56rpx; height: 56rpx; min-width: 0; margin: 0 -8rpx 0 0; padding: 0; border: 0; background: transparent; }
+.profile-user-menu::after { border: 0; }
+.profile-user-menu image { width: 38rpx; height: 38rpx; }
+.profile-blocked { display: flex; flex-direction: column; align-items: center; gap: 24rpx; padding: 100rpx 28rpx 60rpx; color: #687580; font-size: 28rpx; }
+.profile-blocked image { display: block; width: 112rpx; height: 112rpx; }
 .profile-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 16rpx; margin-top: 20rpx; }
 .nickname { font-size: 43rpx; line-height: 1.35; font-weight: 750; word-break: break-all; }
 .profile-account { margin-top: 8rpx; color: #687580; font-size: 26rpx; line-height: 1.5; }

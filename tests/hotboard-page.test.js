@@ -1,5 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const queryTools=require('../miniprogram/utils/search-query');
+const { loadPostActions } = require('./helpers/post-actions-fixture');
 const flush=async()=>{for(let n=0;n<20;n++)await Promise.resolve();};
 const makeBoard=(type='weibo',count=20)=>({type,updateTime:'2026-11-21T16:24:00.000Z',fetchedAt:100000000,expiresAt:100300000,stale:false,list:Array.from({length:count},(_,index)=>({rank:index+11,title:`仅用于自动测试的词条${index}`}))});
 function clientFixture(read){
@@ -23,14 +24,58 @@ function pageFixture(read, api = {}, pendingIndex = () => null, account = {}){
   const hot={cached:type=>cache.get(type)||null,updateText:()=> '11-22 00:24',load:async (type, loadOptions)=>{calls.push(type);options.push(loadOptions);const result=read?await read(type):makeBoard(type);cache.set(type,result);return result;}};
   const base={data:{},onLoad(){},onShow(){this._visible=true;},onHide(){this._visible=false;},onUnload(){this._visible=false;this._unloaded=true;}};
   const { refresh = require('../miniprogram/pages/search/refresh') } = account;
+  const users = { getCachedUser: () => null, restore: async () => null, searchSessionKey: () => 'viewer:0',
+    getSessionVersion: () => 0, consumeSearchEntry: () => null, getPublicProfile: async () => null, ...account.users };
+  const square = { getFollowStates: async () => [], ...account.square };
+  const wx = { hideKeyboard() {}, navigateTo: value => routes.push(value.url), showToast() {}, ...api };
   vm.runInNewContext(fs.readFileSync('miniprogram/pages/search/index.js','utf8'),{
-    Page:value=>{definition=value;},require:name=>name === './refresh' ? refresh : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('services/square') ? account.square || {} : name.includes('services/hotboard')?hot:name.includes('services/user')?{getCachedUser:()=>null,restore:async()=>null,searchSessionKey:()=> 'viewer:0',consumeSearchEntry:()=>null,...account.users}:name.includes('tab-selection')?{pendingIndex}:name.includes('search-query')?queryTools:()=>base,
-    wx:{hideKeyboard(){},navigateTo:value=>routes.push(value.url),showToast(){},...api},
+    Page:value=>{definition=value;},require:name=>name === './refresh' ? refresh : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('utils/post-actions') ? loadPostActions(users, square, wx) : name.includes('services/square') ? square : name.includes('services/hotboard')?hot:name.includes('services/user')?users:name.includes('tab-selection')?{pendingIndex}:name.includes('search-query')?queryTools:()=>base,
+    wx,
   });
   const page={...definition,data:structuredClone(definition.data),setData(value, done){Object.assign(this.data,value);done?.();}};page.onLoad();
-  const openHotboard = () => page.selectBoardTab({currentTarget:{dataset:{index:1}}});
+  const openHotboard = () => page.selectBoardTab({currentTarget:{dataset:{index:2}}});
   return {page,cache,calls,routes,openHotboard,options};
 }
+
+test('Cui热榜宣传片和词条之间展示固定账号，新登录会话可直接关注并从头像进入主页', async () => {
+  const ids = ['10000001', '19090448', '58732480', '45214114'];
+  const profiles = new Map(), following = new Set(), writes = [];
+  let user = null, version = 0;
+  const f = pageFixture(undefined, {}, () => null, {
+    users: {
+      getCachedUser: () => user, restore: async () => user,
+      getSessionVersion: () => version, searchSessionKey: () => `${user?._id || 'guest'}:${version}`,
+      getCachedPublicProfile: id => profiles.get(id),
+      getPublicProfile: async id => profiles.set(id, { accountId: id, nickname: `测试账号 ${id}` }).get(id),
+    },
+    square: {
+      cachedFollowState: id => ({ following: following.has(id) }),
+      setFollow: async (id, value) => { writes.push([id, value]); following.add(id); },
+    },
+  });
+  f.page.onShow();
+  assert.equal(f.page.data.recommendations.length, 0);
+  user = { _id: 'new-user', accountId: '12345678' }; version++;
+  f.page.applyMenuUser(user);
+  await flush();
+  assert.deepEqual(Array.from(f.page.data.recommendations, row => row.accountId), ids);
+  const event = accountId => ({ currentTarget: { dataset: { accountId } } });
+  await f.page.followRecommendation(event(ids[0]));
+  await f.page.followRecommendation(event(ids[0]));
+  assert.deepEqual(writes, [[ids[0], true]]);
+  assert.equal(f.page.data.recommendations[0].following, true);
+  f.page.openRecommendation(event(ids[1]));
+  assert.deepEqual(f.routes, ['/pages/profile/index?accountId=19090448']);
+  const markup = fs.readFileSync('miniprogram/pages/search/index.wxml', 'utf8');
+  const recommendations = markup.indexOf('class="cui-recommendations"');
+  const hotboard = markup.indexOf('class="cui-hotboard"');
+  const section = markup.slice(recommendations, hotboard);
+  assert.ok(markup.indexOf('class="cui-promo-frame"') < recommendations);
+  assert.ok(recommendations < hotboard);
+  assert.doesNotMatch(markup, /榜单更新于|hot-updated/);
+  assert.match(section, /scroll-x/);
+  assert.doesNotMatch(section, /dismiss|x\.svg/);
+});
 
 test('探索标签的全球热点横幅位于榜单前，探索按钮只导航一次到独立新闻页', async () => {
   const f = pageFixture();
@@ -70,25 +115,43 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   const f = pageFixture(type => deferred ? new Promise(resolve => { complete = resolve; }) : makeBoard(type, 30),
     {}, () => null, { refresh: context.module.exports });
   const frames = [];
-  f.page.selectComponent = () => ({ setState: state => frames.push(state.phase) });
+  f.page.selectComponent = () => ({ setState: state => frames.push(state) });
   f.page.onShow(); f.openHotboard(); await flush();
   f.page.showMoreHotwords();
   const previous = f.page.data.hotRows;
+  frames.length = 0;
   f.page.beginSearchPull();
+  f.page.pullSearch({ detail: { dy: 18 } });
+  assert.equal(f.page.data.searchRefreshVisible, true);
+  assert.equal(frames.at(-1).phase, 'pulling');
+  assert.equal(frames.at(-1).progress, 0.25);
+  f.page.pullSearch({ detail: { dy: 36 } });
+  assert.equal(frames.at(-1).progress, 0.5);
+  assert.deepEqual(f.calls, ['toutiao', 'weibo']);
   f.page.pullSearch({ detail: { dy: 66 } });
   assert.equal(f.page.data.searchRefreshVisible, true);
   f.page.releaseSearchPull();
-  assert.equal(f.page.data.searchRefreshPhase, 'idle');
+  assert.equal(f.page.data.searchRefreshPhase, 'returning');
+  assert.equal(f.page.data.searchRefreshVisible, true);
+  assert.equal(frames.at(-1).progress, 66 / 72);
+  const returnFrame = frames.at(-1);
+  f.page.cancelSearchPull();
+  assert.equal(frames.at(-1), returnFrame);
   f.page.pullSearch({ detail: { dy: 70 } });
+  assert.equal(frames.at(-1), returnFrame);
+  runTimer(returnFrame.duration);
   f.page.onSearchBrandReady();
+  assert.equal(f.page.data.searchRefreshPhase, 'idle');
   assert.equal(f.page.data.searchRefreshVisible, false);
-  assert.deepEqual(frames, ['pulling']);
+  assert.deepEqual(frames.map(frame => frame.phase), ['pulling', 'pulling', 'pulling', 'returning']);
   assert.deepEqual(f.calls, ['toutiao', 'weibo']);
 
   f.page.beginSearchPull();
   f.page.pullSearch({ detail: { dy: 72 } });
   f.page.releaseSearchPull();
   runTimer(300);
+  assert.equal(f.page.data.searchRefreshPhase, 'returning');
+  runTimer(frames.at(-1).duration);
   assert.equal(f.page.data.searchRefreshVisible, false);
 
   deferred = true;
@@ -108,11 +171,11 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   assert.equal(f.page.data.searchRefreshPhase, 'loading');
   runTimer(820);
   assert.equal(f.page.data.searchRefreshPhase, 'refill');
-  assert.equal(f.page.data.hotRows.length, 25);
+  assert.equal(f.page.data.hotRows.length, 20);
   runTimer(600);
   assert.equal(f.page.data.searchRefreshing, false);
   assert.equal(f.page.data.searchRefreshVisible, false);
-  assert.equal(frames.at(-1), 'refill');
+  assert.equal(frames.at(-1).phase, 'refill');
   f.page.pullSearch({ detail: { dy: 72 } });
   assert.equal(f.page.refreshSearch(), undefined);
   assert.equal(f.page.data.searchRefreshVisible, false);
@@ -132,14 +195,19 @@ test('搜索下拉刷新只重新查询当前榜单，保留已有词条并在�
   const scroll = markup.indexOf('<scroll-view class="search-discovery"');
   assert.ok(logo >= 0 && logo < scroll);
   assert.match(markup, /wx:if="{{searchRefreshVisible}}" class="search-refresh-anchor"/);
+  assert.match(markup, /refresher-background="transparent"/);
 });
 test('热榜完整展示原排名，预填和平台切换复用缓存',async()=>{
-  const f=pageFixture();f.cache.set('weibo',makeBoard('weibo',12));f.page.onShow();
-  assert.deepEqual([...f.page.data.boardTabs],['Cui热榜','探索','校园热榜']);
+  const f=pageFixture();f.cache.set('weibo',makeBoard('weibo',8));f.page.onShow();
+  assert.deepEqual([...f.page.data.boardTabs],['Cui热榜','校园热榜','探索']);
   assert.equal(f.page.data.boardIndex,0);assert.deepEqual(f.calls,['toutiao']);
+  f.page.selectBoardTab({currentTarget:{dataset:{index:1}}});
+  assert.equal(f.page.canPullSearch(), false);
+  assert.deepEqual(f.calls,['toutiao']);
   f.openHotboard();assert.equal(f.page.data.hotRows[0].rank,11);
-  assert.equal(f.page.data.hotRows.length,12);assert.equal(f.page.data.hotHasMore,false);
-  await flush();assert.equal(f.page.data.hotRows.length,15);assert.equal(f.page.data.hotHasMore,true);
+  assert.equal(f.page.canPullSearch(), true);
+  assert.equal(f.page.data.hotRows.length,8);assert.equal(f.page.data.hotHasMore,false);
+  await flush();assert.equal(f.page.data.hotRows.length,10);assert.equal(f.page.data.hotHasMore,true);
   await f.page.selectHotPlatform({currentTarget:{dataset:{type:'baidu'}}});assert.equal(f.page.data.hotType,'baidu');
   await f.page.selectHotPlatform({currentTarget:{dataset:{type:'weibo'}}});assert.equal(f.page.data.hotRows[0].rank,11);
 });
@@ -192,17 +260,17 @@ test('搜索页的侧栏使用已登录头像和统计，菜单跳转保留展�
     assert.equal(bar.data.menuOpen, false);
     assert.equal(f.page.data.avatarSource, 'updated-avatar');
     f.page.onShow();
-    assert.equal(f.page.data.boardIndex, 1);
+    assert.equal(f.page.data.boardIndex, 2);
     assert.equal(f.page.data.hotType, 'baidu');
     assert.equal(f.page.data.chromeCompact, true);
   }
 });
-test('初始显示15条，显示更多每次追加10条真实缓存词条，保留原排名和平台进度',async()=>{
+test('初始显示10条，显示更多每次追加10条真实缓存词条，保留原排名和平台进度',async()=>{
   const f=pageFixture(async type=>makeBoard(type,35));f.page.onShow();f.openHotboard();await flush();
-  assert.equal(f.page.data.hotRows.length,15);assert.equal(f.page.data.hotHasMore,true);
-  for(const count of [25,35]){f.page.showMoreHotwords();assert.equal(f.page.data.hotRows.length,count);assert.equal(f.page.data.hotRows[0].rank,11);}
+  assert.equal(f.page.data.hotRows.length,10);assert.equal(f.page.data.hotHasMore,true);
+  for(const count of [20,30,35]){f.page.showMoreHotwords();assert.equal(f.page.data.hotRows.length,count);assert.equal(f.page.data.hotRows[0].rank,11);}
   assert.deepEqual(f.calls,['toutiao','weibo']);assert.equal(f.page.data.hotHasMore,false);f.page.showMoreHotwords();assert.equal(f.page.data.hotRows.length,35);
-  await f.page.selectHotPlatform({currentTarget:{dataset:{type:'baidu'}}});assert.equal(f.page.data.hotRows.length,15);
+  await f.page.selectHotPlatform({currentTarget:{dataset:{type:'baidu'}}});assert.equal(f.page.data.hotRows.length,10);
   await f.page.selectHotPlatform({currentTarget:{dataset:{type:'weibo'}}});assert.equal(f.page.data.hotRows.length,35);
 });
 test('慢响应不会覆盖新平台或隐藏页面，失败保留旧词条且没有缓存时不伪造空榜',async()=>{
@@ -217,7 +285,7 @@ test('慢响应不会覆盖新平台或隐藏页面，失败保留旧词条且�
 });
 test('热搜点击进入现有站内动态搜索并移除作者限定，不打开上游外链',async()=>{
   const f=pageFixture();f.page.onShow();f.page.togglePlatformMenu();await flush();f.page.data.accountId='12345678';
-  assert.equal(f.page.data.boardIndex,1);assert.equal(f.page.data.platformMenuOpen,true);
+  assert.equal(f.page.data.boardIndex,2);assert.equal(f.page.data.platformMenuOpen,true);
   f.page.searchHotword({currentTarget:{dataset:{rank:11}}});assert.equal(f.routes.length,1);
   const query=queryTools.fromOptions({query:f.routes[0].split('?query=')[1]});assert.equal(query.accountId,'');assert.equal(query.keyword,'仅用于自动测试的词条0');
 });
@@ -226,11 +294,13 @@ test('Cui 热榜在宣传片下读取今日头条缓存和真实排名，点击�
   const f=pageFixture(async type=>makeBoard(type,24));
   f.cache.set('toutiao',makeBoard('toutiao',12));
   f.page.onShow();
-  assert.equal(f.page.data.cuiHotRows.length,12);
+  assert.equal(f.page.data.cuiHotRows.length,10);
   await flush();
-  assert.equal(f.page.data.cuiHotRows.length,15);
+  assert.equal(f.page.data.cuiHotRows.length,10);
   assert.equal(f.page.data.cuiHotHasMore,true);
   assert.equal(f.page.data.hotRows.length,0);
+  f.page.showMoreCuiHotwords();
+  assert.equal(f.page.data.cuiHotRows.length,20);
   f.page.showMoreCuiHotwords();
   assert.equal(f.page.data.cuiHotRows.length,24);
   assert.deepEqual(f.calls,['toutiao']);

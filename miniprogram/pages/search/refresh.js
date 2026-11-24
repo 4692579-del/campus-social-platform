@@ -7,7 +7,8 @@ module.exports = {
     canPullSearch() {
       return !this._unloaded && this._visible !== false && this.data.searchActive &&
         !this.data.menuOpen && !this.data.platformMenuOpen && !this.interactionBlocked() &&
-        this.data.boardIndex !== 2 && !this._openingSearchEntry && !this._openingResults && !this._openingCuiPromoPost;
+        (this.data.boardIndex === 0 || this.data.boardIndex === this.data.hotBoardIndex) &&
+        !this._openingSearchEntry && !this._openingResults && !this._openingCuiPromoPost;
     },
     paintSearchBrand(state) {
       this._searchBrand = state;
@@ -15,19 +16,19 @@ module.exports = {
       brand?.setState(state);
     },
     onSearchBrandReady() {
-      if (this.data.searchRefreshVisible) this.paintSearchBrand(this._searchBrand);
+      if (this.data.searchRefreshVisible && this._searchBrand) this.paintSearchBrand(this._searchBrand);
     },
     beginSearchPull() {
       if (!this.canPullSearch() || this.data.searchRefreshing) return;
-      if (this.data.searchRefreshPhase === 'pulling') this.stopSearchRefresh();
+      if (this.data.searchRefreshPhase !== 'idle') this.stopSearchRefresh();
       this._searchPullActive = true;
     },
     pullSearch(event) {
       if (!this._searchPullActive || !this.canPullSearch() || this.data.searchRefreshing) return;
       const progress = clamp((Number(event.detail?.dy) || 0) / THRESHOLD);
       if (!progress && this.data.searchRefreshPhase !== 'pulling') return;
-      // 字标固定在缺口中。可见空间足够后才显示，避免盖住尚未下移的标签栏。
-      patchState(this, { searchRefreshPhase: 'pulling', searchRefreshVisible: progress >= 0.85 });
+      // 字标固定在标签栏后面，原生下拉打开的缺口会逐渐露出字标。
+      patchState(this, { searchRefreshPhase: 'pulling', searchRefreshVisible: true });
       this.paintSearchBrand({ phase: 'pulling', progress });
     },
     releaseSearchPull() {
@@ -50,7 +51,16 @@ module.exports = {
     cancelSearchPull() {
       this._searchPullActive = false;
       if (this.data.searchRefreshPhase !== 'pulling') return;
-      this.stopSearchRefresh();
+      const progress = this._searchBrand.progress;
+      if (!progress) { this.stopSearchRefresh(); return; }
+      clearTimeout(this._searchRefreshTimer);
+      const duration = Math.max(240, Math.round(progress * 440));
+      const returned = { phase: 'returning', progress, duration, startedAt: Date.now() };
+      this.setData({ searchRefreshPhase: 'returning' });
+      this.paintSearchBrand(returned);
+      this._searchRefreshTimer = setTimeout(() => {
+        if (this._searchBrand === returned) this.stopSearchRefresh();
+      }, duration);
     },
     refreshSearch() {
       if (this._searchRefresh) return this._searchRefresh.promise;
@@ -82,8 +92,8 @@ module.exports = {
       this._searchRefreshTimer = null;
       this._searchRefresh = null;
       this._searchPullActive = false;
-      this._searchBrand = { phase: 'idle' };
-      // 先撤掉字标；组件卸载会取消 Canvas 帧，避免结束时切回静态字标。
+      this._searchBrand = null;
+      // 移除字标节点，卸载时停止 Canvas 绘制。
       patchState(this, { searchRefreshPhase: 'idle', searchRefreshing: false, searchRefreshVisible: false });
     },
   },

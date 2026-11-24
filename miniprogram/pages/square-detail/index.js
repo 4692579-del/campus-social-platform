@@ -65,6 +65,11 @@ Page({
     } else this.setData({ user: users.getCachedUser() });
     const cached = this.data.postId && square.cachedPost(this.data.postId);
     if (cached) this.showPost(cached);
+    else if (this.data.posts.length && square.visiblePosts) {
+      const visible = square.visiblePosts(this.data.posts);
+      if (!visible.length) this.setData({ posts: [], unavailable: true });
+      else if (visible[0] !== this.data.posts[0]) this.setData({ posts: visible });
+    }
     return changed;
   },
   showPost(post) {
@@ -118,7 +123,7 @@ Page({
         if (!this._unloaded && this._visible !== false && version !== users.getSessionVersion() && this.syncViewer()) this.loadPost();
         return;
       }
-      if (error.code === 'POST_NOT_FOUND') {
+      if (error.code === 'POST_NOT_FOUND' || error.code === 'USER_BLOCKED') {
         this._translationRequest = null;
         this.setData({ posts: [], unavailable: true, newsTranslation: null, translatingNews: false });
       }

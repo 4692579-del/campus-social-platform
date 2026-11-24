@@ -33,6 +33,44 @@ test('关注拒绝自己、伪造身份、禁用目标和未登录；写入失�
   assert.equal((await send(f, 'setSquareFollow', { accountId: bob.accountId, following: true })).code, 'PROFILE_NOT_FOUND');
 });
 
+test('单向拉黑原子取消关注并屏蔽主页、广场和引用，仍可按公开 ID 搜索', async () => {
+  const f = fixture(), alice = await f.login(), bob = await f.login(f.bob);
+  const accountId = bob.accountId;
+  const row = (n, authorId, extra = {}) => ({ _id: id(n), authorId, scope: 'square', status: 'published',
+    content: '公开内容', createdAt: '2026-11-21', sortKey: String(n).padStart(16, '0') + '_' + id(n), ...extra });
+  f.squarePosts.set(id(1), row(1, bob._id));
+  f.squarePosts.set(id(2), row(2, alice._id, { quotePostId: id(1) }));
+  await send(f, 'setSquareFollow', { accountId, following: true });
+  await send(f, 'setSquareFollow', { accountId: alice.accountId, following: true }, f.bob);
+  assert.equal((await send(f, 'setSquareBlock', { accountId: alice.accountId, blocked: true })).code, 'FOLLOW_SELF');
+  const blocks = await Promise.all(Array.from({ length: 2 }, () => send(f, 'setSquareBlock', { accountId, blocked: true })));
+  assert.ok(blocks.every(result => result.square.blocked && !result.square.state.following && result.square.state.version === 2));
+  assert.equal(f.users.get(alice._id).followingCount, 0);
+  assert.equal(f.users.get(bob._id).followerCount, 0);
+  assert.equal(f.users.get(bob._id).followingCount, 1);
+  assert.equal((await send(f, 'setSquareFollow', { accountId, following: true })).code, 'USER_BLOCKED');
+  assert.equal((await send(f, 'getSquarePublicProfile', { accountId })).square.profile.blocked, true);
+  for (const action of ['listSquarePosts', 'listSquareOwnReplies', 'listSquareAlbum', 'listSquareVideos']) {
+    assert.equal((await send(f, action, { profileAccountId: accountId })).code, 'USER_BLOCKED');
+  }
+  assert.equal((await send(f, 'listSquarePosts', { profileAccountId: accountId, postType: 'quotes' })).code, 'USER_BLOCKED');
+  const feed = (await send(f, 'listSquarePosts', { personalize: false })).square;
+  assert.deepEqual(feed.items.map(post => post._id), [id(2)]);
+  assert.equal(feed.items[0].quote.unavailable, true);
+  assert.equal((await send(f, 'getSquarePost', { postId: id(1) })).code, 'USER_BLOCKED');
+  assert.equal((await send(f, 'listSquareFollowing')).square.items.length, 0);
+  assert.equal((await send(f, 'listSquarePosts', {}, f.bob)).square.items.length, 2);
+  const people = await send(f, 'searchSquareContent', { kind: 'users', keyword: accountId });
+  assert.equal(people.square.items[0].accountId, accountId);
+  const scoped = await send(f, 'searchSquareContent', { kind: 'square', accountId, keyword: '公开' });
+  assert.equal(scoped.square.items.length, 0);
+  const unlocked = await send(f, 'setSquareBlock', { accountId, blocked: false });
+  assert.equal(unlocked.square.state.following, false);
+  assert.equal((await send(f, 'getSquarePublicProfile', { accountId })).square.profile.blocked, false);
+  assert.equal((await send(f, 'listSquarePosts', { profileAccountId: accountId })).square.items.length, 1);
+  assert.equal((await send(f, 'setSquareFollow', { accountId, following: true })).square.state.following, true);
+});
+
 test('关注事务重新校验双方身份；事务内串行读取兼容真实云端', async () => {
   const f = fixture(), alice = await f.login(), bob = await f.login(f.bob); f.hooks.serialTransactionReads = true;
   f.hooks.beforeTransaction = tables => { tables.get('users').get(bob._id).status = 'disabled'; };
