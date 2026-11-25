@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { fixture } = require('./helpers/certification-fixture');
 const { BOT_ID } = require('../cloudfunctions/userService/square-ai');
+const { XIAOCUI_ACCOUNT_ID, XIAOCUI_PROFILE } = require('../cloudfunctions/userService/xiaocui-profile');
 async function setup(options = {}) {
   const f = fixture(options); const user = await f.login(); await f.login(f.bob);
   const published = await f.handle({ action: 'publishSquarePost', post: { scope: 'square', content: '校园食堂今天的饭很好吃', requestId: 'ai-post-request00001',
@@ -20,11 +21,66 @@ test('仅结构化按钮标记触发AI，评论落库后才独立调用模型', 
   const result = await f.process(first.square.reply._id); assert.equal(result.success, true, result.message);
   assert.equal(called, 1); assert.equal(result.square.status, 'done'); assert.equal(result.square.reply.author.nickname, '小萃小萃');
   assert.equal(result.square.reply.author.isAI, true); assert.equal(result.square.reply.author.verified, false);
+  assert.equal(result.square.reply.author.accountId, '');
   assert.equal(result.square.reply.rootId, first.square.reply._id); assert.equal(result.square.root.replyCount, 1);
   assert.equal(result.square.post.replyCount, 2); assert.equal(result.square.target.aiStatus, 'done');
   await f.process(first.square.reply._id); assert.equal(called, 1); assert.equal(f.squareReplyChildren.size, 1);
   const children = await f.handle({ action: 'listSquareReplyChildren', postId: f.id, rootId: first.square.reply._id, personalize: true }, f.alice);
   assert.equal(children.square.items[0].author.isAI, true);
+});
+
+test('小萃绑定真实账号并同步历史与新回复，系统作者的写权限仍独立', async () => {
+  const f = await setup({ generateAI: async () => '真实 AI 回复' });
+  const owner = await f.login(f.bob);
+  f.accountIds.delete(owner.accountId);
+  f.accountIds.set(XIAOCUI_ACCOUNT_ID, { userId: owner._id });
+  Object.assign(f.users.get(owner._id), { accountId: XIAOCUI_ACCOUNT_ID, nickname: '旧昵称', avatarFileID: '' });
+  const root = (await f.send()).square.reply;
+  const ai = (await f.process(root._id)).square.reply;
+  assert.equal(ai.author.accountId, XIAOCUI_ACCOUNT_ID);
+  assert.equal(ai.author.isAI, true);
+  assert.equal(f.squareReplyChildren.get(ai._id).authorId, BOT_ID);
+  const olderId = 'c_' + '1'.repeat(40);
+  f.squareReplyChildren.set(olderId, { ...f.squareReplyChildren.get(ai._id), _id: olderId,
+    sortKey: '0000000000000001_' + olderId, content: '既有 AI 回复' });
+
+  const profile = (await f.handle({ action: 'getSquarePublicProfile', accountId: XIAOCUI_ACCOUNT_ID }, f.alice)).square.profile;
+  assert.equal(profile.nickname, XIAOCUI_PROFILE.nickname);
+  assert.equal(profile.avatarFileID, XIAOCUI_PROFILE.avatarFileID);
+  const search = (await f.handle({ action: 'searchSquareContent', kind: 'users', keyword: '小萃' }, f.alice)).square;
+  assert.equal(search.items[0].accountId, XIAOCUI_ACCOUNT_ID);
+  const edited = await f.handle({ action: 'updateProfile', profile: { ...XIAOCUI_PROFILE, bio: 'AI 简介' } }, f.bob);
+  assert.equal(edited.success, true, edited.message);
+  assert.equal(edited.user.bio, 'AI 简介');
+  assert.equal(edited.user.xiaocuiProfile, true);
+  assert.equal(edited.user.nickname, XIAOCUI_PROFILE.nickname);
+
+  const history = (identity, fields = {}) => f.handle({ action: 'listSquareOwnReplies', ...fields }, identity);
+  for (const result of [await history(f.bob), await history(f.alice, { profileAccountId: XIAOCUI_ACCOUNT_ID })]) {
+    assert.deepEqual(result.square.items.map(item => item._id), [ai._id, olderId]);
+    assert.ok(result.square.items.every(item => item.reply.author.isAI && !item.reply.isOwn));
+  }
+  const own = (await f.handle({ action: 'publishSquareReply', post: { scope: 'square', postId: f.id,
+    content: '账号自己的评论', requestId: 'xiaocui-personal-reply-1' } }, f.bob)).square.reply;
+  for (let n = 2; n <= 22; n++) {
+    const id = 'c_' + n.toString(16).padStart(40, '0');
+    f.squareReplyChildren.set(id, { ...f.squareReplyChildren.get(olderId), _id: id,
+      sortKey: String(n).padStart(16, '0') + '_' + id });
+  }
+  const first = (await history(f.alice, { profileAccountId: XIAOCUI_ACCOUNT_ID })).square;
+  const second = (await history(f.alice, { profileAccountId: XIAOCUI_ACCOUNT_ID, cursor: first.nextCursor })).square;
+  assert.equal(first.hasMore, true);
+  assert.equal(second.hasMore, false);
+  const merged = [...first.items, ...second.items];
+  assert.equal(new Set(merged.map(item => item._id)).size, 24);
+  assert.deepEqual(merged.map(item => item.sortKey), merged.map(item => item.sortKey).sort().reverse());
+  assert.equal(merged.find(item => item._id === own._id).reply.author.isAI, undefined);
+  assert.ok((await history(f.alice, { authorId: BOT_ID })).square.items.every(item => !item.reply.author.isAI));
+  assert.equal((await f.handle({ action: 'deleteSquareReply', postId: f.id, replyId: ai._id }, f.bob)).code, 'FORBIDDEN');
+  f.users.get(owner._id).status = 'disabled';
+  assert.equal((await history(f.alice, { profileAccountId: XIAOCUI_ACCOUNT_ID })).code, 'PROFILE_NOT_FOUND');
+  const children = (await f.handle({ action: 'listSquareReplyChildren', postId: f.id, rootId: root._id }, f.alice)).square.items;
+  assert.ok(children.every(item => item.author.isAI && item.author.accountId === ''));
 });
 
 async function visionSetup(options = {}) {

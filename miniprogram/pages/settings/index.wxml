@@ -1,0 +1,57 @@
+<import src="../../custom-tab-bar/nav-glass.wxml" />
+<view class="settings-page">
+  <view class="settings-header" style="height: {{navHeight}}px;">
+    <view class="settings-nav" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">
+      <button class="settings-back" size="mini" bindtap="back" hover-class="settings-pressed" aria-label="返回">
+        <image src="/images/interface/chevron-left.svg" mode="aspectFit" />
+      </button>
+      <text class="settings-title">液态玻璃</text>
+    </view>
+  </view>
+  <view class="dock-preview-stage" aria-label="底部导航栏预览">
+    <scroll-view class="dock-preview-scroll" scroll-y enhanced show-scrollbar="{{false}}" aria-label="城市图文">
+      <view class="dock-preview-cities">
+        <view wx:for="{{previewCities}}" wx:key="id" class="dock-preview-city">
+          <image class="dock-preview-photo" src="/images/dock-preview/{{item.id}}.jpg" mode="aspectFit"
+            lazy-load="{{index > 0}}" aria-label="{{item.name}}风景" />
+          <view class="dock-preview-caption">
+            <text class="dock-preview-city-name">{{item.name}}</text>
+            <text class="dock-preview-city-description">{{item.description}}</text>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="dock-preview-position"><dock-preview preview-transparency="{{transparency}}" /></view>
+  </view>
+  <view class="dock-settings">
+    <view class="dock-slider">
+      <button class="dock-slider-endpoint" size="mini" data-value="{{maxTransparency}}" bindtap="selectTransparency"
+        hover-class="settings-pressed" aria-label="透明">
+        <view class="dock-slider-icon" aria-hidden="true"></view>
+      </button>
+      <view class="dock-slider-control {{draggingTransparency ? 'is-dragging' : ''}} {{snappedMark >= 0 ? 'is-snapped' : ''}}"
+        style="--dock-slider-position: {{sliderPosition}}%;"
+        catchtouchstart="startTransparencyDrag" catchtouchmove="moveTransparencyDrag"
+        catchtouchend="endTransparencyDrag" catchtouchcancel="cancelTransparencyDrag"
+        aria-role="slider" aria-valuemin="{{minTransparency}}" aria-valuemax="{{maxTransparency}}" aria-valuenow="{{transparency}}"
+        aria-label="{{'底部导航栏透明度 ' + transparency + '%'}}">
+        <view class="dock-slider-track" aria-hidden="true">
+          <view class="dock-slider-fill"></view>
+        </view>
+        <view wx:for="{{sliderMarks}}" wx:key="position" class="dock-slider-mark {{snappedMark === index ? 'is-active' : ''}}"
+          style="left: {{item.position}}%;" aria-hidden="true"></view>
+        <view class="dock-slider-thumb" style="{{thumbGlassStyle}}" data-thumb="{{true}}" aria-hidden="true">
+          <template is="nav-glass-surface" data="{{surfaceClass: 'dock-slider-thumb-glass'}}" />
+          <view class="dock-slider-thumb-rest"></view>
+        </view>
+      </view>
+      <button class="dock-slider-endpoint" size="mini" data-value="{{minTransparency}}" bindtap="selectTransparency"
+        hover-class="settings-pressed" aria-label="色调">
+        <view class="dock-slider-icon is-tinted" aria-hidden="true"></view>
+      </button>
+    </view>
+    <text class="dock-settings-description">“透明”让底栏后的内容更清晰，“色调”可提升底栏图标与背景的对比度。</text>
+    <button class="dock-settings-reset" size="mini" bindtap="resetTransparency" hover-class="settings-pressed"
+      disabled="{{draggingTransparency || transparency === defaultTransparency}}">恢复默认</button>
+  </view>
+</view>

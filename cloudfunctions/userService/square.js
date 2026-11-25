@@ -3,6 +3,7 @@ const { VIDEO_ERRORS } = require('./square-videos');
 const followsModule = require('./square-follows');
 const searchModule = require('./square-search');
 const { BOT_ID, BOT, createSquareAI } = require('./square-ai');
+const { XIAOCUI_ACCOUNT_ID, isXiaocui, profileAppearance } = require('./xiaocui-profile');
 const { messageFor: aiMessageFor } = require('./ai-errors');
 const { createSquarePolisher, POLISH_CODES } = require('./square-polish');
 const { checkUnavailableMessage } = require('./wechat-content-check');
@@ -61,7 +62,7 @@ function commentId(value) {
 }
 const commentTable = id => id.startsWith('c_') ? 'square_reply_children' : 'square_replies';
 function author(user) {
-  return user && user.status === 'active' ? { nickname: user.nickname, avatarFileID: user.avatarFileID || '', accountId: user.accountId || '',
+  return user && user.status === 'active' ? { ...profileAppearance(user), accountId: user.accountId || '',
     verified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
     ...(user.officialVerified === true ? { officialVerified: true } : {}),
     ...(commentsDisabled(user) ? { commentsDisabled: true } : {}) }
@@ -125,8 +126,10 @@ function createSquareService(db, options = {}) {
     if (!current || current.accountId !== owner.accountId || current.status !== 'active' || !['user', 'student', 'admin'].includes(current.role)) fail('PROFILE_NOT_FOUND', '该用户不存在或暂不可查看');
     return current;
   }
-  profileReads.set(BOT_ID, Promise.resolve(BOT));
   async function profilesFor(ids) {
+    if (ids.includes(BOT_ID) && !profileReads.has(BOT_ID)) {
+      profileReads.set(BOT_ID, accounts.find(XIAOCUI_ACCOUNT_ID).then(owner => owner ? { ...BOT, accountId: owner.accountId } : BOT));
+    }
     const missing = [...new Set(ids)].filter(id => !profileReads.has(id));
     for (let start = 0; start < missing.length; start += 20) {
       const batch = missing.slice(start, start + 20);
@@ -253,7 +256,7 @@ function createSquareService(db, options = {}) {
       const verified = author(owner).verified;
       const tracked = Number.isSafeInteger(owner.nicknameChangeCount) && owner.nicknameChangeCount >= 0 && Boolean(owner.nicknameTrackingStartedAt) && typeof owner.nicknameHistoryComplete === 'boolean';
       // 关于此账号单独列出公开字段，不复用本人的资料响应，也不替他人初始化历史。
-      return { accountInfo: { user: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '',
+      return { accountInfo: { user: { accountId: owner.accountId, ...profileAppearance(owner),
         ...joinDateFields(owner), isVerified: verified, schoolName: verified ? owner.schoolName || '' : '',
         ...(owner.officialVerified === true ? { officialVerified: true } : {}) },
         nicknameHistory: { changeCount: tracked ? owner.nicknameChangeCount : null, lastChangedAt: tracked ? owner.nicknameLastChangedAt || null : null,
@@ -265,7 +268,7 @@ function createSquareService(db, options = {}) {
       const [count, likes] = await Promise.all([posts.where(filter).count(), posts.aggregate().match(filter).group({ _id: null, receivedLikes: db.command.aggregate.sum('$likeCount') }).end()]);
       owner = await recheckProfile(owner);
       const blocked = (await blockedAccounts(user, [owner.accountId])).has(owner.accountId);
-      return { profile: { accountId: owner.accountId, nickname: owner.nickname, avatarFileID: owner.avatarFileID || '', coverFileID: owner.coverFileID || '',
+      return { profile: { accountId: owner.accountId, ...profileAppearance(owner), coverFileID: owner.coverFileID || '',
         bio: owner.bio || '', ...joinDateFields(owner), isVerified: author(owner).verified,
         ...(owner.officialVerified === true ? { officialVerified: true } : {}),
         blocked, postCount: count.total, receivedLikes: Math.max(0, likes.list[0] && likes.list[0].receivedLikes || 0) } };
@@ -273,7 +276,11 @@ function createSquareService(db, options = {}) {
     if (action === 'listSquareOwnReplies' || action === 'getSquareReplyContext') {
       const owner = action === 'listSquareOwnReplies' && event.profileAccountId !== undefined ? await profileOwner(event.profileAccountId, user) : null;
       if (owner) await requireVisibleProfile(user, owner.accountId);
-      const result = await history(action, event, user, owner && owner._id);
+      const historyOwner = owner || user;
+      // Include the bot only on its linked account's history, after checking the real binding.
+      const linked = action === 'listSquareOwnReplies' && isXiaocui(historyOwner)
+        && (await accounts.find(XIAOCUI_ACCOUNT_ID))?._id === historyOwner._id;
+      const result = await history(action, event, user, owner?._id, linked ? BOT_ID : null);
       if (owner) { await recheckProfile(owner); await requireVisibleProfile(user, owner.accountId); }
       return result;
     }

@@ -1,6 +1,10 @@
 const tabSelection = require('../utils/tab-selection');
+const { DEFAULT_TRANSPARENCY, glassStyle, readTransparency, observeTransparency } = require('../utils/dock-transparency');
 
 Component({
+  properties: {
+    previewTransparency: { type: Number, value: -1, observer: 'updatePreviewTransparency' },
+  },
   data: {
     authBlocked: false,
     commentsOpen: false,
@@ -12,6 +16,7 @@ Component({
     dockHandoff: false,
     dockScaleFrom: 1,
     glassPress: '',
+    dockGlassStyle: glassStyle(DEFAULT_TRANSPARENCY),
     glassPressedIndex: -1,
     selected: -1,
     litIcons: {},
@@ -42,15 +47,28 @@ Component({
     },
   },
   lifetimes: {
-    attached() { this._indicatorVisible = true; this.syncPageState(); },
-    ready() { this.syncPageState(true); },
+    attached() {
+      if (this.data.previewTransparency >= 0) {
+        this.setData({ selected: 0, litIcons: { 0: true } });
+        this.updatePreviewTransparency(this.data.previewTransparency);
+        return;
+      }
+      this.updateGlassStyle(readTransparency(wx));
+      this._stopObservingTransparency = observeTransparency(value => this.updateGlassStyle(value));
+      this._indicatorVisible = true;
+      this.syncPageState();
+    },
+    ready() { if (!(this.data.previewTransparency >= 0)) this.syncPageState(true); },
     detached() {
+      if (this.data.previewTransparency >= 0) return;
+      this._stopObservingTransparency?.();
       this._indicatorDetached = true; this._glassTouch = null; this.stopIndicator();
       tabSelection.unregister(this._tabOwner, this);
     },
   },
   pageLifetimes: {
     show() {
+      if (this.data.previewTransparency >= 0) return;
       this._indicatorVisible = true;
       this._dockDeparture = null;
       const page = this._tabPageState;
@@ -59,6 +77,7 @@ Component({
       else this.syncPageState(true);
     },
     hide() {
+      if (this.data.previewTransparency >= 0) return;
       this._indicatorVisible = false;
       this._arrivingFlight = null;
       this._tabPageState = null;
@@ -68,6 +87,13 @@ Component({
     },
   },
   methods: {
+    updatePreviewTransparency(value) {
+      if (value >= 0) this.updateGlassStyle(value);
+    },
+    updateGlassStyle(value) {
+      const dockGlassStyle = glassStyle(value);
+      if (this.data.dockGlassStyle !== dockGlassStyle) this.setData({ dockGlassStyle });
+    },
     setDockScrollCompact(compact) {
       if (this._indicatorDetached || this._indicatorVisible === false || this._switching ||
           compact === this.data.compact) return;
@@ -86,7 +112,7 @@ Component({
       }
     },
     pressGlass(event) {
-      if (this._indicatorDetached || this._indicatorVisible === false || this._switching ||
+      if (this.data.previewTransparency >= 0 || this._indicatorDetached || this._indicatorVisible === false || this._switching ||
           this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this.data.menuOpen) return;
       if (event.touches.length !== 1) { this.clearGlassPress(); return; }
       const { glass, index } = event.currentTarget.dataset;
@@ -217,6 +243,7 @@ Component({
       if (page && typeof page.closeMenu === 'function') page.closeMenu();
     },
     openComposer() {
+      if (this.data.previewTransparency >= 0) return;
       this.syncPageState();
       if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this._switching) return;
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }
@@ -239,7 +266,7 @@ Component({
       });
     },
     switchTab(event) {
-      if (this._switching) return;
+      if (this.data.previewTransparency >= 0 || this._switching) return;
       this.syncPageState();
       if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen) return;
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }

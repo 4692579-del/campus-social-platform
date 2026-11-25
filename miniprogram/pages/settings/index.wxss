@@ -1,0 +1,84 @@
+@import "../../custom-tab-bar/nav-glass.wxss";
+
+page { background: #f0f0f4; }
+.settings-page { min-height: 100vh; box-sizing: border-box; padding-bottom: calc(32rpx + env(safe-area-inset-bottom)); color: #171b20; }
+.settings-header { position: relative; }
+.settings-nav { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; }
+.settings-title { font-size: 30rpx; font-weight: 650; }
+.settings-page button::after { border: 0; }
+.settings-nav .settings-back {
+  position: absolute; left: 34rpx; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center; width: 70rpx; height: 70rpx;
+  min-width: 0; margin: 0; padding: 0; box-sizing: border-box; border: 1rpx solid rgba(35, 39, 48, .23);
+  border-radius: 50%; background: rgba(255, 255, 255, .32); line-height: 1;
+  box-shadow: inset 0 2rpx 3rpx #fff, inset 0 -2rpx 4rpx rgba(255, 255, 255, .75), 0 6rpx 18rpx rgba(30, 33, 48, .035);
+}
+.settings-back image { width: 39rpx; height: 39rpx; }
+.settings-pressed { opacity: .55; }
+
+.dock-preview-stage {
+  position: relative; overflow: hidden; margin: 70rpx 34rpx 0; height: 682rpx; height: min(682rpx, 43vh);
+  border-radius: 66rpx; background: #e7e4df;
+}
+.dock-preview-scroll { display: block; height: 100%; }
+.dock-preview-cities { padding: 28rpx 28rpx 144rpx; }
+.dock-preview-photo { display: block; width: 100%; height: 417.33rpx; border-radius: 34rpx; }
+.dock-preview-caption { padding: 34rpx 0 38rpx; color: #1d1c19; }
+.dock-preview-city-name { display: block; font-size: 44rpx; font-weight: 700; line-height: 1.18; }
+.dock-preview-city-description { display: block; margin-top: 12rpx; font-size: 28rpx; line-height: 1.45; }
+.dock-preview-position { position: absolute; z-index: 1; left: 18rpx; right: 18rpx; bottom: -6rpx; pointer-events: none; }
+
+.dock-settings { margin: 62rpx 34rpx 0; }
+.dock-slider {
+  display: flex; align-items: center; gap: 12rpx; height: 88rpx;
+  padding: 0 26rpx; border-radius: 999rpx; background: #fdfdfd;
+}
+.dock-slider .dock-slider-endpoint {
+  flex: 0 0 46rpx; display: flex; align-items: center; justify-content: center; width: 46rpx; height: 68rpx;
+  min-width: 0; margin: 0; padding: 0; overflow: visible; background: transparent; line-height: 1;
+}
+.dock-slider-icon { position: relative; width: 36rpx; height: 30rpx; color: #808181; }
+.dock-slider-icon::before,
+.dock-slider-icon::after { content: ''; position: absolute; width: 26rpx; height: 20rpx; box-sizing: border-box; border: 2rpx solid currentColor; }
+.dock-slider-icon::before { top: 0; left: 0; border-radius: 5rpx; }
+.dock-slider-icon::after { bottom: 0; right: 0; border-radius: 999rpx; }
+.dock-slider-icon.is-tinted::before { background: currentColor; }
+.dock-slider-icon.is-tinted::after { background: currentColor; box-shadow: 0 0 0 2rpx #fdfdfd; }
+.dock-slider-control { position: relative; flex: 1; min-width: 0; height: 100%; touch-action: none; }
+.dock-slider-track {
+  position: absolute; top: 50%; left: 0; right: 0; height: 10rpx; transform: translateY(-50%);
+  border-radius: 999rpx; overflow: hidden; background: #e3e3e5; pointer-events: none;
+}
+.dock-slider-fill { width: var(--dock-slider-position); height: 100%; border-radius: inherit; background: #347ff1; }
+.dock-slider-mark {
+  position: absolute; top: calc(50% + 10rpx); width: 5rpx; height: 5rpx;
+  transform: translateX(-50%); border-radius: 50%; background: #c6c6c8; pointer-events: none;
+}
+.dock-slider-mark.is-active { background: #8c99ae; }
+.dock-slider-thumb {
+  position: absolute; z-index: 1; top: 50%; left: var(--dock-slider-position); width: 64rpx; height: 42rpx;
+  border-radius: 999rpx; transform: translate(-50%, -50%);
+  transition: transform 260ms cubic-bezier(.22, 1.25, .36, 1);
+}
+.dock-slider-thumb-rest {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: #fff; box-shadow: 0 4rpx 18rpx rgba(28, 30, 38, .13);
+  transition: opacity 150ms ease;
+}
+/* Keep the backdrop filter ready under the white cover throughout the press. */
+.dock-slider-thumb-glass .nav-glass-shine { opacity: 0; transition: opacity 150ms ease; }
+.is-dragging .dock-slider-thumb { transform: translate(-50%, -50%) scale(1.55); transition-duration: 215ms; }
+.is-snapped .dock-slider-thumb { transition: transform 215ms cubic-bezier(.22, 1.25, .36, 1), left 90ms ease-out; }
+.is-snapped .dock-slider-fill { transition: width 90ms ease-out; }
+.is-dragging .dock-slider-thumb-rest { opacity: 0; }
+.is-dragging .dock-slider-thumb-glass .nav-glass-shine { opacity: 1; }
+.dock-settings-description { display: block; margin: 14rpx 34rpx 0; color: #73747c; font-size: 23rpx; line-height: 1.38; }
+.dock-settings .dock-settings-reset {
+  display: block; margin: 8rpx 18rpx 0 auto; padding: 0 16rpx; min-height: 56rpx; line-height: 56rpx;
+  background: transparent; color: #356fd0; font-size: 23rpx;
+}
+.dock-settings .dock-settings-reset[disabled] { background: transparent; color: #797b84; }
+@media (prefers-reduced-motion: reduce) {
+  .dock-slider-thumb, .dock-slider-thumb-rest, .dock-slider-thumb-glass .nav-glass-shine,
+  .is-snapped .dock-slider-thumb, .is-snapped .dock-slider-fill { transition: none; }
+}

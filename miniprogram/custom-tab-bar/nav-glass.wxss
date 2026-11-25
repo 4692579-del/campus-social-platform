@@ -27,8 +27,15 @@
 .nav-glass.is-glass-pressed .nav-glass-surface { transform: scale(1.015); }
 .tab-compose-glass.is-glass-pressed .nav-glass-surface { transform: scale(1.06); }
 
-.nav-glass-effect { overflow: hidden; background: rgba(250, 251, 253, .9); }
+.nav-glass-effect,
+.tab-indicator-refraction { display: var(--dock-optics-display, block); }
+.nav-glass-effect {
+  overflow: hidden;
+  background: rgba(250, 251, 253, .9);
+  background: rgba(250, 251, 253, var(--dock-glass-fallback, .9));
+}
 .nav-glass-tint {
+  opacity: var(--dock-glass-strength, 1);
   background: radial-gradient(80% 140% at 50% 45%, rgba(255, 255, 255, .22), transparent),
     linear-gradient(180deg, rgba(91, 101, 117, .105), rgba(255, 255, 255, .16));
 }
@@ -49,7 +56,10 @@
   transition: transform 640ms cubic-bezier(.18, 1.25, .22, 1);
 }
 .tab-indicator-glass.is-lens-pressed { transform: scaleX(1.42) scaleY(1.32); }
-.tab-indicator-refraction { overflow: hidden; }
+.tab-indicator-refraction {
+  overflow: hidden;
+  opacity: var(--dock-glass-strength, 1);
+}
 .tab-indicator-tint {
   background: rgba(104, 112, 126, .16);
   transition: background-color 420ms ease;
@@ -84,12 +94,13 @@
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .nav-glass-effect {
     background: rgba(250, 251, 253, .47);
-    -webkit-backdrop-filter: blur(1.5px) saturate(140%) contrast(1.02);
-    backdrop-filter: blur(1.5px) saturate(140%) contrast(1.02);
+    background: rgba(250, 251, 253, var(--dock-glass-fill, .47));
+    -webkit-backdrop-filter: var(--dock-surface-filter, blur(1.5px) saturate(140%) contrast(1.02));
+    backdrop-filter: var(--dock-surface-filter, blur(1.5px) saturate(140%) contrast(1.02));
   }
   .tab-indicator-refraction {
-    -webkit-backdrop-filter: blur(1.5px) saturate(145%) contrast(1.02);
-    backdrop-filter: blur(1.5px) saturate(145%) contrast(1.02);
+    -webkit-backdrop-filter: var(--dock-lens-filter, blur(1.5px) saturate(145%) contrast(1.02));
+    backdrop-filter: var(--dock-lens-filter, blur(1.5px) saturate(145%) contrast(1.02));
   }
 }
 
@@ -97,7 +108,7 @@
    noise/displacement graph on engines that accept SVG backdrop filters. */
 @supports (backdrop-filter: url("#bottom-tab-liquid-lens")) {
   .tab-indicator-refraction {
-    backdrop-filter: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cfilter%20id%3D%22bottom-tab-liquid-lens%22%20color-interpolation-filters%3D%22sRGB%22%3E%3CfeTurbulence%20type%3D%22fractalNoise%22%20baseFrequency%3D%220.018%200.026%22%20numOctaves%3D%221%22%20seed%3D%2211%22%20result%3D%22lensNoise%22%2F%3E%3CfeDisplacementMap%20in%3D%22SourceGraphic%22%20in2%3D%22lensNoise%22%20scale%3D%2218%22%20xChannelSelector%3D%22R%22%20yChannelSelector%3D%22G%22%2F%3E%3C%2Ffilter%3E%3C%2Fsvg%3E#bottom-tab-liquid-lens") blur(1.5px) saturate(145%) contrast(1.02);
+    backdrop-filter: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cfilter%20id%3D%22bottom-tab-liquid-lens%22%20color-interpolation-filters%3D%22sRGB%22%3E%3CfeTurbulence%20type%3D%22fractalNoise%22%20baseFrequency%3D%220.018%200.026%22%20numOctaves%3D%221%22%20seed%3D%2211%22%20result%3D%22lensNoise%22%2F%3E%3CfeDisplacementMap%20in%3D%22SourceGraphic%22%20in2%3D%22lensNoise%22%20scale%3D%2218%22%20xChannelSelector%3D%22R%22%20yChannelSelector%3D%22G%22%2F%3E%3C%2Ffilter%3E%3C%2Fsvg%3E#bottom-tab-liquid-lens") var(--dock-lens-filter, blur(1.5px) saturate(145%) contrast(1.02));
   }
 }
 

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createTabSelection } = require('../miniprogram/utils/tab-selection');
+const dockTransparency = require('../miniprogram/utils/dock-transparency');
 
 function fixture(options = {}) {
   let definition;
@@ -14,14 +15,18 @@ function fixture(options = {}) {
   const timers = new Map(); let timerSequence = 0;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/custom-tab-bar/index.js'), 'utf8'), {
     Component: value => { definition = value; },
-    require: name => { assert.equal(name, '../utils/tab-selection'); return selection; },
+    require: name => {
+      if (name === '../utils/dock-transparency') return dockTransparency;
+      assert.equal(name, '../utils/tab-selection');
+      return selection;
+    },
     setTimeout: (callback, delay) => { const id = ++timerSequence; timers.set(id, { callback: () => { timers.delete(id); callback(); }, delay }); return id; },
     clearTimeout: id => timers.delete(id),
     getCurrentPages: () => pages,
-    wx: { switchTab: value => { routes.push(value.url); navigation.push(value); if (options.switchTab) options.switchTab(value); else value.complete(); },
+    wx: { getStorageSync: options.getStorageSync, switchTab: value => { routes.push(value.url); navigation.push(value); if (options.switchTab) options.switchTab(value); else value.complete(); },
       showToast: value => toasts.push(value.title), ...(options.nextTick ? { nextTick: options.nextTick } : {}) },
   });
-  const bar = { ...definition.methods, data: structuredClone(definition.data), setData(values, callback) {
+  const bar = { ...definition.methods, data: { ...structuredClone(definition.data), previewTransparency: options.previewTransparency ?? -1 }, setData(values, callback) {
     const before = { ...this.data }; Object.assign(this.data, values);
     if (['authBlocked', 'commentsOpen', 'composerOpen', 'menuOpen'].some(key => before[key] !== this.data[key]))
       definition.observers['authBlocked, commentsOpen, composerOpen, menuOpen'].call(this);
@@ -32,6 +37,54 @@ function fixture(options = {}) {
     show: () => definition.pageLifetimes.show.call(bar), hide: () => definition.pageLifetimes.hide.call(bar),
     detach: () => definition.lifetimes.detached.call(bar) };
 }
+
+test('底栏材质设置在首次挂载及缓存页面同步，预览不参与真实标签切换', () => {
+  let stored = 0;
+  const api = { setStorageSync: (key, value) => { stored = value; } };
+  const source = fixture({ getStorageSync: () => stored });
+  const cached = fixture({ getStorageSync: () => stored, selection: source.selection });
+  const preview = fixture({ previewTransparency: 60, selection: source.selection });
+  source.attach();
+  cached.attach();
+  cached.hide();
+  preview.attach();
+  assert.equal(source.bar.data.dockGlassStyle, dockTransparency.glassStyle(20));
+  assert.equal(preview.bar.data.dockGlassStyle, dockTransparency.glassStyle(60));
+  const previewState = { ...preview.bar.data };
+  preview.bar.switchTab({ currentTarget: { dataset: { index: 3 } } });
+  preview.bar.openComposer();
+  assert.deepEqual(preview.routes, []);
+  dockTransparency.saveTransparency(api, 100);
+  assert.equal(stored, 80);
+  assert.equal(source.bar.data.dockGlassStyle, dockTransparency.glassStyle(80));
+  assert.equal(cached.bar.data.dockGlassStyle, source.bar.data.dockGlassStyle);
+  assert.deepEqual(preview.bar.data, previewState);
+  const fresh = fixture({ getStorageSync: () => stored });
+  fresh.attach();
+  assert.equal(fresh.bar.data.dockGlassStyle, source.bar.data.dockGlassStyle);
+  source.detach();
+  cached.detach();
+  fresh.detach();
+  preview.detach();
+});
+
+test('透明度升高时底栏模糊逐步减弱，最高档停用两层背景采样', () => {
+  const initial = dockTransparency.glassStyle(dockTransparency.DEFAULT_TRANSPARENCY);
+  assert.equal(dockTransparency.readTransparency({ getStorageSync: () => '' }), 50);
+  assert.match(initial, /--dock-glass-fill:0\.500/);
+  assert.match(initial, /--dock-surface-filter:blur\(1\.596px\) saturate\(140\.00%\) contrast\(1\.0200\)/);
+  assert.match(initial, /--dock-lens-filter:blur\(1\.596px\) saturate\(145\.00%\)/);
+  const clearer = dockTransparency.glassStyle(80);
+  assert.match(clearer, /--dock-surface-filter:blur\(0\.638px\)/);
+  assert.match(clearer, /--dock-lens-filter:blur\(0\.638px\)/);
+  assert.match(clearer, /--dock-optics-display:block/);
+  const clear = dockTransparency.glassStyle(100);
+  assert.match(clear, /--dock-glass-fill:0\.000/);
+  assert.match(clear, /--dock-glass-strength:0\.000/);
+  assert.match(clear, /--dock-optics-display:none/);
+  const styles = fs.readFileSync(path.join(__dirname, '../miniprogram/custom-tab-bar/nav-glass.wxss'), 'utf8');
+  assert.match(styles, /\.nav-glass-effect,\s*\.tab-indicator-refraction\s*\{ display: var\(--dock-optics-display, block\)/);
+});
 
 test('玻璃按压只改变材质，移出、取消、遮挡和切页隐藏都清除按压', () => {
   const { bar, routes, attach, hide, show } = fixture();

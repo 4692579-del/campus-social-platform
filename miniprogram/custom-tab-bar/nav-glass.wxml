@@ -1,0 +1,7 @@
+<template name="nav-glass-surface">
+  <view class="nav-glass-surface {{surfaceClass}}" aria-hidden="true">
+    <view class="nav-glass-effect"></view>
+    <view class="nav-glass-tint"></view>
+    <view class="nav-glass-shine"></view>
+  </view>
+</template>

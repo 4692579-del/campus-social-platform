@@ -85,7 +85,7 @@ Page({
   // 使用 form 的最终字段值，兼容微信昵称填写时 input/blur 的触发时机。
   async save(event) {
     if (this.data.loading || this.data.saving || this.data.choosingCover || !this.data.user) return;
-    const nickname = (event.detail.value.nickname || '').trim();
+    const nickname = this.data.user.xiaocuiProfile ? this.data.user.nickname : (event.detail.value.nickname || '').trim();
     const bio = (event.detail.value.bio === undefined ? this.data.bio : event.detail.value.bio).replace(/\r\n?/g, '\n').trim();
     const birthDate = this.data.birthDate;
     if (!nickname || Array.from(nickname).length > 20) {
@@ -105,7 +105,7 @@ Page({
     let uploadedCover = '';
     try {
       let avatarFileID = this.data.avatar;
-      if (avatarFileID && !avatarFileID.startsWith('cloud://')) {
+      if (avatarFileID && !this.data.user.xiaocuiProfile && !avatarFileID.startsWith('cloud://')) {
         const extension = (avatarFileID.match(/\.(png|jpe?g|webp)(?:\?.*)?$/i) || [])[1] || 'jpg';
         const filename = Date.now() + '-' + Math.random().toString(36).slice(2, 10);
         const uploaded = await wx.cloud.uploadFile({

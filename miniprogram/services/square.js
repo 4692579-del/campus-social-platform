@@ -966,6 +966,7 @@ function processAIReply(id, replyId) {
       children.set(key, { ...(previous || { hasMore: true, nextOffset: 0, time: 0 }),
         items: oldestComments([...new Map([...(previous ? previous.items : []), row].map(item => [item._id, item])).values()]) });
       saveComment(row, true);
+      if (result.created && row.author?.isAI && row.author.accountId) historyChanged(true);
       for (const listener of aiListeners) { try { listener({ postId: id, ...result, reply: row }); } catch (error) { /* 页面展示不影响已提交回复。 */ } }
     }
     return result;

@@ -1,4 +1,4 @@
-// 本人的回复时间线。作者只取可信会话，分页使用不可变的发布时间键。
+// 主页回复时间线。作者只取服务端确认的身份，分页使用不可变的发布时间键。
 function createReplyHistory(db, { active, fail, postId, commentId, getPost, getComment, presentComments, profilesFor, excludeBlockedPosts }) {
   const published = row => row && row.status === 'published' && row.scope === 'square';
   async function readIds(table, ids) {
@@ -28,14 +28,18 @@ function createReplyHistory(db, { active, fail, postId, commentId, getPost, getC
     return { _id: row._id, author: view.author, content: view.folded ? '' : Array.from(row.content || '').slice(0, 100).join(''),
       imageCount: view.folded ? 0 : (row.images || []).length, folded: Boolean(view.folded), createdAt: row.createdAt };
   }
-  return async function history(action, event, user, profileAuthorId) {
+  return async function history(action, event, user, profileAuthorId, botAuthorId) {
     active(user);
     if (action === 'listSquareOwnReplies') {
       const cursor = event.cursor === undefined ? '' : event.cursor;
       if (typeof cursor !== 'string' || cursor && !/^\d{16}_[rc]_[a-f0-9]{40}$/.test(cursor)) fail('INVALID_POST', '回复分页参数不正确');
-      const condition = { scope: 'square', status: 'published', authorId: profileAuthorId || user._id, ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
-      const batches = await Promise.all(['square_replies', 'square_reply_children'].map(table =>
-        db.collection(table).where(condition).orderBy('sortKey', 'desc').limit(21).get()));
+      const profileId = profileAuthorId || user._id;
+      const condition = { scope: 'square', status: 'published', ...(cursor ? { sortKey: db.command.lt(cursor) } : {}) };
+      const read = (table, authorId) => db.collection(table).where({ ...condition, authorId }).orderBy('sortKey', 'desc').limit(21).get();
+      const batches = await Promise.all([
+        read('square_replies', profileId), read('square_reply_children', profileId),
+        ...(botAuthorId ? [read('square_reply_children', botAuthorId)] : []),
+      ]);
       const all = batches.flatMap(batch => batch.data).sort((a, b) => b.sortKey.localeCompare(a.sortKey));
       const page = all.slice(0, 20);
       const [posts, context] = await Promise.all([

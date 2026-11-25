@@ -13,7 +13,7 @@
       <button size="mini" class="cover-change" bindtap="chooseCover" disabled="{{saving || choosingCover}}" loading="{{choosingCover}}">{{choosingCover ? '选择中' : '更换封面'}}</button>
     </view>
     <view class="avatar-row">
-      <button size="mini" class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{saving || choosingCover}}" aria-label="更换头像">
+      <button size="mini" class="avatar-picker" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{saving || choosingCover || user.xiaocuiProfile}}" aria-label="更换头像">
         <image class="edit-avatar avatar-outline" src="{{avatar || '/images/avatar.png'}}" mode="aspectFill" />
         <view class="avatar-overlay"><view class="camera-icon"><view class="camera-lens"></view></view><view class="camera-plus">+</view></view>
       </button>
@@ -21,7 +21,7 @@
     <view wx:if="{{error}}" class="cs-error edit-error">{{error}}</view>
     <view class="field-row">
       <view class="field-label">昵称</view>
-      <input class="field-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving}}" placeholder="填写你的昵称" placeholder-class="placeholder" />
+      <input class="field-input" name="nickname" type="nickname" value="{{nickname}}" bindinput="onNicknameChange" bindblur="onNicknameChange" maxlength="40" disabled="{{saving || user.xiaocuiProfile}}" placeholder="填写你的昵称" placeholder-class="placeholder" />
     </view>
     <view class="field-row bio-row">
       <view class="field-label">简介</view>

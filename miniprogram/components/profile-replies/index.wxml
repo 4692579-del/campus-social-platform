@@ -9,7 +9,7 @@
         <view class="history-context-text">{{item.context.unavailable ? '这条上文已删除或不可见' : item.context.folded ? '上文已为你折叠' : item.context.content || (item.context.imageCount ? '图片动态' : '')}}<text wx:if="{{item.context.imageCount}}" class="history-image-count"> [{{item.context.imageCount}}张图片]</text></view>
       </view>
     </view>
-    <view class="history-own-reply"><template is="comment" data="{{row: item.reply, child: false, history: true, historyReadOnly: !!accountId}}" /></view>
+    <view class="history-own-reply"><template is="comment" data="{{row: item.reply, child: false, history: true, historyReadOnly: !!accountId || item.reply.author.isAI}}" /></view>
   </view>
   <view wx:if="{{loading && !items.length}}" class="history-message">正在读取回复…</view>
   <view wx:elif="{{!items.length && !error && !hasMore}}" class="history-empty"><view>{{accountId ? '还没有公开回复' : '你的回复会出现在这里'}}</view><text>{{accountId ? '该用户参与广场讨论后会显示在这里。' : '在动态下参与讨论后，随时回来查看。'}}</text></view>

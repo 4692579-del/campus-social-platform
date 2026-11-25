@@ -367,7 +367,9 @@ Component({
     viewCommentAuthor(event) {
       if (this._dead || this._pageHidden || this.data.sending) return;
       const row = this.findComment(event.currentTarget.dataset.id);
-      if (row && !row.pending && row.author && !row.author.isAI) this.triggerEvent('author', { author: row.author });
+      if (row && !row.pending && row.author && (!row.author.isAI || row.author.accountId)) {
+        this.triggerEvent('author', { author: row.author });
+      }
     },
     async manageComment(event) {
       if (this._commentMenuBusy || this.data.sending || this._dead || this._pageHidden) return;
@@ -377,7 +379,7 @@ Component({
       if (!row || row.pending) return;
       const epoch = this._epoch, version = users.getSessionVersion();
       const valid = () => this.valid(epoch, version) && !this._pageHidden && Boolean(this.findComment(id));
-      const own = row.isOwn === true || Boolean(user.accountId && row.author.accountId === user.accountId);
+      const own = !row.author.isAI && (row.isOwn === true || Boolean(user.accountId && row.author.accountId === user.accountId));
       this._commentMenuBusy = true;
       if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard();
       try {

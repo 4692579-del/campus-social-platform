@@ -1,0 +1,8 @@
+{
+  "navigationStyle": "custom",
+  "navigationBarTitleText": "液态玻璃",
+  "backgroundColor": "#f0f0f4",
+  "usingComponents": {
+    "dock-preview": "/custom-tab-bar/index"
+  }
+}

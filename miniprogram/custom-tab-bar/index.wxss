@@ -1,6 +1,9 @@
 @import "./nav-glass.wxss";
 :host { display: block; }
 .tab-bar-viewport { position: fixed; z-index: 100; left: 0; right: 0; bottom: 0; height: calc(144rpx + constant(safe-area-inset-bottom)); height: calc(144rpx + env(safe-area-inset-bottom)); overflow: hidden; pointer-events: none; }
+.tab-bar-viewport.is-preview { position: relative; z-index: auto; height: 184rpx; }
+.is-preview .tab-dock { bottom: 40rpx; left: 20rpx; right: 20rpx; }
+.is-preview .nav-glass { pointer-events: none; }
 .tab-dock {
   position: absolute;
   left: 40rpx;
@@ -33,7 +36,7 @@
   .tab-dock-scale.dock-scroll-motion { transition: none; }
   .tab-dock-scale.dock-handoff, .tab-dock-scale.dock-grow-a, .tab-dock-scale.dock-grow-b { animation: none; transform: scale(1); }
 }
-.tab-bar { position: relative; flex: 1; min-width: 0; height: 100%; padding: 10rpx; }
+.tab-bar { --tab-inset: 10rpx; position: relative; flex: 1; min-width: 0; height: 100%; padding: var(--tab-inset); }
 .tab-compose-glass { flex: 0 0 104rpx; width: 104rpx; height: 104rpx; border-radius: 50%; }
 .tab-compose-glass .tab-compose-button { position: absolute; z-index: 1; inset: 0; display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 100%; margin: 0; padding: 0; box-sizing: border-box; border: 0; border-radius: 50%; background: transparent; box-shadow: none; line-height: 1; }
 .tab-compose-button::before, .tab-compose-button::after { content: none; display: none; border: 0; }
@@ -43,6 +46,8 @@
 .tab-menu-shade { position: absolute; z-index: 2; inset: 0; background: transparent; opacity: 0; pointer-events: none; transition: opacity 0.26s ease; }
 .menu-open .tab-menu-shade { opacity: 1; pointer-events: auto; }
 .tab-items { position: relative; z-index: 1; display: flex; align-items: center; height: 100%; }
+.tab-indicator-clip { position: absolute; z-index: 1; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.tab-indicator-track { position: absolute; inset: var(--tab-inset); }
 .tab-indicator { position: absolute; top: 0; left: 0; height: 100%; pointer-events: none; transform: translate3d(var(--tab-slide-position, 0%), 0, 0) var(--tab-slide-scale, scale(1)); }
 .tab-indicator.slide-a, .tab-indicator.slide-b {
   animation-duration: var(--tab-slide-duration);

@@ -1,9 +1,11 @@
+const { XIAOCUI_ACCOUNT_ID, XIAOCUI_PROFILE, profileAppearance } = require('./xiaocui-profile');
+
 const ACTION = 'searchSquareContent';
 const CODES = ['INVALID_SEARCH', 'SEARCH_SCOPE_UNAVAILABLE'];
 const accountIdPattern = /^[1-9][0-9]{7}$/;
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function createSearch(db, { active, fail, profileOwner, recheckProfile, present, blockedAccounts, excludeBlockedPosts }) {
-  const person = user => ({ accountId: user.accountId, nickname: user.nickname, avatarFileID: user.avatarFileID || '', bio: user.bio || '',
+  const person = user => ({ accountId: user.accountId, ...profileAppearance(user), bio: user.bio || '',
     isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
     ...(user.officialVerified === true ? { officialVerified: true } : {}) });
   return async (event, viewer) => {
@@ -24,7 +26,11 @@ function createSearch(db, { active, fail, profileOwner, recheckProfile, present,
       if (!term) fail('INVALID_SEARCH', '请输入用户名或ID');
       const regex = db.RegExp({ regexp: escapeRegExp(term), options: 'i' });
       const base = { status: 'active', role: db.command.in(['user', 'student', 'admin']), ...(cursor ? { _id: db.command.lt(cursor) } : {}) };
-      const results = await Promise.all(['nickname', 'accountId'].map(field => db.collection('users').where({ ...base, [field]: regex }).orderBy('_id', 'desc').limit(21).get()));
+      const read = condition => db.collection('users').where({ ...base, ...condition }).orderBy('_id', 'desc').limit(21).get();
+      const results = await Promise.all([
+        read({ nickname: regex }), read({ accountId: regex }),
+        ...(XIAOCUI_PROFILE.nickname.includes(term) ? [read({ accountId: XIAOCUI_ACCOUNT_ID })] : []),
+      ]);
       const all = [...new Map(results.flatMap(result => result.data).map(row => [row._id, row])).values()].sort((a, b) => b._id.localeCompare(a._id));
       const rows = all.slice(0, 20);
       return { ...query, items: rows.filter(row => accountIdPattern.test(row.accountId || '')).map(person), hasMore: all.length > 20,

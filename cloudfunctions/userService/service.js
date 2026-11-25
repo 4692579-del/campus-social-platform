@@ -5,6 +5,7 @@ const { createAccountIdService, isAccountId, ACCOUNT_ID_CODES } = require('./acc
 const { createSquareService, SQUARE_ACTIONS, SQUARE_CODES } = require('./square');
 const { createAIUsage, USAGE_CODES } = require('./ai-usage');
 const { joinDateFields } = require('./profile-join-date');
+const { isXiaocui, profileAppearance, XIAOCUI_PROFILE } = require('./xiaocui-profile');
 
 function fail(code, message) {
   const error = new Error(message);
@@ -22,8 +23,7 @@ function publicProfile(user) {
   return {
     _id: user._id,
     accountId: user.accountId || '',
-    nickname: user.nickname,
-    avatarFileID: user.avatarFileID,
+    ...profileAppearance(user),
     coverFileID: user.coverFileID || '',
     bio: user.bio || '',
     birthDate: user.birthDate || '',
@@ -32,6 +32,7 @@ function publicProfile(user) {
     schoolName: user.schoolName || '',
     certificationStatus: user.certificationStatus,
     ...(user.officialVerified === true ? { officialVerified: true } : {}),
+    ...(isXiaocui(user) ? { xiaocuiProfile: true } : {}),
     role: effectiveRole(user),
   };
 }
@@ -73,7 +74,7 @@ function validateCover(coverFileID, userId, env) {
   return coverFileID;
 }
 
-function validateProfile(profile, userId, env) {
+function validateProfile(profile, userId, env, fixedProfile = false) {
   if (!profile || typeof profile !== 'object' || Array.isArray(profile) ||
       Object.keys(profile).some(key => !['nickname', 'avatarFileID', 'bio', 'birthDate', 'coverFileID'].includes(key))) {
     fail('INVALID_PROFILE', '个人资料字段不正确');
@@ -86,7 +87,7 @@ function validateProfile(profile, userId, env) {
   if (typeof avatarFileID !== 'string' || avatarFileID.length > 512) {
     fail('INVALID_AVATAR', '头像格式不正确，请重新选择');
   }
-  if (avatarFileID) {
+  if (avatarFileID && !(fixedProfile && avatarFileID === XIAOCUI_PROFILE.avatarFileID)) {
     // 只接收本环境、当前用户目录里的图片，拒绝外部 URL 和别人的头像路径。
     const prefix = `cloud://${env}.`;
     const marker = `/avatars/${userId}/`;
@@ -234,15 +235,20 @@ function createUserService(db, options) {
         user = { ...user, coverFileID };
       }
       if (action === 'updateProfile') {
-        const changes = validateProfile(event.profile, id, identity.env);
         await db.runTransaction(async transaction => {
           const ref = transaction.collection('users').doc(id);
           const latest = (await ref.get()).data;
           checkAccount(latest);
+          const fixedProfile = isXiaocui(latest);
+          const changes = validateProfile(event.profile, id, identity.env, fixedProfile);
+          if (fixedProfile) {
+            delete changes.nickname;
+            delete changes.avatarFileID;
+          }
           const now = db.serverDate();
           const history = hasNicknameHistory(latest) ? {} : nicknameBaseline(now);
           // 与事务中最新昵称比较：并发、重试、只换头像/简介均不会虚增次数。
-          if (changes.nickname !== latest.nickname) {
+          if (!fixedProfile && changes.nickname !== latest.nickname) {
             history.nicknameChangeCount = (hasNicknameHistory(latest) ? latest.nicknameChangeCount : 0) + 1;
             history.nicknameLastChangedAt = now;
           }

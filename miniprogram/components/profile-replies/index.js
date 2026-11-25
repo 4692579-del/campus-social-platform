@@ -81,7 +81,10 @@ Component({
     loadMore() { if (this.data.hasMore) return this.load(false, true); },
     retry() { return this.load(true, Boolean(this._failedMore)); },
     entry(event) { return this.data.items.find(item => item._id === event.currentTarget.dataset.id); },
-    viewCommentAuthor(event) { const item = this.entry(event); if (item && this.current() && !this._hidden && !item.reply.author.isAI) this.triggerEvent('author', { author: item.reply.author }); },
+    viewCommentAuthor(event) {
+      const author = this.entry(event)?.reply.author;
+      if (author && (!author.isAI || author.accountId) && this.current() && !this._hidden) this.triggerEvent('author', { author });
+    },
     viewContextAuthor(event) { const item = this.entry(event); if (item && item.context.author && this.current() && !this._hidden) this.triggerEvent('author', { author: item.context.author }); },
     openComment(event) {
       const item = this.entry(event);
@@ -107,7 +110,7 @@ Component({
     async manageComment(event) {
       const item = this.entry(event);
       if (this.data.accountId) return;
-      if (!item || this._menuBusy || !this.current() || this._hidden) return;
+      if (!item || item.reply.author.isAI || this._menuBusy || !this.current() || this._hidden) return;
       const version = this._version;
       this._menuBusy = true;
       try {

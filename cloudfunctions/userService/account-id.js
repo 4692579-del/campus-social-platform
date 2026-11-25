@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { profileAppearance } = require('./xiaocui-profile');
 
 const REGISTRY = 'account_ids';
 const BATCH_SIZE = 20;
@@ -95,7 +96,7 @@ function createAccountIdService(db, options = {}) {
     const user = (await db.collection('users').doc(owner.userId).get()).data;
     if (!boundUser(user) || user.accountId !== accountId || user.status !== 'active' ||
         !['user', 'student', 'admin'].includes(user.role)) return null;
-    return { _id: user._id, accountId, nickname: user.nickname, avatarFileID: user.avatarFileID,
+    return { _id: user._id, accountId, ...profileAppearance(user),
       isVerified: user.role === 'student' && user.certificationStatus === 'approved' && Boolean(user.schoolId),
       ...(user.officialVerified === true ? { officialVerified: true } : {}) };
   }

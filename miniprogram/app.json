@@ -12,6 +12,7 @@
     "pages/profile/index",
     "pages/account-about/index",
     "pages/xiaocui-about/index",
+    "pages/settings/index",
     "pages/edit-profile/index",
     "pages/certification/index",
     "pages/admin/index",
