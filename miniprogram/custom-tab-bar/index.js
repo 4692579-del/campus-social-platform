@@ -248,7 +248,7 @@ Component({
       if (this.data.authBlocked || this.data.commentsOpen || this.data.composerOpen || this._switching) return;
       if (this.data.menuOpen) { this.closeProfileMenu(); return; }
       const pages = getCurrentPages(), page = pages[pages.length - 1];
-      if (!page || !page.data || page._unloaded || page._visible === false || page.data.tabMenuKey) return;
+      if (!page || !page.data || page._unloaded || page._visible === false) return;
       if (typeof page.openComposer === 'function') { page.openComposer(); return; }
       this._switching = true;
       wx.switchTab({

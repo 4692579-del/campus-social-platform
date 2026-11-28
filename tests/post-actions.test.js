@@ -2,8 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
-const { applyPageData } = require('./helpers/post-actions-fixture');
+const { applyPageData, loadPostActions, postMenuAnchor, choosePostMenu } = require('./helpers/post-actions-fixture');
 
 const user = { _id: 'alice', accountId: '12345678' };
 const post = { _id: 'p_' + 'a'.repeat(40), content: '真实动态', isOwn: true, author: { accountId: user.accountId } };
@@ -25,17 +24,14 @@ function fixture(options = {}) {
   };
   const wx = { showActionSheet: args => sheets.push(args), showModal: args => modals.push(args), showToast: args => toasts.push(args.title),
     navigateBack: () => routes.push('back'), switchTab: args => routes.push(args.url) };
-  const context = { module: { exports: {} }, require: name => name.includes('services/user') ? users : name.includes('services/square') ? square : require('../miniprogram/utils/post-view'), wx };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/utils/post-actions.js'), 'utf8'), context);
-  const page = { ...context.module.exports, _visible: true, data: { user: account, posts: [{ ...stored }], ownPosts: [{ ...stored }], feedOffset: 1, postsOffset: 1 },
-    setData(values) { updates.push(values); applyPageData(this.data, values); }, requestLogin() { logins.push(true); } };
+  const page = { ...loadPostActions(users, square, wx), _visible: true, data: { user: account, posts: [{ ...stored }], ownPosts: [{ ...stored }], feedOffset: 1, postsOffset: 1 },
+    setData(values, callback) { updates.push(values); applyPageData(this.data, values); callback?.(); }, requestLogin() { logins.push(true); } };
   return { page, sheets, modals, toasts, deleted, reports, routes, logins, reactionCalls, updates, listeners,
     emitPost(row) { stored = row; for (const listener of listeners) listener(row); },
     switchUser() { account = { _id: 'bob', accountId: '87654321' }; version++; },
   };
 }
-const event = { detail: { id: post._id } };
-const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
+const event = { detail: { id: post._id, anchor: postMenuAnchor } };
 test('引用图标拉起现有发布面板，游客先登录，实时引用数量只更新对应字段', () => {
   const f = fixture(); let source;
   f.page.openComposer = event => { source = event.quotePost; };
@@ -92,45 +88,60 @@ test('可见页面订阅共享点赞结果，离开解除订阅，不覆盖其�
   f.page.stopPostUpdates(); assert.equal(f.listeners.size, 0);
 });
 
-test('自己的动态只有删除选项；取消保留内容，确认后才调用云端并同步列表', async () => {
+test('自己的动态有删除和数据分析入口；确认删除后才调用云端并同步列表', async () => {
   const f = fixture();
   let pending = f.page.managePost(event);
-  assert.deepEqual([...f.sheets[0].itemList], ['删除动态']);
-  f.sheets[0].success({ tapIndex: 0 }); await tick();
+  assert.deepEqual(Array.from(f.page.data.postPopover.options, item => item.label), ['查看数据分析', '删除动态']);
+  const choosing = choosePostMenu(f.page, 'delete');
+  assert.equal(f.page.data.postPopover.closing, true); assert.equal(f.modals.length, 0);
+  await choosing;
   f.modals[0].success({ confirm: false }); await pending;
   assert.equal(f.deleted.length, 0); assert.equal(f.page.data.posts.length, 1);
   pending = f.page.managePost(event);
-  await f.page.managePost(event); assert.equal(f.sheets.length, 2);
-  f.sheets[1].success({ tapIndex: 0 }); await tick();
+  const active = f.page.data.postPopover;
+  await f.page.managePost(event); assert.equal(f.page.data.postPopover, active);
+  await choosePostMenu(f.page, 'delete');
   f.modals[1].success({ confirm: true }); await pending;
   assert.deepEqual(f.deleted, [post._id]);
   assert.equal(f.page.data.posts.length, 0); assert.equal(f.page.data.ownPosts.length, 0);
   assert.equal(f.page.data.feedOffset, 0); assert.equal(f.page.data.postsOffset, 0);
   assert.deepEqual(f.toasts, ['动态已删除']);
+  const placeholder = fixture();
+  const analytics = placeholder.page.managePost(event);
+  await choosePostMenu(placeholder.page, 'analytics');
+  await analytics;
+  assert.deepEqual([placeholder.deleted, placeholder.modals, placeholder.toasts, placeholder.routes], [[], [], [], []]);
 });
 
 test('删除当前评论面板所属动态会关闭面板；云端失败不清理内容或提示成功', async () => {
   const f = fixture(); f.page.data.commentPostId = post._id;
   const pending = f.page.managePost(event);
-  f.sheets[0].success({ tapIndex: 0 }); await tick(); f.modals[0].success({ confirm: true }); await pending;
+  await choosePostMenu(f.page, 'delete'); f.modals[0].success({ confirm: true }); await pending;
   assert.equal(f.page.data.commentPostId, ''); assert.equal(f.routes.length, 0);
   const failed = fixture({ failDelete: true });
   const deleting = failed.page.managePost(event);
-  failed.sheets[0].success({ tapIndex: 0 }); await tick(); failed.modals[0].success({ confirm: true }); await deleting;
+  await choosePostMenu(failed.page, 'delete'); failed.modals[0].success({ confirm: true }); await deleting;
   assert.equal(failed.page.data.posts.length, 1); assert.deepEqual(failed.toasts, ['删除失败']);
 });
 
 test('别人的动态提供举报而非删除，选择原因并确认后真实提交；切账号撤销旧确认', async () => {
   const f = fixture({ post: { isOwn: false, author: { accountId: '87654321' } } });
   const pending = f.page.managePost(event);
-  assert.deepEqual([...f.sheets[0].itemList], ['举报动态']);
-  f.sheets[0].success({ tapIndex: 0 }); await tick();
-  f.sheets[1].success({ tapIndex: 3 }); await tick();
+  assert.deepEqual(Array.from(f.page.data.postPopover.options, item => item.label), ['减少推荐', '举报动态']);
+  await choosePostMenu(f.page, 'report');
+  assert.equal(f.page.data.postPopover.label, '举报原因');
+  await choosePostMenu(f.page, 'abuse');
   f.modals[0].success({ confirm: true }); await pending;
   assert.deepEqual(f.reports, [{ id: post._id, reason: 'abuse' }]); assert.equal(f.deleted.length, 0);
   assert.deepEqual(f.toasts, ['举报已提交']);
+  assert.equal(f.sheets.length, 0);
+  const placeholder = fixture({ post: { isOwn: false, author: { accountId: '87654321' } } });
+  const less = placeholder.page.managePost(event);
+  await choosePostMenu(placeholder.page, 'less');
+  await less;
+  assert.deepEqual([placeholder.reports, placeholder.modals, placeholder.toasts, placeholder.routes], [[], [], [], []]);
   const switched = fixture(); const deleting = switched.page.managePost(event);
-  switched.sheets[0].success({ tapIndex: 0 }); await tick();
+  await choosePostMenu(switched.page, 'delete');
   switched.switchUser(); switched.modals[0].success({ confirm: true }); await deleting;
   assert.equal(switched.deleted.length, 0); assert.equal(switched.toasts.length, 0);
 });

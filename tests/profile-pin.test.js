@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { fixture } = require('./helpers/certification-fixture');
-const { loadPostActions } = require('./helpers/post-actions-fixture');
+const { loadPostActions, applyPageData, postMenuAnchor, choosePostMenu } = require('./helpers/post-actions-fixture');
 const id = n => 'p_' + n.toString(16).padStart(40, '0');
 const pin = (f, target, pinned = true, identity = f.alice) => f.handle({ action: 'setSquareProfilePin', postId: target, pinned }, identity);
 async function seeded(count = 25, options) {
@@ -69,22 +69,23 @@ function menuFixture({ pinnedPostId = '', route = 'pages/profile/index', selecte
   };
   const methods = loadPostActions(users, square, { showActionSheet: args => sheets.push(args), showToast: args => messages.push(args.title) });
   const page = { ...methods, route, data: { user: account, ownPosts: [row], postScope: 'square', selectedContent, pinnedPostId },
+    setData(values, callback) { applyPageData(this.data, values); callback?.(); },
     showOwnPosts(result) { this.data.pinnedPostId = result.pinnedPostId; } };
   return { page, sheets, writes, messages, switchUser() { account = { _id: 'other' }; version++; } };
 }
-const moreEvent = { detail: { id: id(1), profilePosts: true } };
+const moreEvent = { detail: { id: id(1), profilePosts: true, anchor: postMenuAnchor } };
 test('置顶菜单仅限本人主页动态；其他已置顶、首页、引用标签及他人都没有入口', async () => {
   for (const args of [{ pinnedPostId: id(2) }, { route: 'pages/home/index' }, { selectedContent: 'reposts' }, { own: false }]) {
     const f = menuFixture(args), pending = f.page.managePost(moreEvent);
-    assert.equal(f.sheets[0].itemList.length, 1); f.sheets[0].fail({ errMsg: 'cancel' }); await pending;
+    assert.equal(f.page.data.postPopover.options.length, 2); f.page.closePostPopover(true); await pending;
   }
   const f = menuFixture(), pending = f.page.managePost(moreEvent);
-  assert.equal(f.sheets[0].itemList[1], '置顶'); f.sheets[0].success({ tapIndex: 1 }); await pending;
+  assert.equal(f.page.data.postPopover.options.find(option => option.key === 'pin').label, '置顶'); await choosePostMenu(f.page, 'pin'); await pending;
   assert.deepEqual(f.writes, [{ target: id(1), active: true }]); assert.equal(f.page.data.pinnedPostId, id(1));
   const unpinning = f.page.managePost(moreEvent);
-  assert.equal(f.sheets[1].itemList[1], '取消置顶'); f.sheets[1].success({ tapIndex: 1 }); await unpinning;
+  assert.equal(f.page.data.postPopover.options.find(option => option.key === 'pin').label, '取消置顶'); await choosePostMenu(f.page, 'pin'); await unpinning;
   assert.equal(f.page.data.pinnedPostId, '');
   const late = menuFixture(), waiting = late.page.managePost(moreEvent);
-  late.switchUser(); late.sheets[0].success({ tapIndex: 1 }); await waiting;
+  late.switchUser(); await choosePostMenu(late.page, 'pin'); await waiting;
   assert.equal(late.writes.length, 0); assert.equal(late.messages.length, 0);
 });

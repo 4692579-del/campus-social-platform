@@ -30,7 +30,7 @@ function selectFeedVideo(card, file) {
 Component({
   options: { multipleSlots: true },
   properties: { post: Object, viewer: Object, detail: Boolean, likeMotion: Boolean, profilePosts: Boolean, pinned: Boolean, showPin: Boolean, homeFeed: Boolean, feedVideoEnabled: Boolean, followPreview: Object, sevenLinePreview: Boolean, newsTranslation: Object },
-  data: { expanded: false, sevenLineOverflow: null, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, photoFrames: [], photoStrip: false, likeMotionClass: '', feedVideo: null,
+  data: { expanded: false, sevenLineOverflow: null, imageIndex: 0, imageFiles: [], mediaItems: [], galleryWidth: 100, galleryHeight: 471, photoFrames: [], photoStrip: false, likeMotionClass: '', feedVideo: null, avatarPulsing: false, morePulsing: false,
     likeParticleRays: [
       { angle: 0, color: '#b39ad4', accent: '#94c8d1' }, { angle: 51.4, color: '#ad83b3', accent: '#c1a4bf' },
       { angle: 102.9, color: '#a9d2a2', accent: '#86c6bd' }, { angle: 154.3, color: '#d4b275', accent: '#aec58e' },
@@ -48,7 +48,7 @@ Component({
   },
   pageLifetimes: {
     resize() { this.measureSevenLinePreview(); },
-    hide() { this._pageHidden = true; this.clearLikeMotion(); this.disconnectFeedVideo(); },
+    hide() { this._pageHidden = true; this._moreMeasure = null; this.finishAvatarPulse(); this.finishMorePulse(); this.clearLikeMotion(); this.disconnectFeedVideo(); },
     show() {
       this._pageHidden = false;
       if (this._pendingImageLayout) { this._pendingImageLayout = false; this.updateImageLayout(); }
@@ -59,6 +59,8 @@ Component({
   observers: {
     'post._id': function (id) {
       if (this._postId === id) return;
+      this._moreMeasure = null;
+      this.finishMorePulse();
       this.clearLikeMotion();
       this.resetFeedVideo();
       this._postId = id;
@@ -70,6 +72,8 @@ Component({
     },
     'viewer._id': function (id) {
       if (this._likeViewerId === id) return;
+      this._moreMeasure = null;
+      this.finishMorePulse();
       this._likeViewerId = id;
       this.clearLikeMotion();
       this.resetFeedVideo();
@@ -247,7 +251,11 @@ Component({
     },
     avatarMenu() {
       if (!this.data.homeFeed || this.data.detail || this._unloaded || this._pageHidden || this.isOwnAuthor()) return;
+      if (!this.data.avatarPulsing) this.setData({ avatarPulsing: true });
       this.triggerEvent('avatar', { id: this.data.post._id });
+    },
+    finishAvatarPulse() {
+      if (!this._unloaded && this.data.avatarPulsing) this.setData({ avatarPulsing: false });
     },
     getAvatarRect(callback) {
       if (this._unloaded || this._pageHidden || !this.data.homeFeed || this.data.detail || this.isOwnAuthor()) return;
@@ -316,7 +324,20 @@ Component({
       this._likeIntent = this.data.likeMotion && this.data.viewer ? { id: this.data.post._id, from: Boolean(this.data.post.liked), expires: Date.now() + 750 } : null;
       this.triggerEvent('react', { id: this.data.post._id, kind: 'like' });
     },
-    more() { this.triggerEvent('more', { id: this.data.post._id, profilePosts: this.data.profilePosts === true }); },
+    more() {
+      if (this._unloaded || this._pageHidden || this._moreMeasure) return;
+      const id = this.data.post._id, profilePosts = this.data.profilePosts === true;
+      if (!this.data.morePulsing) this.setData({ morePulsing: true });
+      const measure = this._moreMeasure = {};
+      this.createSelectorQuery().select('.post-more').boundingClientRect(anchor => {
+        if (this._moreMeasure !== measure) return;
+        this._moreMeasure = null;
+        if (!this._unloaded && !this._pageHidden && this.data.post._id === id && anchor) this.triggerEvent('more', { id, profilePosts, anchor });
+      }).exec();
+    },
+    finishMorePulse() {
+      if (!this._unloaded && this.data.morePulsing) this.setData({ morePulsing: false });
+    },
     imageChanged(event) {
       const index = event.detail.current, images = this.data.imageFiles;
       if (this._unloaded || this._pageHidden || !Number.isInteger(index) || index < 0 || index >= images.length || index === this.data.imageIndex) return;

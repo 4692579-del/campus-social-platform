@@ -85,7 +85,7 @@ module.exports = {
         }
         this._chromeRestoreUntil = 0;
       }
-      if (this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.interactionBlocked() ||
+      if (this.data.menuOpen || this.data.authorMenu || this.data.commentPostId || this.interactionBlocked() ||
           this.data.pullRefreshing || this.data.nativeRefreshing || this.data.brandRefreshPhase !== 'idle') {
         tracker.reset(top);
         this.revealHomeChrome();

@@ -1,0 +1,11 @@
+.label-indicator {
+  --indicator-front: 180ms cubic-bezier(.22, .67, .35, 1);
+  --indicator-tail: 242ms cubic-bezier(.37, .12, .42, 1) 18ms;
+  position: absolute; z-index: 2; bottom: 0; height: 6rpx; border-radius: 6rpx; background: #4775fa;
+  pointer-events: none; transition: left .26s ease, right .26s ease;
+}
+.label-indicator.moving-right { transition: right var(--indicator-front), left var(--indicator-tail); }
+.label-indicator.moving-left { transition: left var(--indicator-front), right var(--indicator-tail); }
+@media (prefers-reduced-motion: reduce) {
+  .label-indicator, .label-indicator.moving-right, .label-indicator.moving-left { transition: none; }
+}

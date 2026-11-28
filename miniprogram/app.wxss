@@ -1,4 +1,7 @@
 @import "./styles/avatar.wxss";
+@import "./styles/post-popover.wxss";
+@import "./styles/post-removal.wxss";
+@import "./styles/label-indicator.wxss";
 /**app.wxss**/
 .container {
   display: flex;
@@ -50,9 +53,5 @@ page {
 .tab-placeholder-title { font-size: 32rpx; font-weight: 600; margin-bottom: 12rpx; }
 
 /* 首页与个人主页统一的紧凑下拉菜单。 */
-.tab-dropdown { position: absolute; top: calc(100% + 12rpx); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 48rpx); padding: 8rpx; box-sizing: border-box; background: #fff; border: 1rpx solid #edf0f2; border-radius: 20rpx; box-shadow: 0 10rpx 36rpx rgba(25, 36, 56, .14); }
-.tab-dropdown .tab-dropdown-option { display: flex; align-items: center; justify-content: center; width: auto; min-width: 0; height: 72rpx; margin: 0; padding: 0 24rpx; box-sizing: border-box; border: 0; border-radius: 12rpx; background: #fff; color: #30373e; font-size: 28rpx; font-weight: 500; line-height: 1; text-align: center; white-space: nowrap; }
-.tab-dropdown .tab-dropdown-option.active { color: #4775fa; background: #fff; font-weight: 650; }
-.tab-dropdown-option::after { border: 0; }
 .tab-dropdown-chevron { display: block; flex-shrink: 0; width: 24rpx; height: 24rpx; transition: transform .18s ease; }
 .tab-dropdown-chevron.expanded { transform: rotate(180deg); }

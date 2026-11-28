@@ -267,7 +267,7 @@ test('主页加入日期可进入账号页，学校名称已移出主页且新�
   let definition;
   const routes = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
-    Page: value => { definition = value; }, require: name => name.includes('user-role') ? { describeUser } : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : {},
+    Page: value => { definition = value; }, require: name => name.includes('label-indicator') ? require('../miniprogram/utils/label-indicator') : name.includes('post-removal-motion') ? require('../miniprogram/utils/post-removal-motion') : name.includes('user-role') ? { describeUser } : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : {},
     wx: { navigateTo: value => routes.push(value.url) },
   });
   const page = { ...definition, data: { user: null } };

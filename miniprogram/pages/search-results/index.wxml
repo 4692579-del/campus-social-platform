@@ -1,3 +1,4 @@
+<import src="../../templates/post-popover.wxml" />
 <import src="../../templates/login-sheet.wxml" />
 <view class="results-page">
   <view class="results-header" style="padding-top:{{navHeight}}px;">
@@ -8,7 +9,7 @@
     <view class="results-tabs" role="tablist"><view wx:for="{{tabs}}" wx:key="key" class="results-tab {{tabIndex === index ? 'selected' : ''}}" data-index="{{index}}" bindtap="selectTab" aria-role="tab" aria-selected="{{tabIndex === index}}"><text class="results-tab-label">{{item.label}}</text></view><view class="results-indicator" style="{{indicatorStyle}}"></view></view>
   </view>
   <view class="results-viewport"><view class="results-panels" style="left:{{-tabIndex * 100}}%;">
-    <scroll-view class="results-panel" scroll-y="{{tabIndex === 0 && !commentPostId && !composerOpen && !loginSheetOpen}}" data-kind="square" bindscrolltolower="loadMore" lower-threshold="160" enhanced show-scrollbar="{{false}}">
+    <scroll-view class="results-panel" scroll-y="{{tabIndex === 0 && !postPopover && !commentPostId && !composerOpen && !loginSheetOpen}}" data-kind="square" bindscrolltolower="loadMore" lower-threshold="160" enhanced show-scrollbar="{{false}}">
       <view wx:if="{{squareError || queryError}}" class="results-error"><text>{{squareError || queryError}}</text><button wx:if="{{needsLogin}}" bindtap="requestLogin">登录</button><button wx:else bindtap="retry">重试</button></view>
       <view wx:if="{{squareLoading && !posts.length}}" class="results-empty">正在搜索动态…</view>
       <square-post wx:for="{{posts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" like-motion="{{true}}" bind:author="viewAuthorProfile" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
@@ -30,3 +31,4 @@
 <comments-sheet wx:if="{{commentPostId}}" id="active-comments" post-id="{{commentPostId}}" viewer="{{user}}" bind:author="viewAuthorProfile" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 <square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" />
 <unfollow-confirm wx:if="{{unfollowTarget}}" target="{{unfollowTarget}}" closing="{{unfollowClosing}}" busy="{{unfollowBusy}}" bind:cancel="cancelUnfollowPrompt" bind:confirm="confirmUnfollowPrompt" />
+<template is="post-popover" data="{{menu: postPopover, closing: postPopover.closing, label: postPopover.label, options: postPopover.options, kind: 'post'}}" />

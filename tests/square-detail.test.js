@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { loadPostActions, applyPageData } = require('./helpers/post-actions-fixture');
+const { loadPostActions, applyPageData, postMenuAnchor, choosePostMenu } = require('./helpers/post-actions-fixture');
 
 const user = { _id: 'alice', accountId: '12345678', certificationStatus: 'unverified' };
 const id = 'p_' + 'a'.repeat(40);
@@ -44,7 +44,7 @@ function fixture(options = {}) {
   const wx = { getWindowInfo: () => ({ windowHeight: 812, statusBarHeight: 44 }),
     getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }), hideKeyboard() {},
     showToast: args => toasts.push(args.title),
-    showActionSheet: args => args.success({ tapIndex: 0 }), showModal: args => args.success({ confirm: true }),
+    showModal: args => args.success({ confirm: true }),
     navigateBack(args) { routes.push('back'); if (options.failBack) args.fail(); },
     switchTab: args => routes.push(args.url), nextTick: fn => fn() };
   const gateContext = { module: { exports: {} }, require: () => users, wx };
@@ -56,7 +56,7 @@ function fixture(options = {}) {
       name.includes('login-gate') ? gateContext.module.exports : name.includes('post-actions') ? loadPostActions(users, square, wx) : require('../miniprogram/utils/post-view'),
   });
   const page = { ...definition, data: structuredClone(definition.data),
-    setData(values) { updates.push(values); applyPageData(this.data, values); },
+    setData(values, callback) { updates.push(values); applyPageData(this.data, values); callback?.(); },
     selectComponent: () => options.comments || null };
   return { page, calls, routes, toasts, updates, listeners,
     start(postId = id) { page.onLoad({ id: postId }); return page.onShow(); },
@@ -189,7 +189,9 @@ test('未认证账号在详情中点赞立即变红；评论按钮直接聚焦�
 
 test('删除本人的详情后清理正文与评论，不多跳页面；远端不可见也移除缓存展示', async () => {
   const f = fixture({ cached: post }); await f.start();
-  await f.page.managePost({ detail: { id } });
+  const deletion = f.page.managePost({ detail: { id, anchor: postMenuAnchor } });
+  await choosePostMenu(f.page, 'delete');
+  await deletion;
   assert.equal(f.page.data.posts.length, 0); assert.equal(f.calls.at(-1).type, 'delete');
   assert.equal(f.routes.length, 0); assert.equal(f.toasts.at(-1), '动态已删除');
   const missing = fixture({ cached: post, detail: () => { throw Object.assign(new Error('不存在'), { code: 'POST_NOT_FOUND' }); } });

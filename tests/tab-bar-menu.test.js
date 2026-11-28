@@ -250,7 +250,7 @@ test('私信、消息、搜索页面在进入和就绪时恢复正确选中索�
     let definition;
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../miniprogram/pages/${name}/index.js`), 'utf8'), {
       Page: value => { definition = value; },
-      require: name => name === './refresh' ? require('../miniprogram/pages/search/refresh') : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('services/square') ? {} : name.includes('services/hotboard') ? { cached:()=>null, load:async()=>{throw new Error('此测试不联网');} } : name.includes('services/user') ? { getCachedUser: () => null, restore: async () => null, searchSessionKey: () => 'guest:0', consumeSearchEntry: () => null } : name.includes('tab-selection') ? { pendingIndex: () => null } : name.includes('search-query') ? require('../miniprogram/utils/search-query') : require('../miniprogram/utils/secondary-tab-page'),
+      require: name => name.includes('utils/post-actions') ? require('../miniprogram/utils/post-actions') : name.includes('label-indicator') ? require('../miniprogram/utils/label-indicator') : name === './refresh' ? require('../miniprogram/pages/search/refresh') : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('services/square') ? {} : name.includes('services/hotboard') ? { cached:()=>null, load:async()=>{throw new Error('此测试不联网');} } : name.includes('services/user') ? { getCachedUser: () => null, restore: async () => null, searchSessionKey: () => 'guest:0', consumeSearchEntry: () => null } : name.includes('tab-selection') ? { pendingIndex: () => null } : name.includes('search-query') ? require('../miniprogram/utils/search-query') : require('../miniprogram/utils/secondary-tab-page'),
       wx: new Proxy({}, { get(target,key) {
         if (key === 'nextTick') return fn => fn();
         if (name === 'search' && key === 'cloud') return undefined;
@@ -269,7 +269,7 @@ test('右侧发布按钮复用首页面板，登录、评论、发布及菜单�
   const home = { route: 'pages/home/index', data: {}, openComposer() { opened++; }, closeMenu() { closed++; } };
   f.pages.push(home); f.bar.openComposer();
   assert.equal(opened, 1); assert.equal(f.routes.length, 0);
-  for (const data of [{ authChecking: true }, { loginSheetOpen: true }, { commentPostId: 'post' }, { composerOpen: true }, { tabMenuKey: 'square' }]) {
+  for (const data of [{ authChecking: true }, { loginSheetOpen: true }, { commentPostId: 'post' }, { composerOpen: true }]) {
     home.data = data; f.bar.openComposer(); assert.equal(opened, 1);
   }
   home.data = { menuOpen: true }; f.bar.openComposer(); assert.equal(closed, 1); assert.equal(opened, 1);

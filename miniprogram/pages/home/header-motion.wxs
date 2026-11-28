@@ -27,7 +27,7 @@ function scroll(event, owner) {
   var state = owner.getState();
   var dataset = event.instance ? event.instance.getDataset() : event.currentTarget.dataset;
   var key = dataset.feed;
-  if (key !== 'square' && key !== 'campus') return;
+  if (key !== 'square' && key !== 'campus' && key !== 'following') return;
   var positions = state.positions || (state.positions = {});
   positions[key] = event.detail.scrollTop || 0;
   if (state.config && key !== state.config.active) return;

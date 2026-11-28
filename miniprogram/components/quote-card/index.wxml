@@ -2,38 +2,38 @@
   <view class="quote-border" aria-hidden="true"></view>
   <view wx:if="{{removable}}" class="quote-border-corner" aria-hidden="true"></view>
   <view wx:for="{{frames}}" wx:key="_id" class="quote-entry {{index ? 'is-nested' : ''}}" data-id="{{item._id}}" catchtap="open" aria-role="{{removable ? 'region' : 'button'}}" aria-label="{{item.unavailable ? '原动态不可见' : '引用的动态'}}">
-    <view wx:if="{{item.loading || item.unavailable || item.failed || item.collapsed}}" class="quote-placeholder">{{item.loading ? '正在读取原动态…' : item.unavailable ? '原动态已删除或不可见' : item.failed ? '原动态暂时无法读取' : '查看更早的引用 ›'}}</view>
+    <view wx:if="{{item.loading || item.unavailable || item.failed || item.collapsed}}" class="quote-placeholder" data-frame="{{index}}">{{item.loading ? '正在读取原动态…' : item.unavailable ? '原动态已删除或不可见' : item.failed ? '原动态暂时无法读取' : '查看更早的引用 ›'}}</view>
     <block wx:else>
-      <view class="quote-heading"><image class="quote-avatar avatar-outline" src="{{item.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><text class="quote-name">{{item.author.nickname}}</text><image wx:if="{{item.author.verified || item.author.officialVerified}}" class="quote-verified {{item.author.officialVerified ? '' : 'is-student'}}" src="/images/verification/{{item.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{item.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text class="quote-time">{{item.timeText}}</text></view>
-      <text wx:if="{{item.content}}" class="quote-content" user-select>{{item.content}}</text>
-      <view wx:if="{{item.images.length}}" class="quote-media-width" data-frame="{{index}}"><view class="quote-gallery" style="width: {{item.galleryWidth}}%; height: {{item.galleryHeight}}rpx;">
+      <view class="quote-heading"><image class="quote-avatar avatar-outline" src="{{item.author.avatarFileID || '/images/avatar.png'}}" data-frame="{{index}}" mode="aspectFill" /><text class="quote-name" data-frame="{{index}}">{{item.author.nickname}}</text><image wx:if="{{item.author.verified || item.author.officialVerified}}" class="quote-verified {{item.author.officialVerified ? '' : 'is-student'}}" data-frame="{{index}}" src="/images/verification/{{item.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{item.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text class="quote-time" data-frame="{{index}}">{{item.timeText}}</text></view>
+      <text wx:if="{{item.content}}" class="quote-content" data-frame="{{index}}" user-select>{{item.content}}</text>
+      <view wx:if="{{item.images.length}}" class="quote-media-width" data-frame="{{index}}"><view class="quote-gallery {{item.images.length === 1 && item.mediaItems[0].type !== 'video' ? 'sand-media' : ''}}" data-source="{{item.images[0]}}" data-mode="aspectFit" style="width: {{item.galleryWidth}}%; height: {{item.galleryHeight}}rpx;">
         <scroll-view wx:if="{{item.photoStrip}}" class="quote-photo-strip" scroll-x enhanced show-scrollbar="{{false}}" aria-label="原动态照片，左右滑动查看">
           <view class="quote-photo-track">
-            <view wx:for="{{item.images}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="*this" class="quote-slide-image-frame quote-strip-item {{photoIndex ? 'has-gap' : ''}}" style="width: {{item.photoFrames[photoIndex].widthRpx}}rpx; height: {{item.photoFrames[photoIndex].height}}rpx;">
+            <view wx:for="{{item.images}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="*this" class="quote-slide-image-frame quote-strip-item sand-media {{photoIndex ? 'has-gap' : ''}}" data-source="{{file}}" data-mode="aspectFit" style="width: {{item.photoFrames[photoIndex].widthRpx}}rpx; height: {{item.photoFrames[photoIndex].height}}rpx;">
               <media-image class="quote-slide-photo" src="{{file}}" data-frame="{{index}}" data-file="{{file}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
             </view>
           </view>
         </scroll-view>
         <swiper wx:elif="{{item.images.length > 1}}" current="{{item.imageIndex}}" duration="240" next-margin="44rpx" data-frame="{{index}}" bindchange="imageChanged" class="quote-swiper" indicator-dots="{{false}}">
           <swiper-item wx:for="{{item.mediaItems}}" wx:for-item="file" wx:for-index="photoIndex" wx:key="fileID">
-            <view class="quote-photo-frame">
+            <view class="quote-photo-frame {{file.type === 'video' ? 'sand-media' : ''}}" data-source="{{file.poster}}" data-mode="aspectFill">
               <block wx:if="{{file.type === 'video'}}">
                 <media-image wx:if="{{file.poster}}" class="quote-slide-photo" src="{{file.poster}}" mode="aspectFill" lazy-load />
                 <view class="post-play-badge" aria-label="原动态含视频"></view>
               </block>
-              <view wx:else class="quote-slide-image-frame" style="width: {{item.photoFrames[photoIndex].width}}%; height: {{item.photoFrames[photoIndex].height}}rpx;">
+              <view wx:else class="quote-slide-image-frame sand-media" data-source="{{file.fileID}}" data-mode="aspectFit" style="width: {{item.photoFrames[photoIndex].width}}%; height: {{item.photoFrames[photoIndex].height}}rpx;">
                 <media-image class="quote-slide-photo" src="{{file.fileID}}" data-frame="{{index}}" data-file="{{file.fileID}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
               </view>
             </view>
           </swiper-item>
         </swiper>
-        <view wx:elif="{{item.mediaItems[0].type === 'video'}}" class="quote-photo-frame">
+        <view wx:elif="{{item.mediaItems[0].type === 'video'}}" class="quote-photo-frame sand-media" data-source="{{item.mediaItems[0].poster}}" data-mode="aspectFit">
           <media-image wx:if="{{item.mediaItems[0].poster}}" class="quote-slide-photo" src="{{item.mediaItems[0].poster}}" mode="aspectFit" lazy-load />
           <view class="post-play-badge" aria-label="原动态含视频"></view>
         </view>
         <media-image wx:else class="quote-photo" src="{{item.images[0]}}" data-frame="{{index}}" data-file="{{item.images[0]}}" bindload="photoLoaded" mode="aspectFit" lazy-load />
       </view></view>
-      <view wx:if="{{item.declarationText}}" class="quote-declaration"><image class="quote-declaration-icon" src="/images/interface/alert-circle-muted.svg" /><text>{{item.declarationText}}</text></view>
+      <view wx:if="{{item.declarationText}}" class="quote-declaration"><image class="quote-declaration-icon" src="/images/interface/alert-circle-muted.svg" /><text data-frame="{{index}}">{{item.declarationText}}</text></view>
     </block>
   </view>
   <view wx:if="{{removable}}" class="quote-remove {{disabled ? 'is-disabled' : ''}}" catchtap="remove" aria-role="button" aria-disabled="{{disabled}}" aria-label="移除整个引用"><image class="quote-remove-icon" src="/images/interface/x.svg" mode="aspectFit" /></view>

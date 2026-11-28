@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const queryTools=require('../miniprogram/utils/search-query');
-const { loadPostActions } = require('./helpers/post-actions-fixture');
+const { applyPageData, loadPostActions, postMenuAnchor, choosePostMenu } = require('./helpers/post-actions-fixture');
 const flush=async()=>{for(let n=0;n<20;n++)await Promise.resolve();};
 const makeBoard=(type='weibo',count=20)=>({type,updateTime:'2026-11-21T16:24:00.000Z',fetchedAt:100000000,expiresAt:100300000,stale:false,list:Array.from({length:count},(_,index)=>({rank:index+11,title:`仅用于自动测试的词条${index}`}))});
 function clientFixture(read){
@@ -29,10 +29,10 @@ function pageFixture(read, api = {}, pendingIndex = () => null, account = {}){
   const square = { getFollowStates: async () => [], ...account.square };
   const wx = { hideKeyboard() {}, navigateTo: value => routes.push(value.url), showToast() {}, ...api };
   vm.runInNewContext(fs.readFileSync('miniprogram/pages/search/index.js','utf8'),{
-    Page:value=>{definition=value;},require:name=>name === './refresh' ? refresh : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('utils/post-actions') ? loadPostActions(users, square, wx) : name.includes('services/square') ? square : name.includes('services/hotboard')?hot:name.includes('services/user')?users:name.includes('tab-selection')?{pendingIndex}:name.includes('search-query')?queryTools:()=>base,
+    Page:value=>{definition=value;},require:name=> name.includes('label-indicator') ? require('../miniprogram/utils/label-indicator') :name === './refresh' ? refresh : name.includes('utils/account-menu') ? require('../miniprogram/utils/account-menu') : name.includes('utils/tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('utils/post-actions') ? loadPostActions(users, square, wx) : name.includes('services/square') ? square : name.includes('services/hotboard')?hot:name.includes('services/user')?users:name.includes('tab-selection')?{pendingIndex}:name.includes('search-query')?queryTools:()=>base,
     wx,
   });
-  const page={...definition,data:structuredClone(definition.data),setData(value, done){Object.assign(this.data,value);done?.();}};page.onLoad();
+  const page={...definition,data:structuredClone(definition.data),setData(value, done){applyPageData(this.data,value);done?.();}};page.onLoad();
   const openHotboard = () => page.selectBoardTab({currentTarget:{dataset:{index:2}}});
   return {page,cache,calls,routes,openHotboard,options};
 }
@@ -303,10 +303,51 @@ test('慢响应不会覆盖新平台或隐藏页面，失败保留旧词条且�
   const empty=pageFixture(async()=>{throw new Error('云函数未配置');});empty.page.onShow();empty.openHotboard();await flush();assert.equal(empty.page.data.hotRows.length,0);assert.equal(empty.page.data.hotError,'云函数未配置');
 });
 test('热搜点击进入现有站内动态搜索并移除作者限定，不打开上游外链',async()=>{
-  const f=pageFixture();f.page.onShow();f.page.togglePlatformMenu();await flush();f.page.data.accountId='12345678';
-  assert.equal(f.page.data.boardIndex,2);assert.equal(f.page.data.platformMenuOpen,true);
+  const f=pageFixture();f.page.onShow();f.openHotboard();await flush();f.page.data.accountId='12345678';
+  assert.equal(f.page.data.boardIndex,2);
   f.page.searchHotword({currentTarget:{dataset:{rank:11}}});assert.equal(f.routes.length,1);
   const query=queryTools.fromOptions({query:f.routes[0].split('?query=')[1]});assert.equal(query.accountId,'');assert.equal(query.keyword,'仅用于自动测试的词条0');
+});
+
+test('探索平台菜单在蓝条下方居中且右边对齐卡片，隐藏后丢弃迟到测量', async () => {
+  const f = pageFixture();
+  f.page.onShow();
+  let measure;
+  const anchor = { ...postMenuAnchor, left:305, right:329 };
+  const text = { left:267, right:303, width:36 };
+  const indicator = { bottom:196, right:322 };
+  const viewport = { right:375 };
+  const panel = { right:410 };
+  const card = { right:396, width:347 };
+  const bounds = [anchor, text, indicator, viewport, panel, card];
+  f.page.createSelectorQuery = () => ({
+    selectors: [],
+    select(selector) { this.selectors.push(selector); return this; },
+    boundingClientRect() { return this; },
+    exec(callback) { if (this.selectors[0] === '.board-chevron') measure = callback; },
+  });
+  const opening = f.page.togglePlatformMenu();
+  measure(bounds);
+  await flush();
+  assert.equal(f.page.data.boardIndex, 2);
+  assert.equal(f.page.data.postPopover.width, 126);
+  assert.equal(f.page.data.postPopover.originX + f.page.data.postPopover.left, 298);
+  assert.equal(f.page.data.postPopover.left + f.page.data.postPopover.width / 2, 298);
+  assert.equal(f.page.data.postPopover.left + f.page.data.postPopover.width, 361);
+  assert.equal(f.page.data.postPopover.top, indicator.bottom + 6);
+  assert.deepEqual(Array.from(f.page.data.postPopover.options, item => item.key), ['weibo', 'zhihu', 'bilibili', 'baidu']);
+  const choosing = choosePostMenu(f.page, 'baidu', 'platform');
+  assert.equal(f.page.data.postPopover.closing, true);
+  assert.equal(f.page.data.hotType, 'weibo');
+  await choosing;
+  await opening;
+  assert.equal(f.page.data.hotType, 'baidu');
+  assert.equal(f.page.data.postPopover, null);
+  const late = f.page.togglePlatformMenu();
+  f.page.onHide();
+  measure(bounds);
+  await late;
+  assert.equal(f.page.data.postPopover, null);
 });
 
 test('Cui 热榜在宣传片下读取今日头条缓存和真实排名，点击使用站内搜索',async()=>{

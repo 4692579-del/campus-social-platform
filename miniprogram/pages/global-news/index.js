@@ -51,10 +51,11 @@ Page({
       ...(this.commentsUsingNativeMedia() ? {} : { commentPostId: '' }) });
   },
   onUnload() { this.onHide(); this._unloaded = true; },
-  onResize() { nav(this); },
+  onResize() { this.closePostPopover(true); nav(this); },
   syncViewer() {
     const version = users.getSessionVersion();
     if (version === this._sessionVersion) return false;
+    this.closePostPopover(true);
     this._sessionVersion = version;
     this._newsRequest = null;
     this._failedAppend = false;
@@ -106,7 +107,7 @@ Page({
   loadMoreFeed() {
     if (this.data.feedHasMore && !this.data.pullRefreshing && !this.data.feedError && !this.interactionBlocked()) return this.loadFeed(false, true);
   },
-  isSquareFeed() { return true; },
+  canRefreshFeed() { return true; },
   stopBrandBounce() {},
   interactionBlocked() { return Boolean(this.data.commentPostId || this.data.loginSheetOpen || this.data.loginLoading); },
   openComments(event) { this.stopHomeRefresh(); postActions.openComments.call(this, event); },

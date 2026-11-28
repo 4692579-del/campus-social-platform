@@ -7,7 +7,6 @@ page { background: #fff; }
 .home-page { display: flex; flex-direction: column; width: 100%; height: 100vh; box-sizing: border-box; background: #fff; color: #15191d; }
 .home-page { position: relative; left: 0; transition: left 0.26s ease; }
 .home-header { position: absolute; z-index: 150; left: 0; right: 0; top: 0; height: var(--home-header-height); box-sizing: border-box; background: #fff; transform: translateY(0); transition: transform 280ms cubic-bezier(.22,.75,.3,1); }
-.home-header.dropdown-open { z-index: 180; }
 .home-status-cover { position: absolute; z-index: 160; left: 0; right: 0; top: 0; background: #fff; pointer-events: none; }
 /* 不把含有增强滚动及图片轮播的整页长期提升为变换合成层。 */
 .home-shell.menu-open .home-page { left: 66.666667vw; }
@@ -28,30 +27,15 @@ page { background: #fff; }
 /* 滚动节点的位置、高度及头部留白固定，收起标题栏不会额外推移正在拖动的内容。 */
 .home-panels-viewport { position: absolute; left: 0; top: var(--home-safe-top); width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .home-header { transition: none; } }
-.home-panels { position: relative; left: 0; display: flex; width: 200%; height: 100%; transition: left .26s ease; }
-.home-panels.show-campus { left: -100%; }
-.home-feed { flex: 0 0 50%; width: 50%; height: 100%; min-width: 0; min-height: 0; }
+.home-panels { position: relative; display: flex; width: 100%; height: 100%; transition: left .26s ease; }
+.home-feed { flex: 0 0 100%; width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .home-page .home-tab { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 84rpx; margin: 0; padding: 0 8rpx; box-sizing: border-box; border: 0; border-radius: 0; background: #fff; color: #777c88; font-size: 32rpx; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 .home-tab::after { border: 0; }
 .home-page .home-tab.selected { color: #15191d; font-weight: 700; }
 .home-tab-label { position: relative; display: inline-flex; align-items: center; height: 100%; padding-bottom: 8rpx; box-sizing: border-box; }
-.home-tab-indicator { position: absolute; z-index: 2; bottom: 0; height: 6rpx; border-radius: 6rpx; background: #4775fa; pointer-events: none; transition: left .26s ease, width .26s ease; }
 .home-refresh-space { width: 100%; height: 72px; background: #fff; pointer-events: none; }
 .home-page .empty-publish { display: inline-flex; align-items: center; justify-content: center; height: 72rpx; margin: 34rpx 0 0; padding: 0 32rpx; border: 0; border-radius: 18rpx; background: #4775fa; color: #fff; font-size: 28rpx; font-weight: 600; line-height: 1; }
 
 .home-tab-group { position: relative; flex: 1 1 0; min-width: 0; }
-.home-tab-group .tab-dropdown { width: 150rpx; }
-.home-tabs.dropdown-open { z-index: 180; }
-.home-dropdown-backdrop { position: fixed; z-index: 170; inset: 0; background: transparent; }
-.home-author-layer { position: fixed; z-index: 190; inset: 0; }
-.home-author-backdrop { position: absolute; inset: 0; background: transparent; }
-.home-author-menu { position: absolute; padding: 8rpx; box-sizing: border-box; background: #fff; border: 1rpx solid #edf0f2; border-radius: 20rpx; box-shadow: 0 10rpx 36rpx rgba(25, 36, 56, .14); }
-.home-author-menu .home-author-option { display: flex; align-items: center; gap: 16rpx; width: 100%; min-width: 0; height: 72rpx; margin: 0; padding: 0 20rpx; box-sizing: border-box; border: 0; border-radius: 12rpx; background: #fff; color: #30373e; font-size: 28rpx; font-weight: 500; line-height: 1; white-space: nowrap; }
-.home-author-option::after { border: 0; }
-.home-author-option image { width: 30rpx; height: 30rpx; flex-shrink: 0; }
-.home-author-menu .home-author-pressed { background: #f4f6f9; }
-
-.home-tab-arrow { display: flex; align-items: center; justify-content: center; align-self: stretch; width: 48rpx; margin-right: -12rpx; }
-
 .following-more { margin:18rpx auto 28rpx; padding:12rpx 28rpx; background:transparent; color:#687580; font-size:25rpx; line-height:1.5; }
 .following-more::after { border:0; }

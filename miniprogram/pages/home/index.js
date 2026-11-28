@@ -7,14 +7,27 @@ const postActions = require('../../utils/post-actions');
 const homeRefresh = require('../../utils/home-refresh');
 const { readTabLayout, patchState } = require('../../utils/tab-page-layout');
 const homeScrollChrome = require('../../utils/home-scroll-chrome');
+const postRemovalMotion = require('../../utils/post-removal-motion');
+const { CLOSE_DURATION, popoverLayout } = require('../../utils/post-popover');
 const DEFAULT_AVATAR = '/images/avatar.png';
 const CUI_WELCOME_POST_ID = 'p_1efff1a54dbe48e2e8e6ceb309fc2f56bde1a7e6';
+const TAB_INDICATOR_OVERHANG = 8; // rpx on each side of the label
+const HOME_TABS = [
+  { key: 'square', label: '动态广场' },
+  { key: 'campus', label: '校园圈' },
+  { key: 'following', label: '关注' },
+];
+const FEED_FIELDS = {
+  square: { posts: 'posts', loading: 'feedLoading', error: 'feedError', more: 'feedHasMore', position: 'feedOffset', appending: 'feedMoreLoading' },
+  following: { posts: 'followingPosts', loading: 'followingLoading', error: 'followingError', more: 'followingHasMore', position: 'followingCursor', appending: 'followingMoreLoading' },
+};
 
 Page({
   ...accountMenuRoutes(wx),
   ...postActions,
   ...homeRefresh,
   ...homeScrollChrome.methods,
+  ...postRemovalMotion,
   data: {
     followByAccount: {}, followKnown: false, profileFollowing: false, followBusy: false, followError: '',
     ...homeScrollChrome.data,
@@ -24,15 +37,13 @@ Page({
     authChecking: false, loginSheetOpen: false, menuInstant: false,
     navTop: 28, navButtonHeight: 32, navHeight: 72, membershipOpen: false,
     brandRefreshPhase: 'idle', nativeRefreshing: false, refreshThreshold: 72,
-    brandBouncing: false, squareTopTarget: '', campusTopTarget: '',
+    brandBouncing: false, topTargets: { square: '', campus: '', following: '' },
     menuLikeCount: '—', followerCount: '—', followingCount: '—', menuItems, utilityMenuItems,
-    activeTab: 'square', tabMenuKey: '', authorMenu: null, followPreviews: {}, defaultFollowPreview: { followed: false }, unfollowTarget: null, unfollowClosing: false, unfollowBusy: false, tabFilters: { square: 'square', campus: 'campus' }, commentPostId: '',
-    tabIndicatorLeft: 43.75, tabIndicatorWidth: 85,
+    activeTab: 'square', activeTabIndex: 0, authorMenu: null, followPreviews: {}, defaultFollowPreview: { followed: false }, followingPreview: { followed: true, phase: 'followed' }, unfollowTarget: null, unfollowClosing: false, unfollowBusy: false, commentPostId: '',
+    authorMenuExpanded: false, postRemoval: null, tabIndicatorLeft: 22.5, tabIndicatorWidth: 72, tabIndicatorDirection: '',
     posts: [], cuiWelcomePostId: CUI_WELCOME_POST_ID, feedLoading: false, feedError: '', feedHasMore: false, feedOffset: 0, feedMoreLoading: false, pullRefreshing: false, skeletons: [1, 2, 3],
-    tabs: [
-      { key: 'square', label: '动态广场', options: [{ key: 'square', label: '推荐' }, { key: 'following', label: '关注' }] },
-      { key: 'campus', label: '校园圈', options: [{ key: 'campus', label: '推荐' }, { key: 'following', label: '关注' }] },
-    ],
+    followingPosts: [], followingLoading: false, followingError: '', followingHasMore: false, followingCursor: '', followingMoreLoading: false,
+    tabs: HOME_TABS,
   },
   onLoad() {
     const { windowWidth, ...layout } = readTabLayout(wx);
@@ -54,14 +65,14 @@ Page({
     this._viewVersion = (this._viewVersion || 0) + 1;
     this._menuNavigating = false;
     // 返回时直接呈现首页，离开时保留的菜单不再播放收起动画。
-    patchState(this, { menuInstant: true, tabMenuKey: '' });
+    patchState(this, { menuInstant: true });
     // 先同步当前账号及头像，再露出首页，避免显示上一账号的图片。
     const account = this.refreshUser(false);
     patchState(this, { menuOpen: false });
-    if (square.consumePublication()) this.setData({ activeTab: 'square', ...this.tabIndicatorState('square'), tabFilters: { ...this.data.tabFilters, square: 'square' } });
+    if (square.consumePublication()) this.setHomeTab('square');
     this.syncNavigation();
     if (!this._tabAnchors) this.measureHomeTabs();
-    if (this.isSquareFeed()) this.loadFeed(false);
+    if (this.isPostFeed()) this.loadFeed(false);
     return account;
   },
   onHide() {
@@ -73,18 +84,19 @@ Page({
     if (bar) patchState(bar, { composerOpen: false });
     this.stopPostUpdates();
     this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
-    this.closeTabMenu();
+    this.closeAuthorMenu();
     if (this.data.commentPostId && !this.commentsUsingNativeMedia()) this.closeComments();
     this.stopHomeRefresh();
     this._visible = false;
+    this.finishPostRemoval();
     this._refreshing = false;
-    this._feedBusy = false;
-    this._feedPromise = null;
+    this._feedRequests = {};
     this._viewVersion = (this._viewVersion || 0) + 1;
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     if (!this._menuNavigating) this.closeMenu();
     this._openAfterRestore = false;
-    patchState(this, { loading: false, confirmingLogout: false, authChecking: false, loginSheetOpen: false });
+    patchState(this, { loading: false, confirmingLogout: false, authChecking: false, loginSheetOpen: false,
+      feedLoading: false, feedMoreLoading: false, followingLoading: false, followingMoreLoading: false });
     this.setAuthBlocked(false);
   },
   onUnload() {
@@ -95,10 +107,11 @@ Page({
     if (bar) bar.setData({ composerOpen: false });
     this.stopPostUpdates();
     this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
-    this.closeTabMenu();
+    this.closeAuthorMenu();
     this.closeComments();
     this.stopHomeRefresh();
     this._unloaded = true;
+    this.finishPostRemoval();
     this._visible = false;
     this._viewVersion = (this._viewVersion || 0) + 1;
     this.setMenuTabBarOpen(false);
@@ -107,9 +120,9 @@ Page({
   onReady() { this.syncNavigation(); this.measureHomeTabs(); },
   openComments(event) { this.closeAuthorMenu(); this.revealHomeChrome(); this.stopHomeRefresh(); postActions.openComments.call(this, event); },
   backToFeedTop() {
-    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId || this.data.brandRefreshPhase !== 'idle') return;
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId || this.data.brandRefreshPhase !== 'idle') return;
     this.revealHomeChrome();
-    const tab = this.data.activeTab, key = tab === 'campus' ? 'campusTopTarget' : 'squareTopTarget';
+    const tab = this.data.activeTab, key = `topTargets.${tab}`;
     const sequence = this._brandScrollSequence = (this._brandScrollSequence || 0) + 1;
     if (!this.data.brandBouncing) {
       this.setData({ brandBouncing: true });
@@ -119,7 +132,7 @@ Page({
     this.setData({ [key]: '' }, () => {
       const scroll = () => {
         if (this._unloaded || this._visible === false || sequence !== this._brandScrollSequence || this.data.activeTab !== tab ||
-          this.interactionBlocked() || this.data.menuOpen || this.data.tabMenuKey || this.data.commentPostId) return;
+          this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId) return;
         this.setData({ [key]: `home-${tab}-top` });
       };
       if (typeof wx.nextTick === 'function') wx.nextTick(scroll); else scroll();
@@ -134,6 +147,9 @@ Page({
     this.finishBrandBounce();
   },
   onResize(event) {
+    this.finishPostRemoval();
+    this.closeAuthorMenu();
+    this.closePostPopover(true);
     this._homeWidth = event.size.windowWidth || this._homeWidth || 375;
     this.configureHomeChrome();
     this.resetHomeChrome();
@@ -142,12 +158,20 @@ Page({
     this.measureHomeTabs();
   },
   tabIndicatorState(key) {
-    const index = key === 'campus' ? 1 : 0, scale = (this._homeWidth || 375) / 750;
+    const index = HOME_TABS.findIndex(tab => tab.key === key), scale = (this._homeWidth || 375) / 750;
     const measured = this._tabAnchors && this._tabAnchors[index];
-    const labelWidth = (index ? 132 : 164) * scale;
-    const groupWidth = ((this._homeWidth || 375) - 48 * scale) / 2;
-    const left = measured ? measured.left : groupWidth * (index + .5) - labelWidth / 2;
-    return { tabIndicatorLeft: left - 6 * scale, tabIndicatorWidth: (measured ? measured.width : labelWidth) + 6 * scale };
+    const labelWidth = measured ? measured.width : HOME_TABS[index].label.length * 32 * scale;
+    const groupWidth = ((this._homeWidth || 375) - 48 * scale) / HOME_TABS.length;
+    const center = measured ? measured.center : groupWidth * (index + .5);
+    const width = labelWidth + 2 * TAB_INDICATOR_OVERHANG * scale;
+    return { activeTabIndex: index, tabIndicatorLeft: center - width / 2, tabIndicatorWidth: width };
+  },
+  setHomeTab(key) {
+    if (key === this.data.activeTab) return;
+    this.finishPostRemoval();
+    const indicator = this.tabIndicatorState(key);
+    this.setData({ activeTab: key, ...indicator,
+      tabIndicatorDirection: indicator.activeTabIndex > this.data.activeTabIndex ? 'right' : 'left' });
   },
   measureHomeTabs() {
     const version = this._tabMeasureVersion = (this._tabMeasureVersion || 0) + 1;
@@ -157,12 +181,12 @@ Page({
         typeof wx.createSelectorQuery === 'function' ? wx.createSelectorQuery().in(this) : null;
       if (!query) return;
       query.select('.home-tabs').boundingClientRect();
-      query.selectAll('.home-tab-label').boundingClientRect();
+      query.selectAll('.home-tab-text').boundingClientRect();
       query.exec(result => {
         if (this._unloaded || this._visible === false || version !== this._tabMeasureVersion) return;
         const [tabs, labels] = result || [];
-        if (!tabs || !labels || labels.length !== 2 || labels.some(label => !label || !label.width)) return;
-        this._tabAnchors = labels.map(label => ({ left: label.left - tabs.left, width: label.width }));
+        if (!tabs || !labels || labels.length !== HOME_TABS.length || labels.some(label => !label || !label.width)) return;
+        this._tabAnchors = labels.map(label => ({ center: label.left + label.width / 2 - tabs.left, width: label.width }));
         const state = this.tabIndicatorState(this.data.activeTab);
         const changed = Object.fromEntries(Object.entries(state).filter(([key, value]) => this.data[key] !== value));
         if (Object.keys(changed).length) this.setData(changed);
@@ -219,9 +243,11 @@ Page({
   applyUser(user, error = '') {
     const previousId = this.data.user && this.data.user._id;
     const followOwner = this.followSessionKey();
+    const feedOwnerChanged = this._feedOwner !== followOwner || previousId !== (user && user._id);
+    this._feedOwner = followOwner;
     if (this._followPreviewOwner && this._followPreviewOwner !== followOwner) this.resetFollowAnimations();
     this._followPreviewOwner = followOwner;
-    if (previousId !== (user && user._id)) this.closeAuthorMenu();
+    if (feedOwnerChanged) { this.finishPostRemoval(); this.closeAuthorMenu(); this.closePostPopover(true); }
     const accountChanged = Boolean(previousId && previousId !== (user && user._id));
     const avatarChanged = previousId !== (user && user._id) ||
       (this.data.user && this.data.user.avatarFileID || '') !== (user && user.avatarFileID || '');
@@ -231,16 +257,17 @@ Page({
     patchState(this, { user, identity: describeUser(user), error,
       ...(avatarChanged ? { homeAvatarSource: avatarSource, homeAvatarReady: avatarSource === DEFAULT_AVATAR, avatarFailed: false } : {}),
       ...(accountChanged ? { menuOpen: false, composerOpen: false } : {}),
+      ...(feedOwnerChanged ? { followingPosts: [], followingLoading: false, followingError: '', followingHasMore: false, followingCursor: '', followingMoreLoading: false } : {}),
       authChecking: false, loginSheetOpen: user ? false : this.data.loginSheetOpen,
       accountHint: error ? '账号信息暂不可用' : '未登录', menuLikeCount: user ? (square.cachedOwnStats() || {}).receivedLikes ?? '—' : '—', followerCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followerCount ?? '—' : '—', followingCount: user && square.cachedFollowProfile ? square.cachedFollowProfile(user.accountId)?.followingCount ?? '—' : '—', ...(accountChanged ? { followByAccount: {}, unfollowBusy: false } : {}) });
     this.refreshFollowPresentation();
     if (accountChanged) this.setMenuTabBarOpen(false);
     this.setAuthBlocked(this.interactionBlocked());
-    if (previousId !== (user && user._id) && this._visible === true) {
-      this._feedEpoch = (this._feedEpoch || 0) + 1;
-      this._feedBusy = false;
+    if (feedOwnerChanged && this._visible === true) {
+      this._feedRequests = {};
+      patchState(this, { feedLoading: false, feedMoreLoading: false });
       this.setData({ posts: this.data.posts.map(post => ({ ...post, liked: false, reposted: false })) });
-      if (this.isSquareFeed()) this.loadFeed(false);
+      if (this.isPostFeed()) this.loadFeed(false);
     }
   },
   onHomeAvatarLoad(event) {
@@ -255,7 +282,7 @@ Page({
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.composerOpen) return;
     this.revealHomeChrome();
     if (this.data.loginSheetOpen) return;
-    this.closeTabMenu();
+    this.closeAuthorMenu();
     if (this.data.loading) {
       this._openAfterRestore = true;
       this.setData({ authChecking: true });
@@ -320,7 +347,7 @@ Page({
     if (this._unloaded) return;
     // 在子页面仍覆盖首页时恢复底层画面，不在返回动画中收起菜单。
     this._menuNavigating = false;
-    this.setData({ menuOpen: false, menuInstant: true, tabMenuKey: '' });
+    this.setData({ menuOpen: false, menuInstant: true });
     const cached = userService.getCachedUser();
     if (cached !== this.data.user) this.applyUser(cached);
     this.syncNavigation(true);
@@ -348,99 +375,115 @@ Page({
     });
   },
   selectTab(event) {
-    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
+    if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
     const key = event.currentTarget.dataset.key;
-    if (this.data.tabs.some(tab => tab.key === key)) {
-      if (this.data.activeTab === key) { this.toggleTabMenu(event); return; }
-      this.resetHomeChrome();
-      this.stopHomeRefresh();
-      this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: '' });
-      if (this.isSquareFeed()) this.loadFeed(false);
-    }
-  },
-  isSquareFeed() { return this.data.activeTab === 'square'; },
-  isFollowingFeed() { return this.data.tabFilters.square === 'following'; },
-  onFollowingChanged(event) {
-    if (!this.isFollowingFeed()) return;
-    this._feedEpoch = (this._feedEpoch || 0) + 1; this._feedBusy = false; this._feedPromise = null;
-    const cached = square.cachedFollowingFeed();
-    if (cached) this.showFeed(cached);
-    if (!event.pending) this.loadFeed(true);
-  },
-  toggleTabMenu(event) {
-    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
-    this.revealHomeChrome();
-    const key = event.currentTarget.dataset.key;
-    if (!this.data.tabs.some(tab => tab.key === key)) return;
-    const switched = this.data.activeTab !== key;
+    if (key === this.data.activeTab || !HOME_TABS.some(tab => tab.key === key)) return;
+    this.closeAuthorMenu();
+    this.resetHomeChrome();
     this.stopHomeRefresh();
-    this.setData({ activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: this.data.tabMenuKey === key ? '' : key });
-    if (switched && this.isSquareFeed()) this.loadFeed(false);
+    this.setHomeTab(key);
+    if (this.isPostFeed()) return this.loadFeed(false);
   },
-  closeTabMenu() { this.closeAuthorMenu(); if (this.data.tabMenuKey) this.setData({ tabMenuKey: '' }); },
+  isPostFeed() { return Boolean(FEED_FIELDS[this.data.activeTab]); },
+  canRefreshFeed() {
+    return !this._postRemoval && (this.data.activeTab === 'square' || (this.data.activeTab === 'following' && Boolean(userService.getCachedUser())));
+  },
+  activeFeedPosts() { return this.data[FEED_FIELDS[this.data.activeTab]?.posts] || []; },
+  onFollowingChanged(event) {
+    if (this._feedRequests) delete this._feedRequests.following;
+    const cached = square.cachedFollowingFeed();
+    if (cached) this.showFeed(cached, 'following');
+    patchState(this, { followingMoreLoading: false });
+    if (this.data.activeTab === 'following' && !event.pending) this.loadFeed(true);
+  },
   closeAuthorMenu() {
     this._authorMenuTicket = (this._authorMenuTicket || 0) + 1;
     this._authorMenuSession = null;
-    if (!this._unloaded && this.data.authorMenu) this.setData({ authorMenu: null });
+    clearTimeout(this._authorMenuTimer);
+    this._authorMenuTimer = null;
+    if (!this._unloaded && this.data.authorMenu) this.setData({ authorMenu: null, authorMenuExpanded: false });
+  },
+  dismissAuthorMenu(afterClose) {
+    const session = this._authorMenuSession;
+    if (!session || !this.data.authorMenu) return;
+    const ticket = ++this._authorMenuTicket;
+    this._authorMenuSession = null;
+    clearTimeout(this._authorMenuTimer);
+    this.setData({ authorMenuExpanded: false }, () => {
+      if (ticket !== this._authorMenuTicket) return;
+      this._authorMenuTimer = setTimeout(() => {
+        if (ticket !== this._authorMenuTicket) return;
+        this.closeAuthorMenu();
+        const user = userService.getCachedUser();
+        if (typeof afterClose === 'function' && !this._unloaded && this._visible !== false && !this.interactionBlocked() &&
+            session.version === userService.getSessionVersion() && session.account === (user && user._id)) afterClose();
+      }, CLOSE_DURATION);
+    });
   },
   openAuthorMenu(event) {
-    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId || !this.isSquareFeed()) return;
-    const id = event.detail.id, post = this.data.posts.find(row => row._id === id);
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId || !this.isPostFeed()) return;
+    const tab = this.data.activeTab, id = event.detail.id, post = this.activeFeedPosts().find(row => row._id === id);
     if (!post || !/^p_[a-f0-9]{40}$/.test(id)) return;
     const viewer = userService.getCachedUser();
     if (viewer && (viewer.accountId && post.author && post.author.accountId ? viewer.accountId === post.author.accountId : post.isOwn)) { this.closeAuthorMenu(); return; }
-    const same = this.data.authorMenu && this.data.authorMenu.id === id;
-    this.closeTabMenu();
-    if (same) return;
+    if (this.data.authorMenu?.id === id && this._authorMenuSession) { this.dismissAuthorMenu(); return; }
+    this.closeAuthorMenu();
     this.stopHomeRefresh();
     const ticket = this._authorMenuTicket, version = userService.getSessionVersion();
     const user = userService.getCachedUser(), account = user && user._id;
-    const card = typeof this.selectComponent === 'function' && this.selectComponent('#home-post-' + id);
+    const card = typeof this.selectComponent === 'function' && this.selectComponent((tab === 'following' ? '#home-following-post-' : '#home-post-') + id);
     if (!card || typeof card.getAvatarRect !== 'function') return;
     card.getAvatarRect(rect => {
       const currentUser = userService.getCachedUser();
       if (this._unloaded || this._visible === false || ticket !== this._authorMenuTicket || version !== userService.getSessionVersion() ||
-          account !== (currentUser && currentUser._id) || this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId || !this.isSquareFeed() || !this.data.posts.some(row => row._id === id)) return;
+          account !== (currentUser && currentUser._id) || this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId || this.data.activeTab !== tab || !this.activeFeedPosts().some(row => row._id === id)) return;
       if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.bottom)) return;
-      let windowWidth = this._homeWidth || 375, windowHeight = 667;
-      try { const info = wx.getWindowInfo(); windowWidth = info.windowWidth || windowWidth; windowHeight = info.windowHeight || windowHeight; } catch (error) { /* 旧基础库使用已测量宽度。 */ }
-      const width = Math.min(windowWidth - 24, 326 * windowWidth / 750);
       const isOwn = Boolean(currentUser && (currentUser.accountId && post.author && post.author.accountId ? currentUser.accountId === post.author.accountId : post.isOwn));
       if (isOwn) return;
-      const height = 160 * windowWidth / 750;
+      const layout = popoverLayout(wx, rect, 2, { windowWidth: this._homeWidth, safeTop: this.data.chromeSafeTop, origin: 'avatar' });
       this._authorMenuSession = { version, account };
-      this.setData({ authorMenu: { id, isOwn, following: Boolean(square.cachedFollowState && square.cachedFollowState(post.author.accountId)?.following), width, left: Math.max(12, Math.min(rect.left, windowWidth - width - 12)),
-        top: Math.max(this.data.chromeSafeTop || 0, Math.min(rect.bottom + 6, windowHeight - height - 12)) } });
+      const state = square.cachedFollowState?.(post.author.accountId);
+      this.setData({ authorMenu: { ...layout, id, isOwn, following: state ? state.following : tab === 'following' }, authorMenuExpanded: true });
       this.hydrateFollowAuthors([post]);
     });
   },
   async selectAuthorAction(event) {
     const menu = this.data.authorMenu, session = this._authorMenuSession, action = event.currentTarget.dataset.action;
+    if (!menu || !session) return;
     const user = userService.getCachedUser();
-    if (!menu || !session || this._unloaded || this._visible === false || this.interactionBlocked() ||
+    const post = this.activeFeedPosts().find(row => row._id === menu.id);
+    if (this._unloaded || this._visible === false || this.interactionBlocked() ||
         session.version !== userService.getSessionVersion() || session.account !== (user && user._id) ||
-        !this.data.posts.some(row => row._id === menu.id) || !['follow', 'profile'].includes(action) || menu.isOwn) { this.closeAuthorMenu(); return; }
-    this.closeAuthorMenu();
-    const post = this.data.posts.find(row => row._id === menu.id);
-    if (action === 'profile') { this.viewAuthorProfile({ detail: { author: post.author } }); return; }
-    if (!user) { this.openMenu(); return; }
+        !post || !['follow', 'profile'].includes(action) || menu.isOwn) { this.closeAuthorMenu(); return; }
+    if (action === 'profile') { this.dismissAuthorMenu(() => this.viewAuthorProfile({ detail: { author: post.author } })); return; }
+    if (!user) { this.dismissAuthorMenu(() => this.openMenu()); return; }
     const state = square.cachedFollowState(post.author.accountId);
     if (state ? state.following : menu.following) {
-      this._unfollowSession = this.followSessionKey();
-      this.setData({ unfollowTarget: { key: this.followAuthorKey(post), accountId: post.author.accountId, id: post._id, nickname: post.author.nickname || '该用户', avatar: post.author.avatarFileID || '' }, unfollowClosing: false });
-      this.syncNavigation();
+      this.dismissAuthorMenu(() => {
+        this._unfollowSession = this.followSessionKey();
+        this.setData({ unfollowTarget: { key: this.followAuthorKey(post), accountId: post.author.accountId, id: post._id, nickname: post.author.nickname || '该用户', avatar: post.author.avatarFileID || '' }, unfollowClosing: false });
+        this.syncNavigation();
+      });
       return;
     }
+    this.dismissAuthorMenu();
     const request = this.persistFollowIntent(post.author.accountId, true);
     this.playFollowAnimation(post);
     return request;
   },
   followSessionKey() { const user = userService.getCachedUser(); return `${user ? user._id : 'guest'}:${userService.getSessionVersion()}`; },
+  postRemovalTarget(id) {
+    if (this.data.activeTab === 'square' && this.data.posts.some(post => post._id === id)) return 'home';
+  },
+  restorePostRemovalFeed() {
+    const cached = square.cachedFeed();
+    if (cached) this.showFeed(cached);
+  },
   followAuthorKey(post) { return post.author && post.author.accountId ? 'account:' + post.author.accountId : 'post:' + post._id; },
   refreshFollowPreviews() {
     if (this._unloaded) return;
     const patch = {};
-    for (const post of this.data.posts) {
+    for (const post of [...this.data.posts, ...this.data.followingPosts]) {
       const record = this._followPreviewState && this._followPreviewState.get(this.followAuthorKey(post));
       const state = square.cachedFollowState && square.cachedFollowState(post.author && post.author.accountId);
       if (record && state && !state.following) { if (record.timer) clearTimeout(record.timer); this._followPreviewState.delete(this.followAuthorKey(post)); }
@@ -502,27 +545,21 @@ Page({
     this.refreshFollowPreviews(); this.closeUnfollow();
     return request;
   },
-  selectTabFilter(event) {
-    if (this.data.menuOpen || this.data.commentPostId || this.interactionBlocked()) return;
-    const { key, filter } = event.currentTarget.dataset;
-    const tab = this.data.tabs.find(item => item.key === key);
-    if (this.data.tabMenuKey !== key || !tab || !tab.options.some(item => item.key === filter)) return;
-    this.stopHomeRefresh();
-    this._feedEpoch = (this._feedEpoch || 0) + 1; this._feedBusy = false; this._feedPromise = null;
-    const changedSource = this.data.tabFilters.square !== filter && key === 'square';
-    this.setData({ ...(changedSource ? { posts: [], feedHasMore: false, feedOffset: 0, feedCursor: '', feedError: '' } : {}), activeTab: key, ...this.tabIndicatorState(key), tabMenuKey: '', tabFilters: { ...this.data.tabFilters, [key]: filter } });
-    if (this.isSquareFeed()) this.loadFeed(false);
-  },
-  showFeed(result) {
+  showFeed(result, tab = 'square') {
+    if (tab === 'square' && this._postRemoval) {
+      this._postRemoval.feedUpdated = true;
+      return;
+    }
+    const fields = FEED_FIELDS[tab];
     const visible = square.visiblePosts?.(result.items) || result.items;
-    const current = this.data.posts;
+    const current = this.data[fields.posts];
     const values = {};
     if (visible.length < current.length || current.some((post, index) => post._id !== visible[index]._id)) {
       // 刷新、删除或重新排序时重新对齐列表。
-      values.posts = visible.map(postPreview);
+      values[fields.posts] = visible.map(postPreview);
     } else {
       visible.forEach((row, index) => {
-        const next = postPreview(row), previous = current[index], path = `posts[${index}]`;
+        const next = postPreview(row), previous = current[index], path = `${fields.posts}[${index}]`;
         if (!previous || Object.keys(previous).some(key => !Object.prototype.hasOwnProperty.call(next, key))) {
           values[path] = next;
           return;
@@ -535,45 +572,62 @@ Page({
         }
       });
     }
-    if (this.data.feedHasMore !== result.hasMore) values.feedHasMore = result.hasMore;
-    if (typeof result.nextCursor === 'string' && this.data.feedCursor !== result.nextCursor) values.feedCursor = result.nextCursor;
-    if (this.data.feedOffset !== result.nextOffset) values.feedOffset = result.nextOffset;
+    const position = tab === 'following' ? result.nextCursor : result.nextOffset;
+    if (this.data[fields.more] !== result.hasMore) values[fields.more] = result.hasMore;
+    if (this.data[fields.position] !== position) values[fields.position] = position;
     if (Object.keys(values).length) this.setData(values);
     this.refreshFollowPreviews();
     this.hydrateFollowAuthors(visible);
   },
   loadFeed(force = false, append = false) {
-    if (this._feedBusy) return this._feedPromise;
-    this._feedBusy = true;
-    const version = this._viewVersion || 0, epoch = this._feedEpoch || 0;
-    const following = this.isFollowingFeed();
-    if (following && !userService.getCachedUser()) { this.setData({ posts: [], feedHasMore: false, feedLoading: false, feedMoreLoading: false, feedError: '' }); this._feedBusy = false; return Promise.resolve(); }
+    const tab = this.data.activeTab, fields = FEED_FIELDS[tab];
+    if (!fields || this._unloaded || this._visible === false) return;
+    const following = tab === 'following';
+    if (following && !userService.getCachedUser()) return;
+    const requests = this._feedRequests || (this._feedRequests = {});
+    if (requests[tab]) {
+      const pending = requests[tab];
+      if (force && pending.append) {
+        const version = this._viewVersion || 0, session = this.followSessionKey();
+        return pending.promise.then(() => {
+          if (this.currentView(version) && this.data.activeTab === tab && session === this.followSessionKey()) return this.loadFeed(true);
+        });
+      }
+      return pending.promise;
+    }
+    const request = { append };
+    requests[tab] = request;
+    const version = this._viewVersion || 0, session = this.followSessionKey();
+    const ownsRequest = () => this.currentView(version) && this._feedRequests?.[tab] === request;
+    const current = () => ownsRequest() && session === this.followSessionKey();
     const cached = following ? square.cachedFollowingFeed() : square.cachedFeed();
-    if (cached) this.showFeed(cached);
-    patchState(this, { feedLoading: !this.data.posts.length && !cached, feedMoreLoading: append, feedError: '' });
-    this._feedAppend = append;
-    const request = (async () => {
+    if (cached) this.showFeed(cached, tab);
+    patchState(this, { [fields.loading]: !this.data[fields.posts].length && !cached, [fields.appending]: append, [fields.error]: '' });
+    request.promise = (async () => {
       try {
-        const result = following ? await square.listFollowing({ force, cursor: append ? this.data.feedCursor || '' : '' }) : await square.list({ force, offset: append ? this.data.feedOffset : 0 });
-        if (this.currentView(version) && epoch === (this._feedEpoch || 0)) this.showFeed(result);
+        const position = this.data[fields.position];
+        const result = following ? await square.listFollowing({ force, cursor: append ? position : '' }) : await square.list({ force, offset: append ? position : 0 });
+        if (current()) this.showFeed(result, tab);
       } catch (error) {
-        if (this.currentView(version) && epoch === (this._feedEpoch || 0) && !['SESSION_CHANGED', 'BLOCK_CHANGED'].includes(error.code)) this.setData({ feedError: error.message || '动态读取失败，请稍后重试' });
+        if (current() && !['SESSION_CHANGED', 'BLOCK_CHANGED'].includes(error.code)) this.setData({ [fields.error]: error.message || '动态读取失败，请稍后重试' });
       } finally {
-        if (this.currentView(version) && epoch === (this._feedEpoch || 0)) {
-          this._feedBusy = false; this._feedPromise = null; patchState(this, { feedLoading: false, feedMoreLoading: false });
-        }
+        if (current()) patchState(this, { [fields.loading]: false, [fields.appending]: false });
+        else if (ownsRequest()) this.applyUser(userService.getCachedUser());
+        if (requests[tab] === request) delete requests[tab];
       }
     })();
-    this._feedPromise = request;
-    return request;
+    return request.promise;
   },
   retryFeed() { return this.loadFeed(true); },
-  loadMoreFeed() { if (!this.data.menuOpen && !this.data.tabMenuKey && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.isSquareFeed() && this.data.feedHasMore) return this.loadFeed(false, true); },
+  loadMoreFeed(event) {
+    const tab = this.data.activeTab, source = event?.currentTarget?.dataset?.feed, fields = FEED_FIELDS[tab];
+    if (fields && (!source || source === tab) && !this._postRemoval && !this.data.menuOpen && !this.data.authorMenu && !this.data.commentPostId && !this.interactionBlocked() && !this.data.pullRefreshing && this.data[fields.more]) return this.loadFeed(false, true);
+  },
   openComposer(event) {
     if (this.interactionBlocked() || this.data.menuOpen || this.data.commentPostId) return;
     this.revealHomeChrome();
     if (!this.data.user) { this.openMenu(); return; }
-    this.closeTabMenu();
+    this.closeAuthorMenu();
     this.stopHomeRefresh();
     this.setData({ composerOpen: true, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
     this.syncNavigation();
@@ -584,7 +638,7 @@ Page({
     if ((user && user._id) !== (this.data.user && this.data.user._id)) this.applyUser(user);
     if (event.detail.published) {
       square.consumePublication();
-      this.setData({ activeTab: 'square', ...this.tabIndicatorState('square'), tabFilters: { ...this.data.tabFilters, square: 'square' } });
+      this.setHomeTab('square');
       const cached = square.cachedFeed();
       if (cached) this.showFeed(cached);
       this.loadFeed(false);

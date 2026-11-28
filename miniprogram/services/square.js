@@ -227,26 +227,28 @@ async function drainFollowWrites() {
     }
   } finally { if (followWorker === worker) followWorker = null; }
 }
-function projectFollowing(result) {
-  if (!result) return null;
-  return { ...result, items: result.items.filter(post => {
+function projectFollowing(cached) {
+  if (!cached) return null;
+  const { value: result, revision } = cached;
+  const stale = revision !== followRevision || followWrites.size > 0;
+  return { ...result, ...(stale ? { hasMore: false, nextCursor: '' } : {}), items: result.items.filter(post => {
     const write = followWrites.get(post.author.accountId);
     return !blockedAccounts.has(post.author.accountId) && (!write || write.desired);
   }) };
 }
-function cachedFollowingFeed() { session(); return projectFollowing(followingFeed?.value || null); }
+function cachedFollowingFeed() { session(); return projectFollowing(followingFeed); }
 function listFollowing({ force = false, cursor = '' } = {}) {
   session(); const revision = followRevision, before = new Map(revisions), removed = removals;
-  if (!force && !cursor && followingFeed && Date.now() - followingFeed.time < TTL) return Promise.resolve(projectFollowing(followingFeed.value));
+  if (!force && !cursor && followingFeed && Date.now() - followingFeed.time < TTL) return Promise.resolve(projectFollowing(followingFeed));
   return merged(`following-feed:${cursor}:${revision}`, async () => {
     const result = await call('listSquareFollowing', { cursor }, true);
     if (revision !== followRevision || removed !== removals) throw Object.assign(new Error('关注动态已更新，请刷新'), { code: 'FOLLOW_CHANGED' });
     if (!Array.isArray(result.items) || typeof result.hasMore !== 'boolean' || typeof result.nextCursor !== 'string' || result.hasMore && (!result.nextCursor || result.nextCursor === cursor)) throw new Error('关注动态暂不可用');
     const rows = result.items.filter(post => !deleted.has(post._id)).map(post => pendingLike(before.get(post._id) !== revisions.get(post._id) && posts.has(post._id) ? previewPost(posts.get(post._id)) : post));
     const items = [...new Map([...(cursor && followingFeed ? followingFeed.value.items : []), ...rows].map(post => [post._id, post])).values()];
-    followingFeed = { time: Date.now(), value: { ...result, items } };
+    followingFeed = { time: Date.now(), revision, value: { ...result, items } };
     for (const post of rows) { posts.set(post._id, { ...post, content: post.fullContent || post.content, truncated: false }); postTimes.set(post._id, Date.now()); }
-    return projectFollowing(followingFeed.value);
+    return projectFollowing(followingFeed);
   });
 }
 

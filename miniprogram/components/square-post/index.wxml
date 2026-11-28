@@ -1,6 +1,6 @@
 <wxs module="actionCount" src="./action-count.wxs" />
 <template name="post-video">
-  <view class="post-photo post-video-frame" data-index="{{index}}" catchtap="previewImage" aria-role="button" aria-label="打开视频预览">
+  <view class="post-photo post-video-frame sand-media" data-source="{{item.poster}}" data-mode="{{mode}}" data-index="{{index}}" catchtap="previewImage" aria-role="button" aria-label="打开视频预览">
     <video wx:if="{{feedVideo && feedVideo.file === item.fileID && feedVideo.src}}" id="feed-video-{{feedVideo.token}}"
       class="post-inline-video {{feedVideo.ready ? 'is-ready' : ''}}"
       src="{{feedVideo.src}}" data-token="{{feedVideo.token}}" initial-time="{{feedVideo.start}}" object-fit="{{mode === 'aspectFill' ? 'cover' : 'contain'}}"
@@ -26,11 +26,11 @@
 </template>
 <view wx:if="{{(profilePosts || showPin) && pinned}}" class="post-pin" aria-label="置顶动态"><image src="/images/interface/pin.svg" mode="aspectFit" /><text>置顶</text></view>
 <view class="post-card {{detail ? 'is-detail' : ''}} {{(profilePosts || showPin) && pinned ? 'is-pinned' : ''}}" bindtap="open">
-  <view wx:if="{{homeFeed && !detail}}" class="post-avatar-anchor" catchtap="avatarMenu" aria-role="{{viewer && (viewer.accountId && post.author.accountId ? post.author.accountId === viewer.accountId : post.isOwn) ? 'img' : 'button'}}" aria-label="作者头像"><image class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /><view wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-avatar-follow {{followPreview.phase === 'following' ? 'is-demo-following' : followPreview.followed ? 'is-demo-followed' : ''}}" aria-hidden="true"><image class="follow-plus" src="/images/interface/plus-white.svg" mode="aspectFit" /><image class="follow-check" src="/images/interface/follow-check-white.svg" mode="aspectFit" /></view></view>
+  <view wx:if="{{homeFeed && !detail}}" class="post-avatar-anchor" catchtap="avatarMenu" aria-role="{{viewer && (viewer.accountId && post.author.accountId ? post.author.accountId === viewer.accountId : post.isOwn) ? 'img' : 'button'}}" aria-label="作者头像"><image class="post-avatar avatar-outline {{avatarPulsing ? 'is-pulsing' : ''}}" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" bindanimationend="finishAvatarPulse" /><view wx:if="{{!viewer || (viewer.accountId && post.author.accountId ? post.author.accountId !== viewer.accountId : !post.isOwn)}}" class="post-avatar-follow {{followPreview.phase === 'following' ? 'is-demo-following' : followPreview.followed ? 'is-demo-followed' : ''}}" aria-hidden="true"><image class="follow-plus" src="/images/interface/plus-white.svg" mode="aspectFit" /><image class="follow-check" src="/images/interface/follow-check-white.svg" mode="aspectFit" /></view></view>
   <image wx:elif="{{post.contentType === 'news'}}" class="post-avatar avatar-outline" src="{{post.author.avatarFileID}}" mode="aspectFill" />
   <image wx:else catchtap="viewAuthor" aria-role="button" aria-label="查看作者主页" class="post-avatar avatar-outline" src="{{post.author.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" />
   <view class="post-main">
-    <view class="post-author-details"><view class="post-heading"><text class="post-name" catchtap="viewAuthor">{{post.author.nickname}}</text><image wx:if="{{post.author.verified || post.author.officialVerified}}" class="author-badge {{post.author.officialVerified ? '' : 'is-student'}}" src="/images/verification/{{post.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{post.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><slot name="header-actions"></slot><button class="post-more" catchtap="more" aria-label="动态更多操作"><image src="/images/interface/menu-two.svg" mode="aspectFit" /></button></view></view>
+    <view class="post-author-details"><view class="post-heading"><text class="post-name" catchtap="viewAuthor">{{post.author.nickname}}</text><image wx:if="{{post.author.verified || post.author.officialVerified}}" class="author-badge {{post.author.officialVerified ? '' : 'is-student'}}" src="/images/verification/{{post.author.officialVerified ? 'verified.png' : 'student.svg'}}" mode="aspectFit" aria-label="{{post.author.officialVerified ? 'Cui官方' : '学生已认证'}}" /><text wx:if="{{!detail}}" class="post-time">· {{post.timeText}}</text><view class="post-header-actions"><slot name="header-actions"></slot><button class="post-more" catchtap="more" aria-label="动态更多操作"><image class="post-more-icon {{morePulsing ? 'is-pulsing' : ''}}" src="/images/interface/menu-two.svg" mode="aspectFit" bindanimationend="finishMorePulse" /></button></view></view>
     <text wx:if="{{detail && post.author.accountId}}" class="post-handle">@{{post.author.accountId}}</text>
     <slot wx:if="{{detail && post.contentType === 'news'}}" name="news-translation"></slot>
     </view>
@@ -50,26 +50,26 @@
     <view wx:if="{{imageFiles.length}}" class="post-image-gallery {{photoStrip ? 'is-photo-strip' : ''}}" style="{{photoStrip ? '' : 'width:' + galleryWidth + '%;'}} height: {{galleryHeight}}rpx;" catchtap="stopEvent">
       <scroll-view wx:if="{{photoStrip}}" class="post-image-strip" scroll-x enhanced show-scrollbar="{{false}}" aria-label="动态照片，左右滑动查看">
         <view class="post-image-track">
-          <view wx:for="{{imageFiles}}" wx:key="*this" class="post-photo-frame post-image-strip-item {{index ? 'has-gap' : ''}}" style="width: {{photoFrames[index].widthRpx}}rpx; height: {{photoFrames[index].height}}rpx;">
+          <view wx:for="{{imageFiles}}" wx:key="*this" class="post-photo-frame post-image-strip-item sand-media {{index ? 'has-gap' : ''}}" data-source="{{item}}" data-mode="aspectFit" style="width: {{photoFrames[index].widthRpx}}rpx; height: {{photoFrames[index].height}}rpx;">
             <media-image class="post-photo" src="{{item}}" mode="aspectFit" lazy-load data-index="{{index}}" data-file="{{item}}" bindload="photoLoaded" catchtap="previewImage" />
           </view>
         </view>
       </scroll-view>
       <swiper wx:elif="{{imageFiles.length > 1}}" class="post-image-swiper" current="{{imageIndex}}" duration="240" next-margin="44rpx" bindchange="imageChanged" indicator-dots="{{false}}" circular="{{false}}" aria-label="动态媒体，左右滑动查看">
         <swiper-item wx:for="{{mediaItems}}" wx:key="fileID" class="post-image-slide">
-          <view class="post-photo-frame" style="{{item.type === 'image' && post.contentType !== 'news' ? ('width:' + photoFrames[index].width + '%;height:' + photoFrames[index].height + 'rpx;') : ''}}">
+          <view class="post-photo-frame {{item.type === 'image' ? 'sand-media' : ''}}" data-source="{{item.fileID}}" data-mode="{{post.contentType === 'news' ? 'aspectFill' : 'aspectFit'}}" style="{{item.type === 'image' && post.contentType !== 'news' ? ('width:' + photoFrames[index].width + '%;height:' + photoFrames[index].height + 'rpx;') : ''}}">
             <template wx:if="{{item.type === 'video'}}" is="post-video" data="{{item: item, index: index, mode: 'aspectFill', feedVideo: feedVideo, homeFeed: homeFeed}}" />
             <media-image wx:else class="post-photo" src="{{item.fileID}}" mode="{{post.contentType === 'news' ? 'aspectFill' : 'aspectFit'}}" lazy-load data-index="{{index}}" data-file="{{item.fileID}}" bindload="photoLoaded" catchtap="previewImage" />
           </view>
         </swiper-item>
       </swiper>
-      <view wx:else class="post-photo-frame">
+      <view wx:else class="post-photo-frame {{mediaItems[0].type === 'video' ? '' : 'sand-media'}}" data-source="{{imageFiles[0]}}" data-mode="aspectFit">
         <template wx:if="{{mediaItems[0].type === 'video'}}" is="post-video" data="{{item: mediaItems[0], index: 0, mode: 'aspectFit', feedVideo: feedVideo, homeFeed: homeFeed}}" />
         <media-image wx:else class="post-photo" src="{{imageFiles[0]}}" mode="aspectFit" lazy-load data-index="0" data-file="{{imageFiles[0]}}" bindload="photoLoaded" catchtap="previewImage" />
       </view>
     </view>
     <view wx:if="{{post.declarationText}}" class="post-declaration"><image src="/images/interface/alert-circle-muted.svg" mode="aspectFit" /><text>{{post.declarationText}}</text></view>
-    <quote-card wx:if="{{post.quotePostId}}" class="post-quote" quote="{{post.quote}}" />
+    <quote-card wx:if="{{post.quotePostId}}" id="post-quote" class="post-quote" quote="{{post.quote}}" />
     <view wx:if="{{detail && post.exactTime}}" class="post-date">{{post.exactTime}}</view>
     <template is="actions" data="{{post: post, likeMotion: likeMotion, likeMotionClass: likeMotionClass, likeParticleRays: likeParticleRays}}" />
   </view>

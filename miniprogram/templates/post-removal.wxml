@@ -1,0 +1,4 @@
+<template name="post-removal-canvas">
+  <canvas wx:if="{{removal.id === id}}" type="2d" id="post-removal-canvas"
+    class="post-removal-canvas" style="top: {{removal.canvasTop}}px; height: {{removal.canvasHeight}}px;" aria-hidden="true" />
+</template>

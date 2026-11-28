@@ -372,11 +372,19 @@ test('动态卡片可进入详情，详情内不重复导航；原地展开和�
   let definition;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/components/square-post/index.js'), 'utf8'), { Component: value => { definition = value; }, require: () => require('../miniprogram/utils/post-image-layout') });
   const events = [];
-  const component = { ...definition.methods, data: { post: { _id: id }, expanded: false }, setData(value) { Object.assign(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); } };
+  const anchor = { left: 340, top: 160, width: 24, bottom: 184 };
+  const component = { ...definition.methods, data: { post: { _id: id }, expanded: false }, setData(value) { Object.assign(this.data, value); }, triggerEvent(name, detail) { events.push({ name, detail }); },
+    createSelectorQuery() {
+      return { select(selector) { assert.equal(selector, '.post-more'); return this; },
+        boundingClientRect(callback) { return { exec() { callback(anchor); } }; } };
+    },
+  };
   component.open(); assert.equal(events.shift().name, 'open');
   component.data.detail = true; component.open(); assert.equal(events.length, 0);
   component.toggleExpanded(); assert.equal(component.data.expanded, true);
   component.more(); assert.equal(events[0].name, 'more'); assert.equal(events[0].detail.id, id);
+  assert.equal(events[0].detail.anchor, anchor); assert.equal(component.data.morePulsing, true);
+  component.finishMorePulse(); assert.equal(component.data.morePulsing, false);
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../miniprogram/app.json'), 'utf8'));
   assert.ok(config.pages.includes('pages/square-detail/index'));
 });

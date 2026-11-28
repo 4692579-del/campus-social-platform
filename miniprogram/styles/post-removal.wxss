@@ -1,0 +1,18 @@
+.post-removal-row { position: relative; }
+.post-removal-row.is-removing { z-index: 2; pointer-events: none; }
+.post-removal-row.is-scatter.has-tiles .post-removal-card { visibility: hidden; }
+.post-removal-row.is-scatter:not(.has-tiles) .post-removal-card { animation: post-removal-fade var(--fade-duration) ease-out both; }
+.post-removal-row.is-reflow { min-height: 0; overflow: visible; animation: post-removal-reflow var(--reflow-duration) cubic-bezier(.30, .10, .26, 1) both; }
+.post-removal-row.is-reflow .post-removal-card { display: none; }
+.post-removal-canvas { position: absolute; z-index: 1; left: 0; width: 100%; pointer-events: none; visibility: hidden; }
+.post-removal-row.has-tiles .post-removal-canvas { visibility: visible; }
+@keyframes post-removal-fade { to { opacity: 0; } }
+@keyframes post-removal-reflow {
+  from { height: var(--remove-height); }
+  to { height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .post-removal-row.has-tiles .post-removal-canvas { visibility: hidden; }
+  .post-removal-row.is-scatter.has-tiles .post-removal-card { visibility: visible; animation: post-removal-fade 1ms both; }
+  .post-removal-row.is-scatter:not(.has-tiles) .post-removal-card, .post-removal-row.is-reflow { animation-duration: 1ms; }
+}

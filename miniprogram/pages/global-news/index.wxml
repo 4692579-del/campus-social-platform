@@ -1,3 +1,4 @@
+<import src="../../templates/post-popover.wxml" />
 <import src="../../templates/login-sheet.wxml" />
 <view class="square-page news-page">
   <view class="square-nav" style="height:{{navHeight}}px;">
@@ -7,8 +8,8 @@
       <cui-refresh id="home-cui" bind:ready="onHomeBrandReady" />
     </view>
   </view>
-  <scroll-view class="news-feed" style="top:{{navHeight}}px;" scroll-y="{{!commentPostId && !loginSheetOpen}}" enhanced show-scrollbar="{{false}}"
-    refresher-enabled="{{!commentPostId && !loginSheetOpen}}" refresher-triggered="{{nativeRefreshing}}" refresher-threshold="{{refreshThreshold}}"
+  <scroll-view class="news-feed" style="top:{{navHeight}}px;" scroll-y="{{!postPopover && !commentPostId && !loginSheetOpen}}" enhanced show-scrollbar="{{false}}"
+    refresher-enabled="{{!postPopover && !commentPostId && !loginSheetOpen}}" refresher-triggered="{{nativeRefreshing}}" refresher-threshold="{{refreshThreshold}}"
     refresher-default-style="none" refresher-background="#FFFFFF" bindrefresherpulling="pullHomeFeed" bindrefresherrefresh="refreshFeed"
     bindrefresherrestore="restoreHomePull" bindrefresherabort="cancelHomePull" bindtouchend="releaseHomePull" bindtouchcancel="cancelHomePull"
     bindscrolltolower="loadMoreFeed" lower-threshold="160">
@@ -32,3 +33,4 @@
   <comments-sheet id="active-comments" wx:if="{{commentPostId}}" post-id="{{commentPostId}}" viewer="{{user}}" news-comments
     bind:author="viewAuthorProfile" bind:close="closeComments" bind:login="commentLogin" bind:changed="commentChanged" />
 </view>
+<template is="post-popover" data="{{menu: postPopover, closing: postPopover.closing, label: postPopover.label, options: postPopover.options, kind: 'post'}}" />

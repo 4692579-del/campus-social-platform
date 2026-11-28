@@ -1,0 +1,19 @@
+<import src="../custom-tab-bar/nav-glass.wxml" />
+<template name="post-popover">
+  <view wx:if="{{menu}}" class="post-popover-layer">
+    <view class="post-popover-backdrop" data-kind="{{kind}}" catchtap="onPostPopoverDismiss" catchtouchmove="swallowPostPopover"></view>
+    <view class="post-popover {{centered ? 'has-centered-options' : ''}} {{closing ? 'is-closing' : ''}}"
+      style="left: {{menu.left}}px; top: {{menu.top}}px; width: {{menu.width}}px; height: {{menu.height}}px; transform-origin: {{menu.originX}}px {{menu.originY}}px; --popover-start-x: {{menu.startShiftX}}px; --popover-start-y: {{menu.startShiftY}}px; --popover-start-scale-x: {{menu.startScaleX}}; --popover-start-scale-y: {{menu.startScaleY}}; {{menu.glassStyle}}"
+      aria-role="menu" aria-label="{{label}}" aria-hidden="{{closing}}" catchtap="swallowPostPopover" catchtouchmove="swallowPostPopover">
+      <view class="post-popover-surface">
+        <template is="nav-glass-surface" />
+        <view class="post-popover-items">
+          <button wx:for="{{options}}" wx:key="key" class="post-popover-option {{item.danger ? 'is-danger' : ''}} {{item.key === selectedKey ? 'is-selected' : ''}}" data-kind="{{kind}}" data-action="{{item.key}}" bindtap="onPostPopoverSelect" hover-class="post-popover-pressed" aria-role="menuitem" aria-current="{{item.key === selectedKey ? 'true' : 'false'}}">
+            <image wx:if="{{item.icon}}" src="/images/interface/{{item.icon}}.svg" mode="aspectFit" />
+            <text>{{item.label}}</text>
+          </button>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>

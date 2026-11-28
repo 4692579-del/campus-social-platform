@@ -16,6 +16,9 @@ module.exports = { methods: {
   applyPublicViewer(viewer, keepRefresh = false, checking = false) {
     const changed = (this.data.user && this.data.user._id) !== (viewer && viewer._id) || this._publicViewerVersion !== users.getSessionVersion();
     if (changed) {
+      this._profileTabMenuMeasure = null;
+      this.resetProfileUserMenu();
+      this.closePostPopover(true);
       this.resetProfilePull();
       this.resetProfileVideos();
       this.closeUnfollowPrompt(true);
@@ -23,7 +26,7 @@ module.exports = { methods: {
       this.closeComments();
       this.setData({ profileUser: null, coverFileID: '', ownPosts: [], quotePosts: [], albumImages: [], pinnedPostId: '',
         postsHasMore: false, quotesHasMore: false, albumHasMore: false, postsOffset: 0, quotesOffset: 0, albumOffset: 0, postCountText: '帖子',
-        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, profileBlocked: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
+        likeCount: '—', followingCount: '—', followerCount: '—', followKnown: false, profileFollowing: false, profileBlocked: false, followBusy: false, followError: '', loading: false, error: '', profileUnavailable: false, postsError: '', quotesError: '', albumError: '', mediaTab: 'album' });
     }
     this._publicViewerVersion = users.getSessionVersion();
     this.setData({ user: viewer, identity: describeUser(viewer), authChecking: Boolean(checking && !viewer), loginSheetOpen: Boolean(!viewer && !checking) });
@@ -53,6 +56,8 @@ module.exports = { methods: {
     if (blocked === Boolean(this.data.profileBlocked)) return;
     this._publicContentRequests = {};
     if (blocked) {
+      this._profileTabMenuMeasure = null;
+      if (this.data.postPopover?.kind === 'media') this.closePostPopover(true);
       this.resetProfileVideos();
       this.closeComments();
       this.closeUnfollowPrompt(true);
@@ -60,7 +65,7 @@ module.exports = { methods: {
         postsLoading: false, quotesLoading: false, albumLoading: false, postsMoreLoading: false,
         quotesMoreLoading: false, albumMoreLoading: false, postsHasMore: false, quotesHasMore: false,
         albumHasMore: false, postsOffset: 0, quotesOffset: 0, albumOffset: 0, postsError: '', quotesError: '',
-        albumError: '', postsMenuOpen: false, mediaMenuOpen: false });
+        albumError: '' });
     }
     this.setData({ profileBlocked: blocked });
   },
@@ -113,6 +118,9 @@ module.exports = { methods: {
     return request.promise;
   },
   markPublicUnavailable(message) {
+    this._profileTabMenuMeasure = null;
+    this.resetProfileUserMenu();
+    this.closePostPopover(true);
     this.cancelPublicReads();
     this.resetProfileVideos();
     if (typeof users.invalidatePublicProfile === 'function') users.invalidatePublicProfile(this.data.profileAccountId, { unavailable: true });

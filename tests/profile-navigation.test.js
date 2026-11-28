@@ -46,7 +46,7 @@ function fixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/profile/index.js'), 'utf8'), {
     Page: value => { definition = value; }, Date: class extends Date { static now() { return now; } },
     setTimeout: (fn, delay) => { const id = ++timerSequence; timers.set(id, { fn, delay, at: now + delay }); return id; }, clearTimeout: id => timers.delete(id),
-    require: name => name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, {}) :
+    require: name => name.includes('label-indicator') ? require('../miniprogram/utils/label-indicator') : name.includes('post-removal-motion') ? require('../miniprogram/utils/post-removal-motion') : name.includes('cui-refresh-drawing') ? require('../miniprogram/utils/cui-refresh-drawing') : name.includes('profile-navigation') ? require('../miniprogram/utils/profile-navigation') : name.includes('post-actions') ? loadPostActions(users, square, {}) :
       name.includes('services/square') ? square : name.includes('user-role') ? { describeUser } : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? require('../miniprogram/utils/account-menu') : users,
     wx: { getWindowInfo: () => info, getMenuButtonBoundingClientRect: () => capsule },
   });

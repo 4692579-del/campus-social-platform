@@ -1,3 +1,5 @@
+<import src="../../templates/post-popover.wxml" />
+<import src="../../templates/post-removal.wxml" />
 <import src="../../templates/login-sheet.wxml" />
 <wxs src="../../components/square-post/action-count.wxs" module="profileCount" />
 <view class="profile-shell">
@@ -16,7 +18,7 @@
       <button size="mini" class="profile-search-button" style="left: {{searchLeft}}px; width: {{navButtonHeight + 8}}px; height: {{navButtonHeight + 8}}px;" bindtap="openSearch" aria-label="搜索"><image src="/images/interface/search-white.svg" mode="aspectFit" /></button>
     </view>
   </view>
-  <scroll-view class="profile-scroll" scroll-y="{{!authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !mediaMenuOpen && !composerOpen && !unfollowTarget}}" enhanced bounces="{{false}}" show-scrollbar="{{false}}" enable-back-to-top bindscroll="onProfileScroll" bindscrolltoupper="onProfileScrollUpper" upper-threshold="1" bindscrolltolower="loadMoreOwnPosts" lower-threshold="160" bindtouchstart="startProfilePull" bindtouchmove="moveProfilePull" bindtouchend="finishProfilePull" bindtouchcancel="cancelProfilePull">
+  <scroll-view class="profile-scroll" scroll-y="{{!authChecking && !loginSheetOpen && !commentPostId && !postPopover && !postRemoval && !composerOpen && !unfollowTarget}}" enhanced bounces="{{false}}" show-scrollbar="{{false}}" enable-back-to-top bindscroll="onProfileScroll" bindscrolltoupper="onProfileScrollUpper" upper-threshold="1" bindscrolltolower="loadMoreOwnPosts" lower-threshold="160" bindtouchstart="startProfilePull" bindtouchmove="moveProfilePull" bindtouchend="finishProfilePull" bindtouchcancel="cancelProfilePull">
   <view class="profile-page">
   <view class="profile-cover" style="height: {{coverHeight}}px;">
     <view class="profile-cover-art" style="height: {{coverArtHeight}}px;">
@@ -30,7 +32,7 @@
   <view class="profile-body">
     <view class="profile-avatar-row">
       <view class="profile-avatar"><image class="profile-avatar-photo avatar-outline" src="{{profileUser.avatarFileID || '/images/avatar.png'}}" mode="aspectFill" /></view>
-      <button wx:if="{{isVisitor && user && profileUser.accountId && !profileUnavailable}}" class="profile-user-menu" bindtap="openProfileUserMenu" aria-label="更多用户操作" hover-class="visitor-action-pressed"><image src="/images/interface/menu-two.svg" mode="aspectFit" aria-hidden="true" /></button>
+      <button wx:if="{{isVisitor && user && profileUser.accountId && !profileUnavailable}}" class="profile-user-menu" bindtap="openProfileUserMenu" aria-label="更多用户操作" aria-haspopup="menu" hover-class="none"><image class="{{profileUserMenuPulsing ? 'post-popover-trigger-pulse' : ''}}" src="/images/interface/menu-two.svg" mode="aspectFit" aria-hidden="true" bindanimationend="finishProfileUserMenuPulse" /></button>
     </view>
     <view wx:if="{{error && !loginSheetOpen}}" class="cs-error profile-error">{{error}}<button class="retry" bindtap="refresh" disabled="{{loading || coverBusy}}">重新读取</button></view>
     <view class="profile-heading">
@@ -63,23 +65,14 @@
   </view>
 
   <view wx:if="{{!profileUnavailable}}" class="profile-timeline" style="min-height: calc(100vh - {{navHeight}}px);">
-  <view wx:if="{{postsMenuOpen || mediaMenuOpen}}" class="posts-menu-backdrop" bindtap="closePostsMenu" catchtouchmove="stopMenuEvent"></view>
-  <view class="content-tabs {{postsMenuOpen || mediaMenuOpen ? 'posts-menu-open' : ''}}" style="top: {{navHeight}}px;" role="tablist">
-    <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
+  <view class="content-tabs" style="top: {{navHeight}}px;" role="tablist">
+    <button wx:for="{{contentTabs}}" wx:key="key" class="content-tab content-tab-{{item.key}} {{selectedContent === item.key ? 'selected' : ''}}" bindtap="selectContent" data-key="{{item.key}}" aria-label="{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}" aria-role="tab" aria-selected="{{selectedContent === item.key}}">
       <image class="content-tab-icon" src="{{item.key === 'album' && mediaTab === 'videos' ? '/images/profile-tabs/videos' : item.iconSource || '/images/tab-bar/' + item.icon}}{{selectedContent === item.key ? '-active' : ''}}.{{item.iconExtension || 'png'}}" mode="aspectFit" />
       <text wx:if="{{selectedContent === item.key}}" class="content-tab-label">{{item.key === 'album' && mediaTab === 'videos' ? '视频' : item.label}}</text>
-      <image wx:if="{{!isVisitor && item.key === 'posts' && selectedContent === 'posts'}}" class="tab-dropdown-chevron {{postsMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
-      <view wx:if="{{item.key === 'album' && !profileBlocked}}" class="media-menu-trigger" catchtap="toggleMediaMenu" aria-role="button" aria-label="切换相册或视频" aria-expanded="{{mediaMenuOpen}}"><image class="tab-dropdown-chevron {{mediaMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view>
+      <image wx:if="{{!isVisitor && item.key === 'posts' && selectedContent === 'posts'}}" class="tab-dropdown-chevron {{postPopover.kind === 'posts' && !postPopover.closing ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" />
+      <view wx:if="{{item.key === 'album' && !profileBlocked}}" class="media-menu-trigger" catchtap="toggleMediaMenu" aria-role="button" aria-label="切换相册或视频" aria-expanded="{{postPopover.kind === 'media' && !postPopover.closing}}"><image class="tab-dropdown-chevron {{postPopover.kind === 'media' && !postPopover.closing ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view>
     </button>
-    <view class="content-tab-indicator" style="left: {{contentIndex * 25 + 4.5}}%;" aria-hidden="true"></view>
-    <view wx:if="{{postsMenuOpen}}" class="posts-menu tab-dropdown" aria-label="动态来源">
-      <button class="tab-dropdown-option {{postScope === 'square' ? 'active' : ''}}" data-scope="square" bindtap="selectPostScope" aria-label="广场动态" aria-pressed="{{postScope === 'square'}}">动态广场</button>
-      <button class="tab-dropdown-option {{postScope === 'campus' ? 'active' : ''}}" data-scope="campus" bindtap="selectPostScope" aria-label="校园圈" aria-pressed="{{postScope === 'campus'}}">校园圈</button>
-    </view>
-    <view wx:if="{{mediaMenuOpen}}" class="media-menu tab-dropdown" aria-label="切换相册或视频">
-      <button class="tab-dropdown-option {{mediaTab === 'album' ? 'active' : ''}}" data-media="album" bindtap="selectMediaTab" aria-pressed="{{mediaTab === 'album'}}">相册</button>
-      <button class="tab-dropdown-option {{mediaTab === 'videos' ? 'active' : ''}}" data-media="videos" bindtap="selectMediaTab" aria-pressed="{{mediaTab === 'videos'}}">视频</button>
-    </view>
+    <view class="content-tab-indicator label-indicator {{labelIndicatorDirection ? 'moving-' + labelIndicatorDirection : ''}}" style="{{labelIndicatorStyle}}" aria-hidden="true"></view>
   </view>
   <view class="profile-panels-viewport" style="min-height: calc(100vh - {{navHeight}}px - 94rpx);">
   <view wx:if="{{profileBlocked}}" class="profile-blocked" role="status">
@@ -92,10 +85,18 @@
     <view wx:if="{{postsError}}" class="profile-post-error"><text>{{postsError}}</text><button size="mini" bindtap="retryOwnPosts">重试</button></view>
     <view wx:if="{{postsLoading && !ownPosts.length}}" class="content-empty"><view class="empty-title">正在读取动态…</view></view>
     <block wx:else>
-      <square-post wx:for="{{ownPosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" profile-posts="{{!isVisitor && selectedContent === 'posts' && postScope === 'square'}}"
-        seven-line-preview="{{profileUser.officialVerified || item.author.officialVerified}}"
-        feed-video-enabled="{{(profileUser.officialVerified || item.author.officialVerified) && selectedContent === 'posts' && !profileUnavailable && !menuOpen && !authChecking && !loginSheetOpen && !commentPostId && !postsMenuOpen && !mediaMenuOpen && !composerOpen && !unfollowTarget}}"
-        pinned="{{item._id === pinnedPostId}}" show-pin="{{isVisitor}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+      <view wx:for="{{ownPosts}}" wx:key="_id" id="{{'profile-posts-row-' + item._id}}"
+        class="post-removal-row {{postRemoval.id === item._id && postRemoval.target === 'profile-posts' ? 'is-removing is-' + postRemoval.phase + (postRemoval.tiles ? ' has-tiles' : '') : ''}}"
+        style="{{postRemoval.id === item._id && postRemoval.target === 'profile-posts' ? '--remove-height: ' + postRemoval.height + 'px; --fade-duration: ' + postRemoval.fadeDuration + 'ms; --reflow-duration: ' + postRemoval.reflowDuration + 'ms;' : ''}}"
+        data-id="{{item._id}}" data-phase="reflow" aria-hidden="{{postRemoval.id === item._id && postRemoval.target === 'profile-posts'}}" bindanimationend="onPostRemovalAnimationEnd">
+        <view class="post-removal-card" data-id="{{item._id}}" data-phase="scatter">
+          <square-post id="{{'profile-posts-post-' + item._id}}" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" profile-posts="{{!isVisitor && selectedContent === 'posts' && postScope === 'square'}}"
+            seven-line-preview="{{profileUser.officialVerified || item.author.officialVerified}}"
+            feed-video-enabled="{{(profileUser.officialVerified || item.author.officialVerified) && selectedContent === 'posts' && !profileUnavailable && !menuOpen && !authChecking && !loginSheetOpen && !commentPostId && !postPopover && !composerOpen && !unfollowTarget && (postRemoval.id !== item._id || postRemoval.target !== 'profile-posts' || postRemoval.phase === 'prepare')}}"
+            pinned="{{item._id === pinnedPostId}}" show-pin="{{isVisitor}}" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+        </view>
+        <template is="post-removal-canvas" data="{{removal: postRemoval.target === 'profile-posts' ? postRemoval : null, id: item._id}}" />
+      </view>
       <view wx:if="{{!ownPosts.length && !postsError}}" class="content-empty"><view class="empty-title">还没有发布广场动态</view></view>
       <view wx:if="{{postsMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{ownPosts.length && !postsHasMore}}" class="profile-post-end">已经看到这里了</view>
@@ -110,7 +111,15 @@
     <view wx:if="{{quotesError}}" class="profile-post-error"><text>{{quotesError}}</text><button size="mini" bindtap="retryOwnQuotes">重试</button></view>
     <view wx:if="{{quotesLoading && !quotePosts.length}}" class="content-empty"><view class="empty-title">正在读取引用…</view></view>
     <block wx:else>
-      <square-post wx:for="{{quotePosts}}" wx:key="_id" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+      <view wx:for="{{quotePosts}}" wx:key="_id" id="{{'profile-quotes-row-' + item._id}}"
+        class="post-removal-row {{postRemoval.id === item._id && postRemoval.target === 'profile-quotes' ? 'is-removing is-' + postRemoval.phase + (postRemoval.tiles ? ' has-tiles' : '') : ''}}"
+        style="{{postRemoval.id === item._id && postRemoval.target === 'profile-quotes' ? '--remove-height: ' + postRemoval.height + 'px; --fade-duration: ' + postRemoval.fadeDuration + 'ms; --reflow-duration: ' + postRemoval.reflowDuration + 'ms;' : ''}}"
+        data-id="{{item._id}}" data-phase="reflow" aria-hidden="{{postRemoval.id === item._id && postRemoval.target === 'profile-quotes'}}" bindanimationend="onPostRemovalAnimationEnd">
+        <view class="post-removal-card" data-id="{{item._id}}" data-phase="scatter">
+          <square-post id="{{'profile-quotes-post-' + item._id}}" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+        </view>
+        <template is="post-removal-canvas" data="{{removal: postRemoval.target === 'profile-quotes' ? postRemoval : null, id: item._id}}" />
+      </view>
       <view wx:if="{{!quotePosts.length && !quotesError}}" class="content-empty"><view class="empty-title">{{contentTabs[2].empty}}</view></view>
       <view wx:if="{{quotesMoreLoading}}" class="profile-post-end">正在加载…</view>
       <view wx:elif="{{quotePosts.length && !quotesHasMore}}" class="profile-post-end">已经看到这里了</view>
@@ -162,3 +171,4 @@
 <square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />
 
 <unfollow-confirm wx:if="{{unfollowTarget}}" target="{{unfollowTarget}}" closing="{{unfollowClosing}}" busy="{{unfollowBusy}}" bind:cancel="cancelUnfollowPrompt" bind:confirm="confirmUnfollowPrompt" />
+<template is="post-popover" data="{{menu: postPopover, closing: postPopover.closing, label: postPopover.label, options: postPopover.options, kind: postPopover.kind, centered: postPopover.centered, selectedKey: postPopover.selectedKey}}" />

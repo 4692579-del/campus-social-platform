@@ -1,11 +1,14 @@
 const users = require('../services/user');
 const square = require('../services/square');
 const { postPreview } = require('./post-view');
+const { CLOSE_DURATION, popoverLayout } = require('./post-popover');
 
 const reasons = [
   { key: 'spam', label: '垃圾广告' }, { key: 'illegal', label: '违法违规' },
   { key: 'sexual', label: '色情低俗' }, { key: 'abuse', label: '辱骂骚扰' }, { key: 'other', label: '其他问题' },
 ];
+const postLists = ['posts', 'followingPosts', 'ownPosts', 'quotePosts'];
+const postListOffsets = { posts: 'feedOffset', ownPosts: 'postsOffset', quotePosts: 'quotesOffset' };
 const popup = (name, options) => new Promise((resolve, reject) => wx[name]({ ...options, success: resolve, fail: reject }));
 function snapshot() { const user = users.getCachedUser(); return { id: user && user._id, version: users.getSessionVersion() }; }
 function current(page, account) {
@@ -22,9 +25,15 @@ function profileAccount(page, viewer) {
   // 本人页在重新展示时跟随当前会话；旧会话的资料不能被当成另一个人的访客页复用。
   return viewer && viewer.accountId || '';
 }
-function find(page, id) {
-  return square.cachedPost(id) || [...(page.data.posts || []), ...(page.data.ownPosts || []), ...(page.data.quotePosts || [])].find(post => post._id === id);
+function findListed(page, id) {
+  const active = page.activeFeedPosts?.().find(post => post._id === id);
+  if (active) return active;
+  for (const key of postLists) {
+    const post = page.data[key]?.find(row => row._id === id);
+    if (post) return post;
+  }
 }
+function find(page, id) { return square.cachedPost(id) || findListed(page, id); }
 function login(page) {
   if (users.getCachedUser()) return true;
   if (typeof page.requestLogin === 'function') page.requestLogin();
@@ -38,13 +47,12 @@ function syncCommentsTabBar(page) {
 function sync(page, id, removed = false) {
   const latest = removed ? null : square.cachedPost(id), values = {};
   if (latest?.contentType === 'news') { paintLike(page, id, latest); return; }
-  for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(page.data[key])) {
+  for (const key of postLists) if (Array.isArray(page.data[key])) {
     const found = page.data[key].some(post => post._id === id);
+    if (!found) continue;
     values[key] = removed ? page.data[key].filter(post => post._id !== id) : page.data[key].map(post => post._id === id && latest ? postPreview(latest) : post);
-    if (removed && found) {
-      const offset = key === 'posts' ? 'feedOffset' : key === 'quotePosts' ? 'quotesOffset' : 'postsOffset';
-      values[offset] = Math.max(0, (page.data[offset] || 0) - 1);
-    }
+    const offset = postListOffsets[key];
+    if (removed && offset) values[offset] = Math.max(0, (page.data[offset] || 0) - 1);
   }
   if (removed) {
     if (page.data.pinnedPostId === id) values.pinnedPostId = '';
@@ -57,7 +65,7 @@ function sync(page, id, removed = false) {
 function paintLike(page, id, post) {
   if (!post) return;
   const values = {}, liked = Boolean(post.liked), count = Math.max(0, Number(post.likeCount) || 0);
-  for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(page.data[key])) {
+  for (const key of postLists) if (Array.isArray(page.data[key])) {
     const index = page.data[key].findIndex(row => row._id === id);
     if (index < 0) continue;
     const row = page.data[key][index];
@@ -99,7 +107,7 @@ module.exports = {
       if (!current(this, account)) return;
       if (typeof this.refreshFollowPreviews === 'function') this.refreshFollowPreviews();
       const patch = {}; for (const id of ids) { const state = square.cachedFollowState(id); if (state) patch[`followByAccount.${id}`] = state; }
-      if (this.data.authorMenu) { const post = (this.data.posts || []).find(row => row._id === this.data.authorMenu.id), state = post && square.cachedFollowState(post.author.accountId); if (state && this.data.authorMenu.following !== state.following) patch['authorMenu.following'] = state.following; }
+      if (this.data.authorMenu) { const post = findListed(this, this.data.authorMenu.id), state = post && square.cachedFollowState(post.author.accountId); if (state && this.data.authorMenu.following !== state.following) patch['authorMenu.following'] = state.following; }
       if (Object.keys(patch).length) this.setData(patch);
     };
     paint(); return square.getFollowStates(ids).then(paint).catch(() => { /* 不把未知状态伪造成已关注。 */ });
@@ -135,7 +143,10 @@ module.exports = {
     if (this._unloaded || this._visible === false || !users.getCachedUser()) return;
     if (this.data.followByAccount) this.setData({ [`followByAccount.${event.accountId}`]: event });
     if (typeof this.refreshFollowPreviews === 'function') this.refreshFollowPreviews();
-    if (this.data.authorMenu) this.setData({ 'authorMenu.following': Boolean(square.cachedFollowState(this.data.posts.find(row => row._id === this.data.authorMenu.id)?.author?.accountId)?.following) });
+    if (this.data.authorMenu) {
+      const post = findListed(this, this.data.authorMenu.id);
+      if (post?.author?.accountId === event.accountId) this.setData({ 'authorMenu.following': event.following });
+    }
     this.refreshFollowPresentation();
     if (typeof this.onFollowingChanged === 'function') this.onFollowingChanged(event);
   },
@@ -251,21 +262,21 @@ module.exports = {
     if (typeof square.subscribeAI === 'function') this._stopAIUpdates = square.subscribeAI(result => {
       if (!current(this, snapshot()) || !this.data.user || this.data.user._id !== users.getCachedUser()._id || !result.post || !Number.isSafeInteger(result.post.replyCount)) return;
       const values = {};
-      for (const key of ['posts', 'ownPosts', 'quotePosts']) if (Array.isArray(this.data[key])) {
+      for (const key of postLists) if (Array.isArray(this.data[key])) {
         const index = this.data[key].findIndex(row => row._id === result.postId);
         if (index >= 0) values[`${key}[${index}].replyCount`] = result.post.replyCount;
       }
       if (Object.keys(values).length) this.setData(values);
     });
   },
-  stopPostUpdates() { this.closeUnfollowPrompt(true); if (this._stopFollowUpdates) this._stopFollowUpdates(); this._stopFollowUpdates = null; if (this._stopPostUpdates) this._stopPostUpdates(); if (this._stopAIUpdates) this._stopAIUpdates(); this._stopPostUpdates = null; this._stopAIUpdates = null; },
+  stopPostUpdates() { this.closePostPopover(true); this.closeUnfollowPrompt(true); if (this._stopFollowUpdates) this._stopFollowUpdates(); this._stopFollowUpdates = null; if (this._stopPostUpdates) this._stopPostUpdates(); if (this._stopAIUpdates) this._stopAIUpdates(); this._stopPostUpdates = null; this._stopAIUpdates = null; },
   async reactPost(event) {
     if (this._unloaded || this._visible === false || this.data.menuOpen || this.data.postsMenuOpen || this.interactionBlocked && this.interactionBlocked()) return;
     const { id, kind } = event.detail;
     if (kind !== 'like' || !login(this)) return;
     const account = snapshot();
     if (!this.data.user || this.data.user._id !== account.id) return;
-    const post = [...(this.data.posts || []), ...(this.data.ownPosts || []), ...(this.data.quotePosts || [])].find(row => row._id === id);
+    const post = findListed(this, id);
     if (!post) return;
     this._likeClicks = this._likeClicks || new Map();
     let operation = this._likeClicks.get(id);
@@ -302,10 +313,47 @@ module.exports = {
   },
   commentLogin() { if (typeof wx.hideKeyboard === 'function') wx.hideKeyboard(); this.closeComments(); login(this); },
   commentChanged(event) { sync(this, event.detail.id); },
+  swallowPostPopover() {},
+  onPostPopoverDismiss(event) {
+    if (event.currentTarget.dataset.kind === 'author') this.dismissAuthorMenu();
+    else this.closePostPopover();
+  },
+  onPostPopoverSelect(event) {
+    const { kind, action } = event.currentTarget.dataset;
+    if (kind === 'author') return this.selectAuthorAction(event);
+    if (this.data.postPopover?.options.some(option => option.key === action)) this.closePostPopover(false, action);
+  },
+  openPostPopover(anchor, options, label, { kind = 'post', centered = false, selectedKey = '', ...layoutOptions } = {}) {
+    if (this._postPopover) return Promise.resolve('');
+    const layout = popoverLayout(wx, anchor, options.length, { alignRight: true, ...layoutOptions });
+    return new Promise(resolve => {
+      this._postPopover = { resolve, closing: false };
+      this.setData({ postPopover: { ...layout, options, label, kind, centered, selectedKey, closing: false } });
+    });
+  },
+  closePostPopover(immediate = false, choice = '') {
+    const pending = this._postPopover;
+    if (!pending || (pending.closing && !immediate)) return;
+    const finish = action => {
+      if (this._postPopover !== pending) return;
+      clearTimeout(pending.timer);
+      this._postPopover = null;
+      if (!this._unloaded) this.setData({ postPopover: null });
+      pending.resolve(action);
+    };
+    if (immediate) { finish(''); return; }
+    pending.closing = true;
+    this.setData({ 'postPopover.closing': true }, () => {
+      if (this._postPopover === pending) pending.timer = setTimeout(() => finish(choice), CLOSE_DURATION);
+    });
+  },
   async managePost(event) {
-    if (this._postMenuBusy || this._unloaded || this._visible === false || !login(this)) return;
+    if (this._postMenuBusy || this._postRemoval || this._unloaded || this._visible === false || !login(this)) return;
     const id = event.detail.id, post = find(this, id), user = users.getCachedUser();
-    if (!post) return;
+    const anchor = event.detail.anchor;
+    if (!post || !anchor || !Number.isFinite(anchor.left) || !Number.isFinite(anchor.bottom) ||
+        this.data.menuOpen || this.interactionBlocked?.() || this.data.authorMenu) return;
+    if (typeof this.stopHomeRefresh === 'function') this.stopHomeRefresh();
     const own = user.accountId && post.author && post.author.accountId ? post.author.accountId === user.accountId :
       post.isOwn === true && this.data.user && this.data.user._id === user._id;
     const account = snapshot();
@@ -313,12 +361,19 @@ module.exports = {
     try {
       const pinContext = () => own && this.route === 'pages/profile/index' && this.data.selectedContent === 'posts' && this.data.postScope === 'square' &&
         event.detail.profilePosts === true && !post.quotePostId && (this.data.ownPosts || []).some(row => row._id === id);
-      const pinnedId = typeof square.cachedProfilePin === 'function' && square.cachedProfilePin() ? square.cachedProfilePin().pinnedPostId : this.data.pinnedPostId || '';
+      const pinnedId = square.cachedProfilePin?.()?.pinnedPostId ?? this.data.pinnedPostId ?? '';
       const canManagePin = pinContext() && (!pinnedId || pinnedId === id);
-      const choices = [own ? '删除动态' : '举报动态', ...(canManagePin ? [pinnedId === id ? '取消置顶' : '置顶'] : [])];
-      const choice = await popup('showActionSheet', { itemList: choices, itemColor: canManagePin ? '#171b20' : own ? '#d84a4a' : '#171b20' });
+      const choices = own ? [
+        { key: 'analytics', label: '查看数据分析', icon: 'post-analytics' },
+        { key: 'delete', label: '删除动态', icon: 'trash-red', danger: true },
+      ] : [
+        { key: 'less', label: '减少推荐', icon: 'post-less' },
+        { key: 'report', label: '举报动态', icon: 'alert-circle' },
+      ];
+      if (canManagePin) choices.push({ key: 'pin', label: pinnedId === id ? '取消置顶' : '置顶', icon: 'pin' });
+      const choice = await this.openPostPopover(anchor, choices, '动态操作');
       if (!current(this, account)) return;
-      if (choice.tapIndex === 1 && canManagePin) {
+      if (choice === 'pin' && canManagePin) {
         if (!pinContext()) return;
         await square.setProfilePin(id, pinnedId !== id);
         if (!current(this, account)) return;
@@ -327,18 +382,26 @@ module.exports = {
         wx.showToast({ title: pinnedId === id ? '已取消置顶' : '已置顶', icon: 'none' });
         return;
       }
-      if (choice.tapIndex !== 0) return;
-      if (own) {
+      if (choice === 'delete' && own) {
+        const view = this._viewVersion, target = this.postRemovalTarget?.(id);
+        const pixels = target ? this.prepareDeletedPost(id) : null;
         const confirm = await popup('showModal', { title: '删除动态', content: '确定删除这条动态吗？删除后将不再展示。', confirmText: '删除', confirmColor: '#d84a4a' });
         if (!confirm.confirm || !current(this, account)) return;
         await square.deletePost(id);
         if (!current(this, account)) return;
-        sync(this, id, true);
-        wx.showToast({ title: '动态已删除' });
-      } else {
-        const selection = await popup('showActionSheet', { itemList: reasons.map(reason => reason.label) });
-        if (!current(this, account) || !reasons[selection.tapIndex]) return;
-        const reason = reasons[selection.tapIndex];
+        const remove = () => {
+          const latest = snapshot();
+          if (this._unloaded || latest.id !== account.id || latest.version !== account.version) return;
+          sync(this, id, true);
+          if (current(this, account)) wx.showToast({ title: '动态已删除' });
+        };
+        if (target && this._viewVersion === view && this.postRemovalTarget(id) === target &&
+            this.animateDeletedPost(id, remove, pixels)) return;
+        remove();
+      } else if (choice === 'report' && !own) {
+        const selection = await this.openPostPopover(anchor, reasons, '举报原因');
+        const reason = reasons.find(option => option.key === selection);
+        if (!current(this, account) || !reason) return;
         const confirm = await popup('showModal', { title: '举报动态', content: `举报原因：${reason.label}。提交后将交由管理员处理。`, confirmText: '提交举报', confirmColor: '#4775fa' });
         if (!confirm.confirm || !current(this, account)) return;
         const result = await square.reportPost(id, reason.key);

@@ -4,6 +4,8 @@ const { menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const square = require('../../services/square');
 const { postPreview, postView } = require('../../utils/post-view');
 const postActions = require('../../utils/post-actions');
+const postRemovalMotion = require('../../utils/post-removal-motion');
+const { labelIndicator, measureIndicator } = require('../../utils/label-indicator');
 const postImages = require('../../services/post-images');
 const publicProfile = require('../../utils/public-profile');
 const { navigationLayout, defaultGeometry, navigationState, pullState } = require('../../utils/profile-navigation');
@@ -16,6 +18,14 @@ const userReportReasons = [
   { key: 'abuse', label: '辱骂骚扰' },
   { key: 'other', label: '其他问题' },
 ];
+const profileTabMenus = {
+  posts: { tab: 'posts', label: '动态来源', field: 'postScope', options: [
+    { key: 'square', label: '动态广场' }, { key: 'campus', label: '校园圈' },
+  ] },
+  media: { tab: 'album', label: '切换相册或视频', field: 'mediaTab', options: [
+    { key: 'album', label: '相册' }, { key: 'videos', label: '视频' },
+  ] },
+};
 
 function wxCall(name, options) {
   return new Promise((resolve, reject) => wx[name]({ ...options, success: resolve, fail: reject }));
@@ -23,6 +33,7 @@ function wxCall(name, options) {
 
 Page({
   ...postActions,
+  ...postRemovalMotion,
   ...publicProfile.methods,
   data: {
     unfollowTarget: null, unfollowClosing: false, unfollowBusy: false,
@@ -34,10 +45,11 @@ Page({
     coverHeight: 202, navCoverOffset: 0, navBlurOpacity: 0, navShadeOpacity: 0, navTitleOpacity: 0, postCountText: '帖子',
     coverArtHeight: 250, pullMax: 48, pullThreshold: 30,
     profilePullOffset: 0, pullOpacity: 0, pullDragging: false, profileRefreshing: false, profileRefreshPhase: 'idle',
-    menuOpen: false, confirmingLogout: false, composerOpen: false,
+    menuOpen: false, confirmingLogout: false, composerOpen: false, profileUserMenuPulsing: false,
     authChecking: true, loginSheetOpen: false,
     menuItems, utilityMenuItems,
     likeCount: '—', followingCount: '—', followerCount: '—', selectedContent: 'posts', contentIndex: 0,
+    ...labelIndicator({}, 0, 0, 4, 140),
     contentTabs: [
       { key: 'posts', label: '动态', icon: 'posts', empty: '还没有发布动态' },
       { key: 'replies', label: '回复', icon: 'replies', iconSource: '/images/profile-tabs/replies', iconExtension: 'svg', empty: '还没有回复' },
@@ -45,7 +57,7 @@ Page({
       { key: 'album', label: '相册', icon: 'album', iconSource: '/images/interface/album', iconExtension: 'svg', empty: '还没有上传照片' },
     ],
     emptyText: '还没有发布动态', commentPostId: '', historyCommentPostId: '', historyReplyId: '', historyReplyInput: false,
-    postsMenuOpen: false, mediaMenuOpen: false, mediaTab: 'album', postScope: 'square', pinnedPostId: '', ownPosts: [], postsLoading: false, postsMoreLoading: false,
+    postPopover: null, mediaTab: 'album', postScope: 'square', postRemoval: null, pinnedPostId: '', ownPosts: [], postsLoading: false, postsMoreLoading: false,
     postsError: '', postsHasMore: false, postsOffset: 0,
     quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0,
     albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '',
@@ -60,6 +72,9 @@ Page({
     if (cached) this.applyUser(cached);
   },
   onUnload() {
+    this._profileTabMenuMeasure = null;
+    this.finishPostRemoval();
+    this.resetProfileUserMenu();
     this._videoRequest = null;
     this.stopProfileVideo();
     this.stopOwnLikesUpdates();
@@ -83,6 +98,10 @@ Page({
     this._accountVersion = (this._accountVersion || 0) + 1;
   },
   onHide() {
+    this._profileTabMenuMeasure = null;
+    this._indicatorMeasure = (this._indicatorMeasure || 0) + 1;
+    this.finishPostRemoval();
+    this.resetProfileUserMenu();
     this._videoRequest = null;
     this.stopProfileVideo();
     this.stopOwnLikesUpdates();
@@ -103,7 +122,7 @@ Page({
     this._logoutVersion = (this._logoutVersion || 0) + 1;
     this._postsRequest = null;
     this._quotesRequest = null;
-    this.setData({ confirmingLogout: false, loading: false, authChecking: false, loginSheetOpen: false, postsMenuOpen: false, mediaMenuOpen: false, videosLoading: false, videosMoreLoading: false });
+    this.setData({ confirmingLogout: false, loading: false, authChecking: false, loginSheetOpen: false, videosLoading: false, videosMoreLoading: false });
     this.setAuthBlocked(false);
   },
   onShow() {
@@ -119,14 +138,30 @@ Page({
     this.syncNavigation();
     this.updateNavigationScroll();
     this.measureProfileNavigation();
+    this.measureContentIndicator();
     this.scheduleProfileScrollSync();
     return this.refresh(false);
   },
-  onReady() { this.syncNavigation(); this.measureProfileNavigation(); },
-  onResize() { this.updateNavigationLayout(); this.measureProfileNavigation(); },
+  onReady() { this.syncNavigation(); this.measureProfileNavigation(); this.measureContentIndicator(); },
+  onResize() { this.finishPostRemoval(); this._profileUserMenuMeasurement = null; this._profileTabMenuMeasure = null; this.closePostPopover(true); this.updateNavigationLayout(); this.measureProfileNavigation(); this.measureContentIndicator(true); },
+  contentIndicatorState(index = this.data.contentIndex) {
+    const hasMediaArrow = index === 3 && !this.data.profileBlocked;
+    const width = index === 0 && !this.data.isVisitor ? 140 : hasMediaArrow ? 146 : 104;
+    return labelIndicator(this, index, this.data.contentIndex, this.data.contentTabs.length, width, hasMediaArrow ? -3 : 0);
+  },
+  measureContentIndicator(reset = false) {
+    if (reset) this._indicatorLabels = null;
+    measureIndicator(this, wx, '.content-tabs', [
+      '.content-tab.selected .content-tab-icon',
+      '.content-tab.selected .content-tab-label',
+      '.content-tab.selected .tab-dropdown-chevron',
+    ],
+      this.data.contentIndex, () => this.contentIndicatorState());
+  },
   updateNavigationLayout() {
     let info = {}, capsule;
     try { info = wx.getWindowInfo(); capsule = wx.getMenuButtonBoundingClientRect(); } catch (error) { /* 保守适配旧客户端。 */ }
+    this._profileViewportHeight = info.windowHeight;
     const layout = navigationLayout(info, capsule);
     this._navGeometry = defaultGeometry(layout, info.windowWidth || info.screenWidth || 375);
     this.setData(layout);
@@ -228,7 +263,7 @@ Page({
   },
   startProfilePull(event) {
     this._pullGesture = null;
-    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen || this.data.mediaMenuOpen || this.data.profileRefreshing) return;
+    if (this._postRemoval || this._unloaded || this._visible === false || this.interactionBlocked() || this.data.commentPostId || this.data.postPopover || this.data.profileRefreshing) return;
     const touch = event.touches && event.touches[0];
     if (touch && event.touches.length === 1) {
       this._pullGesture = { x: touch.clientX, y: touch.clientY, lastY: touch.clientY, active: false };
@@ -322,7 +357,7 @@ Page({
     return this._profilePullRequest === request && !this._unloaded && this._visible !== false &&
       this.data.user && this.data.user._id === request.account && this.data.selectedContent === request.tab &&
       (typeof userService.getSessionVersion !== 'function' || userService.getSessionVersion() === request.session) &&
-      this.data.profileAccountId === request.target && !this.interactionBlocked() && !this.data.commentPostId && !this.data.postsMenuOpen && !this.data.mediaMenuOpen;
+      this.data.profileAccountId === request.target && !this.interactionBlocked() && !this.data.commentPostId && !this.data.postPopover;
   },
   scheduleProfileRefresh(request, delay, action) {
     const timer = setTimeout(() => {
@@ -424,6 +459,9 @@ Page({
   applyUser(user) {
     if (this.data.isVisitor) return this.applyPublicViewer(user);
     if ((this.data.user && this.data.user._id) !== (user && user._id)) {
+      this.finishPostRemoval();
+      this._profileTabMenuMeasure = null;
+      this.closePostPopover(true);
       this.closeUnfollowPrompt(true);
       this.resetProfilePull();
       this.closeComments();
@@ -434,9 +472,9 @@ Page({
       this._quotesRequest = null;
       this._albumRequest = null;
       this.resetProfileVideos();
-      this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '', mediaMenuOpen: false, mediaTab: 'album' });
+      this.setData({ albumImages: [], albumLoading: false, albumMoreLoading: false, albumHasMore: false, albumOffset: 0, albumError: '', mediaTab: 'album' });
       this.setData({ quotePosts: [], quotesLoading: false, quotesMoreLoading: false, quotesError: '', quotesHasMore: false, quotesOffset: 0 });
-      this.setData({ pinnedPostId: '', ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, postsMenuOpen: false, composerOpen: false });
+      this.setData({ pinnedPostId: '', ownPosts: [], postCountText: '帖子', postsError: '', postsHasMore: false, postsOffset: 0, postsLoading: false, postsMoreLoading: false, composerOpen: false });
     }
     if (user && this._pendingCover && user.coverFileID === this._pendingCover.fileID) this._pendingCover = null;
     const isVerified = Boolean(user && user.role === 'student' && user.certificationStatus === 'approved' && user.schoolId);
@@ -544,7 +582,9 @@ Page({
     if (this.interactionBlocked() || this._unloaded || this.data.menuOpen) return;
     this.resetProfilePull();
     this.stopProfileVideo();
-    this.setData({ menuOpen: true, postsMenuOpen: false, mediaMenuOpen: false });
+    this._profileTabMenuMeasure = null;
+    this.closePostPopover(true);
+    this.setData({ menuOpen: true });
     this.setMenuTabBarOpen(true);
     this.setMenuNavigationColor(true);
   },
@@ -559,7 +599,6 @@ Page({
       frontColor: open ? '#000000' : '#ffffff', backgroundColor: '#ffffff', fail() {},
     });
   },
-  stopMenuEvent() {},
   prepareMenuSourceReturn() {
     if (this.data.isVisitor) return false;
     if (this._menuSourcePrepared) return true;
@@ -622,32 +661,72 @@ Page({
     if (this.interactionBlocked()) return;
     const tab = this.data.contentTabs.find(item => item.key === event.currentTarget.dataset.key);
     if (!tab) return;
+    if (tab.key !== this.data.selectedContent) this.finishPostRemoval();
     if (tab.key === 'album' && this.data.selectedContent === 'album') return this.toggleMediaMenu();
     this.resetProfilePull();
     this.stopProfileVideo();
     if (!this.data.isVisitor && tab.key === 'posts' && this.data.selectedContent === 'posts') {
-      this.setData({ postsMenuOpen: !this.data.postsMenuOpen, mediaMenuOpen: false });
-      return;
+      return this.openProfileTabMenu('posts');
     }
-    this.setData({ selectedContent: tab.key, contentIndex: this.data.contentTabs.indexOf(tab), emptyText: tab.empty, postsMenuOpen: false, mediaMenuOpen: false });
+    const contentIndex = this.data.contentTabs.indexOf(tab);
+    this._profileTabMenuMeasure = null;
+    if (profileTabMenus[this.data.postPopover?.kind]) this.closePostPopover(true);
+    this.setData({ selectedContent: tab.key, contentIndex, ...this.contentIndicatorState(contentIndex), emptyText: tab.empty });
+    this.measureContentIndicator();
     if (this.data.profileBlocked) return;
     if (tab.key === 'posts' && this.data.postScope === 'square') this.loadOwnPosts();
     if (tab.key === 'reposts') return this.loadOwnQuotes();
     if (tab.key === 'album') return this.loadProfileMedia();
   },
-  closePostsMenu() { this.setData({ postsMenuOpen: false, mediaMenuOpen: false }); },
-  toggleMediaMenu() {
-    if (this.interactionBlocked() || this._unloaded || this._visible === false || this.data.profileBlocked) return;
+  toggleMediaMenu() { return this.openProfileTabMenu('media'); },
+  async openProfileTabMenu(kind) {
+    const menu = profileTabMenus[kind];
+    if (!menu || typeof this.createSelectorQuery !== 'function') return;
+    const view = this._viewVersion || 0, session = userService.getSessionVersion();
+    const selected = this.data.selectedContent;
+    const current = () => this.currentView(view) && userService.getSessionVersion() === session &&
+      this.data.selectedContent === selected && !this.interactionBlocked() && !this.data.menuOpen &&
+      !this.data.commentPostId && !this.data.profileBlocked && !this.data.profileUnavailable &&
+      (kind !== 'posts' || (!this.data.isVisitor && selected === 'posts'));
+    if (!current() || this._postMenuBusy || this._profileUserMenu || this._postRemoval) return;
+    if (this.data.postPopover?.kind === kind) { this.closePostPopover(); return; }
+    if (this.data.postPopover || this._profileTabMenuMeasure) return;
+    const ticket = this._profileTabMenuMeasure = {};
     this.resetProfilePull();
     this.stopProfileVideo();
-    this.setData({ mediaMenuOpen: !this.data.mediaMenuOpen, postsMenuOpen: false });
+    const selector = `.content-tab-${menu.tab}`;
+    const [anchor, tab, indicator, icon, label] = await new Promise(resolve => {
+      const query = this.createSelectorQuery();
+      query.select(selector + ' .tab-dropdown-chevron').boundingClientRect();
+      query.select(selector).boundingClientRect();
+      query.select('.content-tab-indicator').boundingClientRect();
+      query.select(selector + ' .content-tab-icon').boundingClientRect();
+      query.select(selector + ' .content-tab-label').boundingClientRect();
+      query.exec(result => resolve(result || []));
+    });
+    if (this._profileTabMenuMeasure !== ticket) return;
+    this._profileTabMenuMeasure = null;
+    if (!current() || this.data.postPopover || !anchor?.width || !tab?.width || !Number.isFinite(indicator?.bottom)) return;
+    const parts = [anchor, icon, label].filter(part => part?.width > 0);
+    const center = selected === menu.tab
+      ? (Math.min(...parts.map(part => part.left)) + Math.max(...parts.map(part => part.left + part.width))) / 2
+      : tab.left + tab.width / 2;
+    const choice = await this.openPostPopover(anchor, menu.options, menu.label, {
+      kind, centered: true, selectedKey: this.data[menu.field],
+      placement: { center, bottom: indicator.bottom, originY: (anchor.top + anchor.bottom) / 2, widthScale: 2 / 3 },
+    });
+    if (!choice || !current()) return;
+    return kind === 'posts' ? this.selectPostScope(choice) : this.selectMediaTab(choice);
   },
-  selectMediaTab(event) {
-    const mediaTab = event.currentTarget.dataset.media;
-    if (!this.data.mediaMenuOpen || this.interactionBlocked() || this._unloaded || this._visible === false || !['album', 'videos'].includes(mediaTab)) return;
+  selectMediaTab(mediaTab) {
+    if (this.interactionBlocked() || this._unloaded || this._visible === false || !['album', 'videos'].includes(mediaTab)) return;
+    if (this.data.selectedContent !== 'album') this.finishPostRemoval();
     this.resetProfilePull();
     const contentIndex = this.data.contentTabs.findIndex(tab => tab.key === 'album');
-    this.setData({ mediaTab, mediaMenuOpen: false, selectedContent: 'album', contentIndex, emptyText: this.data.contentTabs[contentIndex].empty });
+    if (this._indicatorLabels) this._indicatorLabels[contentIndex] = undefined;
+    this.setData({ mediaTab, selectedContent: 'album', contentIndex,
+      ...this.contentIndicatorState(contentIndex), emptyText: this.data.contentTabs[contentIndex].empty });
+    this.measureContentIndicator();
     return this.loadProfileMedia();
   },
   openComments(event) {
@@ -677,17 +756,32 @@ Page({
     this.closeComments();
     this.setData({ historyCommentPostId: '', historyReplyId: '', historyReplyInput: false });
   },
-  selectPostScope(event) {
+  selectPostScope(scope) {
     if (this.interactionBlocked()) return;
-    const scope = event.currentTarget.dataset.scope;
     if (!['square', 'campus'].includes(scope)) return;
+    if (scope !== this.data.postScope) this.finishPostRemoval();
     this.resetProfilePull();
-    this.setData({ postScope: scope, postsMenuOpen: false });
+    this.setData({ postScope: scope });
     if (scope === 'square') this.loadOwnPosts();
   },
   showOwnPosts(result) { this.showProfilePosts(result, 'posts'); },
   showOwnQuotes(result) { this.showProfilePosts(result, 'quotes'); },
+  postRemovalTarget(id) {
+    if (this.data.isVisitor || this.data.profileUnavailable || this.data.profileBlocked) return;
+    if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' &&
+        this.data.ownPosts.some(post => post._id === id)) return 'profile-posts';
+    if (this.data.selectedContent === 'reposts' && this.data.quotePosts.some(post => post._id === id)) return 'profile-quotes';
+  },
+  restorePostRemovalFeed(motion) {
+    const postType = motion.target === 'profile-quotes' ? 'quotes' : 'posts';
+    const cached = square.cachedOwnFeed(postType);
+    if (cached) this.showProfilePosts(cached, postType);
+  },
   showProfilePosts(result, postType) {
+    if (this._postRemoval?.target === 'profile-' + postType) {
+      this._postRemoval.feedUpdated = true;
+      return;
+    }
     const quote = postType === 'quotes', prefix = quote ? 'quotes' : 'posts';
     this.setData({ [quote ? 'quotePosts' : 'ownPosts']: result.items.filter(post => Boolean(post.quotePostId) === quote).map(postPreview),
       ...(!quote ? { pinnedPostId: result.pinnedPostId || '' } : {}), [prefix + 'HasMore']: result.hasMore, [prefix + 'Offset']: result.nextOffset });
@@ -800,7 +894,7 @@ Page({
   },
   retryProfileVideos() { return this.loadProfileVideos(true); },
   async playProfileVideo(event) {
-    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.mediaMenuOpen ||
+    if (this._unloaded || this._visible === false || this.interactionBlocked() || this.data.menuOpen || this.data.postPopover ||
         this.data.selectedContent !== 'album' || this.data.mediaTab !== 'videos') return;
     const row = this.data.videos.find(item => item._id === event.currentTarget.dataset.id);
     if (!row || this.data.videoPlayback?.id === row._id) return;
@@ -835,7 +929,7 @@ Page({
   },
   stopProfileVideo() { if (this.data.videoPlayback) this.setData({ videoPlayback: null }); },
   openVideoPost(event) {
-    if (this.data.mediaMenuOpen || this.data.mediaTab !== 'videos' || this.data.selectedContent !== 'album') return;
+    if (this.data.postPopover || this.data.mediaTab !== 'videos' || this.data.selectedContent !== 'album') return;
     this.stopProfileVideo();
     this.openPost({ detail: { id: event.currentTarget.dataset.post } });
   },
@@ -848,8 +942,9 @@ Page({
     finally { this._albumPreviewing = false; }
   },
   loadMoreOwnPosts() {
+    if (this._postRemoval) return;
     if (this.data.selectedContent === 'replies') { const history = this.selectComponent('#profile-replies'); if (history && !this.data.commentPostId) return history.loadMore(); return; }
-    if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postsMenuOpen || this.data.mediaMenuOpen) return;
+    if (this.data.profileRefreshing || this.data.pullDragging || this.interactionBlocked() || this.data.commentPostId || this.data.postPopover) return;
     if (this.data.selectedContent === 'reposts') { if (this.data.quotesHasMore) return this.loadOwnQuotes(false, true); return; }
     if (this.data.selectedContent === 'album') {
       if (this.data.mediaTab === 'videos' ? this.data.videosHasMore : this.data.albumHasMore) return this.loadProfileMedia(false, true);
@@ -858,6 +953,14 @@ Page({
     if (this.data.selectedContent === 'posts' && this.data.postScope === 'square' && this.data.postsHasMore) return this.loadOwnPosts(false, true);
   },
   shareProfile() { if (!this.interactionBlocked()) wx.showToast({ title: '个人主页分享将在后续开放', icon: 'none' }); },
+  finishProfileUserMenuPulse() {
+    if (this.data.profileUserMenuPulsing) this.setData({ profileUserMenuPulsing: false });
+  },
+  resetProfileUserMenu() {
+    this._profileUserMenu = null;
+    this._profileUserMenuMeasurement = null;
+    this.finishProfileUserMenuPulse();
+  },
   async openProfileUserMenu() {
     const { profileUser, user, profileUnavailable } = this.data;
     const accountId = profileUser?.accountId;
@@ -865,54 +968,72 @@ Page({
     const sessionVersion = userService.getSessionVersion();
     const current = () => !this._unloaded && this._visible !== false && this._viewVersion === viewVersion &&
       this.data.isVisitor && !this.data.profileUnavailable && !this.interactionBlocked() &&
-      !this.data.commentPostId && !this.data.postsMenuOpen && !this.data.mediaMenuOpen && !this.data.menuOpen &&
+      !this.data.commentPostId && !this.data.menuOpen &&
       this.data.profileUser?.accountId === accountId && this.data.user?._id === user?._id &&
       userService.getCachedUser()?._id === user?._id && userService.getSessionVersion() === sessionVersion;
-    if (this._profileUserMenuBusy || !user || !accountId || accountId === user.accountId || profileUnavailable || !current()) return;
-    this._profileUserMenuBusy = true;
+    if (this._profileUserMenu || this._profileTabMenuMeasure || this._postMenuBusy || this.data.postPopover ||
+        !user || !accountId || accountId === user.accountId || profileUnavailable || !current()) return;
+    const query = typeof this.createSelectorQuery === 'function' ? this.createSelectorQuery() :
+      typeof wx.createSelectorQuery === 'function' ? wx.createSelectorQuery().in(this) : null;
+    if (!query) return;
+    const ticket = this._profileUserMenu = this._profileUserMenuMeasurement = {};
+    const active = () => this._profileUserMenu === ticket && current();
     this.resetProfilePull();
+    if (!this.data.profileUserMenuPulsing) this.setData({ profileUserMenuPulsing: true });
     try {
+      const anchor = await new Promise(resolve => {
+        query.select('.profile-user-menu').boundingClientRect(resolve).exec();
+      });
+      if (this._profileUserMenuMeasurement !== ticket || !active() || this._postMenuBusy ||
+          !anchor || !Number.isFinite(anchor.left) || !Number.isFinite(anchor.bottom) || !(anchor.width > 0)) return;
+      this._profileUserMenuMeasurement = null;
       const blocked = this.data.profileBlocked;
       const label = blocked ? '取消拉黑' : '拉黑用户';
-      const choice = await wxCall('showActionSheet', { itemList: ['举报用户', label], itemColor: '#171b20' });
-      if (!current()) return;
-      if (choice.tapIndex === 1) {
+      const choice = await this.openPostPopover(anchor, [
+        { key: 'report', label: '举报用户', icon: 'alert-circle' },
+        { key: 'block', label, icon: 'user-block' },
+      ], '用户操作');
+      if (!active()) return;
+      if (choice === 'block') {
         const confirm = await wxCall('showModal', {
           title: label,
           content: blocked ? '取消拉黑后可以查看对方内容。' : '拉黑会取消关注，并隐藏对方的主页内容和广场动态。',
           confirmText: blocked ? '取消拉黑' : '拉黑', confirmColor: blocked ? '#4775fa' : '#d84a4a',
         });
-        if (!confirm.confirm || !current() || blocked !== this.data.profileBlocked) return;
+        if (!confirm.confirm || !active() || blocked !== this.data.profileBlocked) return;
         await square.setBlock(accountId, !blocked);
-        if (!current()) return;
+        if (!active()) return;
         this.cancelPublicReads();
         this.applyProfileBlock(!blocked);
         wx.showToast({ title: blocked ? '已取消拉黑' : '已拉黑', icon: 'none' });
         if (blocked) await this.refreshPublicProfile(true);
         return;
       }
-      if (choice.tapIndex !== 0) return;
-      const selection = await wxCall('showActionSheet', { itemList: userReportReasons.map(reason => reason.label) });
-      const reason = userReportReasons[selection.tapIndex];
-      if (!reason || !current()) return;
+      if (choice !== 'report') return;
+      const selection = await this.openPostPopover(anchor, userReportReasons, '举报原因');
+      const reason = userReportReasons.find(reason => reason.key === selection);
+      if (!reason || !active()) return;
       const confirm = await wxCall('showModal', {
         title: '举报用户', content: `举报原因：${reason.label}。提交后将交由管理员处理。`,
         confirmText: '提交举报', confirmColor: '#4775fa',
       });
-      if (!confirm.confirm || !current()) return;
+      if (!confirm.confirm || !active()) return;
       const result = await square.reportUser(accountId, reason.key);
-      if (current()) wx.showToast({ title: result.alreadyReported ? '你已举报过该用户' : '举报已提交', icon: 'none' });
+      if (active()) wx.showToast({ title: result.alreadyReported ? '你已举报过该用户' : '举报已提交', icon: 'none' });
     } catch (error) {
-      if (current() && !/cancel/i.test(error?.errMsg || '')) wx.showToast({ title: error?.message || '操作失败，请重试', icon: 'none' });
+      if (active() && !/cancel/i.test(error?.errMsg || '')) wx.showToast({ title: error?.message || '操作失败，请重试', icon: 'none' });
     } finally {
-      this._profileUserMenuBusy = false;
+      if (this._profileUserMenuMeasurement === ticket) this._profileUserMenuMeasurement = null;
+      if (this._profileUserMenu === ticket) this._profileUserMenu = null;
     }
   },
   publishPost(event) {
     if (this.interactionBlocked() || !this.data.user || this.data.commentPostId) return;
     this.resetProfilePull();
     this.stopProfileVideo();
-    this.setData({ composerOpen: true, postsMenuOpen: false, mediaMenuOpen: false, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
+    this._profileTabMenuMeasure = null;
+    this.closePostPopover(true);
+    this.setData({ composerOpen: true, composerQuote: event && event.quotePost || null, composerQuoteOwnerId: this.data.user._id });
     this.syncNavigation();
   },
   closeComposer(event) {
@@ -966,7 +1087,8 @@ Page({
         userService.logout();
         this.closeMenu();
         this.applyUser(null);
-        this.setData({ error: '', selectedContent: 'posts', contentIndex: 0, emptyText: '还没有发布动态' });
+        this.setData({ error: '', selectedContent: 'posts', contentIndex: 0, ...this.contentIndicatorState(0), emptyText: '还没有发布动态' });
+        this.measureContentIndicator(true);
       },
       fail: () => {
         if (!this._unloaded && version === this._logoutVersion) wx.showToast({ title: '暂时无法确认，请重试', icon: 'none' });

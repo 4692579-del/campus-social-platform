@@ -1,54 +1,77 @@
 <import src="../../templates/account-menu.wxml" />
 <import src="../../templates/account-avatar.wxml" />
 <import src="../../templates/login-sheet.wxml" />
+<import src="../../templates/post-popover.wxml" />
+<import src="../../templates/post-removal.wxml" />
 <wxs module="headerMotion" src="./header-motion.wxs" />
+<template name="home-post-feed">
+  <view wx:if="{{error}}" class="feed-error"><text>{{error}}</text><button size="mini" bindtap="retryFeed">重试</button></view>
+  <view wx:for="{{loading && !items.length ? skeletons : []}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view>
+  <view wx:for="{{items}}" wx:key="_id" id="{{(following ? 'home-following-row-' : 'home-row-') + item._id}}"
+    class="post-removal-row {{removal.id === item._id ? 'is-removing is-' + removal.phase + (removal.tiles ? ' has-tiles' : '') : ''}}"
+    style="{{removal.id === item._id ? '--remove-height: ' + removal.height + 'px; --fade-duration: ' + removal.fadeDuration + 'ms; --reflow-duration: ' + removal.reflowDuration + 'ms;' : ''}}"
+    data-id="{{item._id}}" data-phase="reflow" aria-hidden="{{removal.id === item._id}}" bindanimationend="onPostRemovalAnimationEnd">
+    <view class="post-removal-card" data-id="{{item._id}}" data-phase="scatter">
+      <square-post id="{{(following ? 'home-following-post-' : 'home-post-') + item._id}}" home-feed="{{true}}"
+        seven-line-preview="{{item._id === cuiWelcomePostId}}" feed-video-enabled="{{videoEnabled && (removal.id !== item._id || removal.phase === 'prepare')}}"
+        follow-preview="{{followPreviews[item._id] || defaultPreview}}" post="{{item}}" viewer="{{user}}" like-motion="{{true}}"
+        bind:avatar="openAuthorMenu" bind:author="viewAuthorProfile" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" />
+    </view>
+    <template is="post-removal-canvas" data="{{removal, id: item._id}}" />
+  </view>
+  <view wx:if="{{!loading && !items.length && !error}}" class="feed-empty">
+    <view class="empty-heading">{{following ? user ? hasMore ? '看看更早的关注动态' : '还没有关注动态' : '登录后查看关注动态' : '广场还很安静'}}</view>
+    <view wx:if="{{!following || user}}" class="empty-caption">{{following ? '关注感兴趣的人，在这里查看他们的动态' : '写下一个想法，开启第一段对话'}}</view>
+    <button wx:if="{{!following}}" size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button>
+    <button wx:elif="{{!user}}" size="mini" class="empty-publish" bindtap="openMenu">登录</button>
+  </view>
+  <view wx:if="{{appending}}" class="feed-end">正在加载…</view>
+  <view wx:elif="{{items.length && !hasMore}}" class="feed-end">已经看到这里了</view>
+  <button wx:if="{{hasMore && !appending && (following || !items.length)}}" class="following-more" data-feed="{{following ? 'following' : 'square'}}" bindtap="loadMoreFeed">{{following ? '加载更多关注动态' : '加载更多动态'}}</button>
+</template>
 <view class="home-shell {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}} {{chromeCompact ? 'chrome-compact' : ''}}">
-  <view class="home-page" style="--home-header-height: {{chromeHeaderHeight}}px; --home-safe-top: {{chromeSafeTop}}px;" prop="{{ {compact: chromeCompact, active: activeTab, header: chromeHeaderHeight, safe: chromeSafeTop, blocked: menuOpen || tabMenuKey || authorMenu || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'} }}" change:prop="{{headerMotion.sync}}">
+  <view class="home-page" style="--home-header-height: {{chromeHeaderHeight}}px; --home-safe-top: {{chromeSafeTop}}px;" prop="{{ {compact: chromeCompact, active: activeTab, header: chromeHeaderHeight, safe: chromeSafeTop, blocked: menuOpen || authorMenu || postPopover || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'} }}" change:prop="{{headerMotion.sync}}">
     <view class="home-status-cover" style="height: {{chromeSafeTop}}px;" aria-hidden="true"></view>
-    <view class="home-header {{tabMenuKey ? 'dropdown-open' : ''}}" style="padding-top: {{navHeight}}px;">
+    <view class="home-header" style="padding-top: {{navHeight}}px;">
       <template is="account-avatar" data="{{navTop: navTop, navButtonHeight: navButtonHeight, menuOpen: menuOpen, avatarSource: homeAvatarSource, avatarReady: homeAvatarReady}}" />
-      <button size="mini" class="home-brand-button" style="top: {{navTop}}px; height: {{navButtonHeight}}px;" bindtap="backToFeedTop" disabled="{{menuOpen || tabMenuKey || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'}}" aria-hidden="{{menuOpen}}" aria-label="Cui，返回列表顶部" hover-class="none"><view class="home-brand-art {{brandBouncing ? 'is-bouncing' : ''}}" bindanimationend="finishBrandBounce"><cui-refresh id="home-cui" class="home-brand-icon" bind:ready="onHomeBrandReady" /></view></button>
-      <view class="home-tabs {{tabMenuKey ? 'dropdown-open' : ''}}" role="tablist" aria-label="首页板块">
+      <button size="mini" class="home-brand-button" style="top: {{navTop}}px; height: {{navButtonHeight}}px;" bindtap="backToFeedTop" disabled="{{menuOpen || commentPostId || composerOpen || loginSheetOpen || authChecking || brandRefreshPhase !== 'idle'}}" aria-hidden="{{menuOpen}}" aria-label="Cui，返回列表顶部" hover-class="none"><view class="home-brand-art {{brandBouncing ? 'is-bouncing' : ''}}" bindanimationend="finishBrandBounce"><cui-refresh id="home-cui" class="home-brand-icon" bind:ready="onHomeBrandReady" /></view></button>
+      <view class="home-tabs" role="tablist" aria-label="首页板块">
         <view wx:for="{{tabs}}" wx:key="key" class="home-tab-group">
-          <button size="mini" class="home-tab {{activeTab === item.key ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="selectTab" aria-role="tab" aria-selected="{{activeTab === item.key}}" aria-expanded="{{tabMenuKey === item.key}}" hover-class="none"><view class="home-tab-label"><text>{{item.label}}</text><view class="home-tab-arrow" data-key="{{item.key}}" catchtap="toggleTabMenu"><image class="tab-dropdown-chevron {{tabMenuKey === item.key ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" mode="aspectFit" /></view></view></button>
-          <view wx:if="{{tabMenuKey === item.key}}" class="tab-dropdown" aria-label="{{item.label}}筛选">
-            <button wx:for="{{item.options}}" wx:for-item="option" wx:key="key" class="tab-dropdown-option {{tabFilters[item.key] === option.key ? 'active' : ''}}" data-key="{{item.key}}" data-filter="{{option.key}}" bindtap="selectTabFilter" aria-pressed="{{tabFilters[item.key] === option.key}}" hover-class="none">{{option.label}}</button>
-          </view>
+          <button size="mini" class="home-tab {{activeTab === item.key ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="selectTab" aria-role="tab" aria-selected="{{activeTab === item.key}}" hover-class="none"><view class="home-tab-label"><text class="home-tab-text">{{item.label}}</text></view></button>
         </view>
-        <view class="home-tab-indicator" style="left: {{tabIndicatorLeft}}px; width: {{tabIndicatorWidth}}px;" aria-hidden="true"></view>
+        <view class="home-tab-indicator label-indicator {{tabIndicatorDirection ? 'moving-' + tabIndicatorDirection : ''}}" style="left: {{tabIndicatorLeft}}px; right: calc(100% - {{tabIndicatorLeft + tabIndicatorWidth}}px);" aria-hidden="true"></view>
       </view>
     </view>
-    <view wx:if="{{tabMenuKey}}" class="home-dropdown-backdrop" bindtap="closeTabMenu" catchtouchmove="stopMenuEvent"></view>
-    <view wx:if="{{authorMenu}}" class="home-author-layer">
-      <view class="home-author-backdrop" catchtap="closeAuthorMenu" catchtouchmove="stopMenuEvent"></view>
-      <view class="home-author-menu" style="left: {{authorMenu.left}}px; top: {{authorMenu.top}}px; width: {{authorMenu.width}}px;" role="menu" aria-label="作者菜单" catchtap="stopMenuEvent" catchtouchmove="stopMenuEvent">
-        <button class="home-author-option" data-action="follow" bindtap="selectAuthorAction" hover-class="home-author-pressed"><image src="/images/interface/{{authorMenu.following ? 'unfollow' : 'follow'}}.svg" mode="aspectFit" /><text>{{authorMenu.following ? '取关' : '关注'}}</text></button>
-        <button class="home-author-option" data-action="profile" bindtap="selectAuthorAction" hover-class="home-author-pressed"><image src="/images/interface/user.svg" mode="aspectFit" /><text>查看个人主页</text></button>
-      </view>
-    </view>
+    <template is="post-popover" data="{{menu: authorMenu, closing: !authorMenuExpanded, kind: 'author', label: '作者菜单', options: [
+      {key: 'follow', label: authorMenu.following ? '取关' : '关注', icon: authorMenu.following ? 'unfollow' : 'follow'},
+      {key: 'profile', label: '查看个人主页', icon: 'user'}
+    ]}}" />
     <unfollow-confirm wx:if="{{unfollowTarget}}" target="{{unfollowTarget}}" closing="{{unfollowClosing}}" busy="{{unfollowBusy}}" bind:cancel="cancelUnfollow" bind:confirm="confirmUnfollow" />
     <view class="home-panels-viewport">
-      <view class="home-panels {{activeTab === 'campus' ? 'show-campus' : ''}}">
-    <scroll-view class="home-feed" data-feed="square" bindscroll="{{headerMotion.scroll}}" capture-bind:touchstart="onHomeFeedTouchStart" binddragstart="onHomeFeedDragStart" scroll-into-view="{{squareTopTarget}}" scroll-with-animation="{{false}}" scroll-y="{{activeTab === 'square' && !menuOpen && !tabMenuKey && !authorMenu && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" enhanced show-scrollbar="{{false}}" enable-back-to-top refresher-enabled="{{activeTab === 'square' && !menuOpen && !tabMenuKey && !authorMenu && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" refresher-triggered="{{nativeRefreshing}}" refresher-threshold="{{refreshThreshold}}" refresher-default-style="none" refresher-background="#FFFFFF" bindrefresherpulling="pullHomeFeed" bindrefresherrefresh="refreshFeed" bindrefresherrestore="restoreHomePull" bindrefresherabort="cancelHomePull" bindtouchend="releaseHomePull" bindtouchcancel="cancelHomePull" bindscrolltolower="loadMoreFeed" lower-threshold="160">
-    <view id="home-square-top" class="home-feed-top" aria-hidden="true"></view>
-    <block>
-      <view wx:if="{{feedError}}" class="feed-error"><text>{{feedError}}</text><button size="mini" bindtap="retryFeed">重试</button></view>
-      <block wx:if="{{feedLoading && !posts.length}}"><view wx:for="{{skeletons}}" wx:key="*this" class="feed-skeleton"><view class="skeleton-avatar"></view><view class="skeleton-body"><view></view><view></view><view></view></view></view></block>
-      <block wx:else><square-post wx:for="{{posts}}" wx:key="_id" id="home-post-{{item._id}}" home-feed="{{true}}"
-        seven-line-preview="{{item._id === cuiWelcomePostId}}"
-        feed-video-enabled="{{activeTab === 'square' && !menuOpen && !tabMenuKey && !authorMenu && !unfollowTarget && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking}}"
-        follow-preview="{{followPreviews[item._id] || defaultFollowPreview}}" bind:avatar="openAuthorMenu" post="{{item}}" viewer="{{user}}" bind:author="viewAuthorProfile" like-motion="{{true}}" bind:open="openPost" bind:reply="openComments" bind:react="reactPost" bind:more="managePost" bind:quote="quotePost" /><view wx:if="{{!posts.length && !feedError}}" class="feed-empty"><view class="empty-heading">{{tabFilters.square === 'following' ? user ? feedHasMore ? '看看更早的关注动态' : '还没有关注动态' : '登录后查看关注动态' : '广场还很安静'}}</view><view class="empty-caption">{{tabFilters.square === 'following' ? '关注感兴趣的人，在这里查看他们的动态' : '写下一个想法，开启第一段对话'}}</view><button wx:if="{{tabFilters.square !== 'following'}}" size="mini" class="empty-publish" bindtap="openComposer">发布第一条动态</button></view><view wx:if="{{feedMoreLoading}}" class="feed-end">正在加载…</view><view wx:elif="{{posts.length && !feedHasMore}}" class="feed-end">已经看到这里了</view></block>
-    </block>
-    <button wx:if="{{feedHasMore && !feedMoreLoading && (tabFilters.square === 'following' || !posts.length)}}" class="following-more" bindtap="loadMoreFeed">{{tabFilters.square === 'following' ? '加载更多关注动态' : '加载更多动态'}}</button>
-    <view class="home-feed-bottom" aria-hidden="true"></view>
-    <view slot="refresher" class="home-refresh-space" aria-hidden="true"></view>
-    </scroll-view>
-    <scroll-view class="home-feed" data-feed="campus" bindscroll="{{headerMotion.scroll}}" capture-bind:touchstart="onHomeFeedTouchStart" binddragstart="onHomeFeedDragStart" scroll-into-view="{{campusTopTarget}}" scroll-with-animation="{{false}}" scroll-y="{{activeTab === 'campus' && !menuOpen && !tabMenuKey && !authorMenu && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" enhanced show-scrollbar="{{false}}" enable-back-to-top>
-    <view id="home-campus-top" class="home-feed-top" aria-hidden="true"></view>
-      <view wx:if="{{tabFilters.campus === 'following'}}" class="feed-empty"><view class="empty-heading">关注你感兴趣的人</view><view class="empty-caption">关注动态将在后续开放</view></view>
-    <view wx:else class="feed-empty"><view class="empty-heading">你的校园，你的圈子</view><view class="empty-caption">{{identity.isStudent ? '校园圈将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view><button wx:if="{{!identity.isStudent}}" size="mini" class="empty-publish" bindtap="openCampusCertification">去认证</button></view>
-    <view class="home-feed-bottom" aria-hidden="true"></view>
-    </scroll-view>
+      <view class="home-panels" style="left: {{-100 * activeTabIndex}}%;">
+        <scroll-view wx:for="{{tabs}}" wx:key="key" wx:for-item="tab" class="home-feed" data-feed="{{tab.key}}" aria-hidden="{{activeTab !== tab.key}}"
+          bindscroll="{{headerMotion.scroll}}" capture-bind:touchstart="onHomeFeedTouchStart" binddragstart="onHomeFeedDragStart" scroll-into-view="{{topTargets[tab.key]}}" scroll-with-animation="{{false}}"
+          scroll-y="{{activeTab === tab.key && !menuOpen && !authorMenu && !postPopover && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}" enhanced show-scrollbar="{{false}}" enable-back-to-top
+          refresher-enabled="{{activeTab === tab.key && (tab.key === 'square' && !postRemoval || tab.key === 'following' && user) && !menuOpen && !authorMenu && !postPopover && !commentPostId && !loginSheetOpen && !authChecking && !composerOpen}}"
+          refresher-triggered="{{activeTab === tab.key && nativeRefreshing}}" refresher-threshold="{{refreshThreshold}}" refresher-default-style="none" refresher-background="#FFFFFF"
+          bindrefresherpulling="pullHomeFeed" bindrefresherrefresh="refreshFeed" bindrefresherrestore="restoreHomePull" bindrefresherabort="cancelHomePull" bindtouchend="releaseHomePull" bindtouchcancel="cancelHomePull" bindscrolltolower="loadMoreFeed" lower-threshold="160">
+          <view id="home-{{tab.key}}-top" class="home-feed-top" aria-hidden="true"></view>
+          <view wx:if="{{tab.key === 'campus'}}" class="feed-empty">
+            <view class="empty-heading">你的校园，你的圈子</view>
+            <view class="empty-caption">{{identity.isStudent ? '校园圈将在后续开放' : '完成学校认证后，即可加入校园圈'}}</view>
+            <button wx:if="{{!identity.isStudent}}" size="mini" class="empty-publish" bindtap="openCampusCertification">去认证</button>
+          </view>
+          <template wx:else is="home-post-feed" data="{{
+            following: tab.key === 'following', items: tab.key === 'following' ? followingPosts : posts,
+            loading: tab.key === 'following' ? followingLoading : feedLoading, error: tab.key === 'following' ? followingError : feedError,
+            hasMore: tab.key === 'following' ? followingHasMore : feedHasMore, appending: tab.key === 'following' ? followingMoreLoading : feedMoreLoading,
+            defaultPreview: tab.key === 'following' ? followingPreview : defaultFollowPreview, followPreviews, user, skeletons, cuiWelcomePostId,
+            removal: tab.key === 'square' ? postRemoval : null,
+            videoEnabled: activeTab === tab.key && !menuOpen && !authorMenu && !postPopover && !unfollowTarget && !commentPostId && !composerOpen && !loginSheetOpen && !authChecking
+          }}" />
+          <view class="home-feed-bottom" aria-hidden="true"></view>
+          <view slot="refresher" class="home-refresh-space" aria-hidden="true"></view>
+        </scroll-view>
       </view>
     </view>
   </view>
@@ -59,3 +82,4 @@
 
 <square-composer wx:if="{{composerOpen}}" initial-quote="{{composerQuote}}" quote-owner-id="{{composerQuoteOwnerId}}" bind:close="closeComposer" bind:resumenavigation="syncNavigation" />
 <membership-sheet wx:if="{{membershipOpen}}" top="{{navHeight}}" capsule-height="{{navButtonHeight}}" bind:close="closeMembership" />
+<template is="post-popover" data="{{menu: postPopover, closing: postPopover.closing, label: postPopover.label, options: postPopover.options, kind: 'post'}}" />

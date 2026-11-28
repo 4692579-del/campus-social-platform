@@ -90,7 +90,7 @@ test('返回时开始真实拖动，可立即结束恢复滚动保护', () => {
 });
 
 test('菜单、评论、发布及刷新期间恢复头部，不跟随滚动缩小；切页中的惯性滚动不改导航状态', () => {
-  for (const state of [{ menuOpen: true }, { tabMenuKey: 'square' }, { commentPostId: 'post' },
+  for (const state of [{ menuOpen: true }, { commentPostId: 'post' },
     { composerOpen: true }, { loginSheetOpen: true }, { brandRefreshPhase: 'loading' }]) {
     const f = fixture(); f.touch(); f.scroll(20); Object.assign(f.page.data, state); f.scroll(40);
     assert.equal(f.page.data.chromeCompact, false); assert.equal(f.bar.data.compact, false);

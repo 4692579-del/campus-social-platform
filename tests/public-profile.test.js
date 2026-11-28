@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { fixture } = require('./helpers/certification-fixture');
-const { applyPageData, loadPostActions } = require('./helpers/post-actions-fixture');
+const { applyPageData, loadPostActions, postMenuAnchor, choosePostMenu } = require('./helpers/post-actions-fixture');
 const postId = n => 'p_' + n.toString(16).padStart(40, '0');
 
 test('访客资料严格筛选公开字段，普通未认证用户可互看；目标失效不泄露资料', async () => {
@@ -133,7 +133,7 @@ function pageFixture(options = {}) {
   vm.runInNewContext(fs.readFileSync('miniprogram/pages/profile/index.js', 'utf8'), { wx, Page: value => { definition = value; },
     require: name => name.includes('utils/public-profile') ? context.module.exports : name.includes('services/user') ? users : name.includes('services/square') ? square : name.includes('post-actions') ? loadPostActions(users, square, wx) :
       name.includes('services/post-images') ? {} : require('../miniprogram/utils/' + name.split('/').pop()), getCurrentPages: () => options.pages || [] });
-  const page = { ...definition, route: 'pages/profile/index', data: structuredClone(definition.data), setData(patch) { applyPageData(this.data, patch); } };
+  const page = { ...definition, route: 'pages/profile/index', data: structuredClone(definition.data), setData(patch, callback) { applyPageData(this.data, patch); callback?.(); } };
   return { page, calls, routes, contents, users, switchUser(value) { current = value; version++; cache.clear(); contents.clear(); page.applyUser(value); } };
 }
 
@@ -199,17 +199,29 @@ test('主页确认拉黑后隐藏内容，菜单可取消拉黑并重新显示�
     read: async () => ({ ...target, blocked }),
     setBlock: async (id, value) => { writes.push([id, value]); blocked = value; },
     wx: {
-      showActionSheet(options) { choices.push(options.itemList[1]); options.success({ tapIndex: 1 }); },
       showModal(options) { options.success({ confirm: true }); },
     },
   });
   f.page.onLoad({ accountId: target.accountId });
   await f.page.onShow();
   assert.equal(f.page.data.ownPosts.length, 1);
-  await f.page.openProfileUserMenu();
+  f.page.createSelectorQuery = () => ({
+    select() { return this; },
+    boundingClientRect(callback) { if (callback) this.callback = callback; return this; },
+    scrollOffset() { return this; },
+    exec(callback) { if (callback) callback([]); else this.callback?.(postMenuAnchor); },
+  });
+  const chooseBlock = async () => {
+    const pending = f.page.openProfileUserMenu();
+    await Promise.resolve();
+    choices.push(f.page.data.postPopover.options[1].label);
+    await choosePostMenu(f.page, 'block');
+    await pending;
+  };
+  await chooseBlock();
   assert.equal(f.page.data.profileBlocked, true);
   assert.equal(f.page.data.ownPosts.length, 0);
-  await f.page.openProfileUserMenu();
+  await chooseBlock();
   assert.deepEqual(choices, ['拉黑用户', '取消拉黑']);
   assert.deepEqual(writes, [[target.accountId, true], [target.accountId, false]]);
   assert.equal(f.page.data.profileBlocked, false);

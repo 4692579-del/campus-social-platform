@@ -153,4 +153,4 @@ function discardUploads(files) {
   if (owned.length) return wx.cloud.deleteFile({ fileList: owned }).catch(() => {});
   return Promise.resolve();
 }
-module.exports = { chooseImages, uploadImages, previewImages, previewMedia, resolveVideoPlayback, discardUploads, MAX_IMAGES, MAX_POST_MEDIA };
+module.exports = { chooseImages, uploadImages, previewImages, previewMedia, resolveFiles, resolveVideoPlayback, discardUploads, MAX_IMAGES, MAX_POST_MEDIA };

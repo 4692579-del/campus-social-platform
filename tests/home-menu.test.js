@@ -6,30 +6,142 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { describeUser } = require('../miniprogram/utils/user-role');
 const menuConfig = require('../miniprogram/utils/account-menu');
+const { createSandFrame, paintSand, SWEEP_MS, GRAIN_LIFE_MS } = require('../miniprogram/utils/post-removal-sand');
 
 const user = { _id: 'alice', nickname: '真实昵称', avatarFileID: 'cloud://real/avatar.png', accountId: '12345678', role: 'user', certificationStatus: 'unverified', schoolId: '' };
 
-test('广场关注与推荐来源独立，切换后旧分页不覆盖新来源，未登录不泄露关注列表', async () => {
+const tapTab = (page, key) => page.selectTab({ currentTarget: { dataset: { key } } });
+
+test('每块彩色内容在脱落时才从原位清除，飞散使用同一块源图', () => {
+  const width = 96, height = 48, offset = 60;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < data.length; i += 4) data.set([32, 92, 224, 255], i);
+  const surface = {};
+  const backing = { removed: [], drawImage() {}, clearRect(...rect) { this.removed.push(rect); } };
+  const remaining = { getContext: () => backing };
+  const previousWx = global.wx;
+  global.wx = { createOffscreenCanvas: () => remaining };
+  try {
+    const ctx = { draws: [], clearRect() { this.draws = []; }, drawImage(...args) { this.draws.push(args); } };
+    const frame = createSandFrame(ctx, { width, height: height + offset }, { surface, width, height, data },
+      { width, height, offset }, () => .5);
+    assert.equal(frame.tiles.reduce((sum, { w, h }) => sum + w * h, 0), width * height);
+    paintSand(frame, 0);
+    assert.deepEqual(ctx.draws, [[remaining, 0, offset, width, height]]);
+    assert.deepEqual(backing.removed, []);
+
+    const tile = frame.tiles[0];
+    const bounds = [tile.x, tile.y, tile.w, tile.h];
+    paintSand(frame, tile.start);
+    assert.deepEqual(backing.removed[0], bounds);
+    const initial = ctx.draws.find(args => args[0] === surface && bounds.every((n, i) => args[i + 1] === n));
+    assert.deepEqual(initial, [surface, ...bounds, tile.x, tile.y + offset, tile.w, tile.h]);
+
+    paintSand(frame, tile.start + tile.life / 2);
+    const drifting = ctx.draws.find(args => args[0] === surface && bounds.every((n, i) => args[i + 1] === n));
+    assert.ok(drifting[5] > initial[5] && drifting[6] < initial[6] && drifting[7] < initial[7]);
+    assert.deepEqual(backing.removed[0], bounds);
+    paintSand(frame, SWEEP_MS);
+    assert.equal(frame.released, frame.tiles.length);
+    assert.equal(backing.removed.length, frame.tiles.length);
+    assert.equal(ctx.draws.some(args => args[0] === remaining), false);
+    assert.ok(ctx.draws.length > 0, '最后一批碎片在列表补位时继续绘制');
+    paintSand(frame, SWEEP_MS + GRAIN_LIFE_MS);
+    assert.equal(ctx.draws.length, 0);
+  } finally {
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+  }
+});
+
+test('首页广场的已删除卡片先消散再收起占位，切换标签会完成移除', async () => {
+  const row = { _id: 'p_' + 'a'.repeat(40), content: '动态', author: { accountId: user.accountId } };
+  const next = { ...row, _id: 'p_' + 'b'.repeat(40), images: ['cloud://test/photo.jpg'] };
+  const f = fixture({ cachedUser: user, cachedFeed: { items: [row, next], hasMore: false, nextOffset: 2 } });
+  f.page.onLoad();
+  const nextNode = f.page.data.posts[1];
+  f.page.selectComponent = () => null;
+  f.page.createSelectorQuery = () => ({
+    select(selector) { assert.equal(selector, '#home-row-' + row._id); return this; },
+    boundingClientRect(callback) { return { exec() { callback({ width: 375, height: 210, top: 120, bottom: 330 }); } }; },
+  });
+  let removals = 0;
+  const remove = () => {
+    removals++;
+    f.page.setData({ posts: f.page.data.posts.filter(post => post._id !== row._id) });
+  };
+  assert.equal(f.page.animateDeletedPost(row._id, remove), true);
+  assert.equal(f.page.data.postRemoval.phase, 'scatter');
+  assert.equal(f.page.data.postRemoval.tiles, false);
+  assert.equal('particles' in f.page.data.postRemoval, false);
+  assert.equal(f.page.data.posts[0]._id, row._id);
+  assert.equal(removals, 0);
+  f.page.onPostRemovalAnimationEnd({ target: { dataset: { id: row._id, phase: 'scatter' } } });
+  assert.equal(f.page.data.postRemoval.phase, 'reflow');
+  assert.equal(f.page.data.posts[1], nextNode);
+  await tapTab(f.page, 'campus');
+  assert.equal(removals, 1);
+  assert.equal(f.page.data.postRemoval, null);
+  assert.equal(f.page.data.posts[0], nextNode);
+  assert.equal(f.page.animateDeletedPost(next._id, remove), false);
+});
+
+test('广场与关注保存各自的列表，迟到结果不覆盖当前板块，未登录不加载关注', async () => {
   const row = suffix => ({ _id:'p_'+suffix.repeat(40),content:suffix,author:{accountId:'87654321'} });
   const recommended={items:[row('a')],hasMore:false,nextOffset:1};let finish;
   const f=fixture({cachedUser:user,cachedFeed:recommended,list:async()=>recommended,following:()=>new Promise(resolve=>{finish=resolve;})});
-  f.page.onLoad();f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});
-  f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'following'}}});
-  const pending=f.page._feedPromise;assert.equal(f.page.data.posts.length,0);assert.equal(f.page.data.feedLoading,true);
-  f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'square'}}});
-  await f.page._feedPromise;finish({items:[row('b')],hasMore:false,nextCursor:''});await pending;
+  f.page.onLoad();
+  const pending = tapTab(f.page, 'following');
+  const posts = f.page.data.posts;
+  assert.equal(f.page.data.followingPosts.length, 0);
+  assert.equal(f.page.data.followingLoading, true);
+  await tapTab(f.page, 'square');
+  finish({items:[row('b')],hasMore:false,nextCursor:''});await pending;
   assert.equal(f.page.data.posts[0]._id,row('a')._id);
-  const guest=fixture();guest.page.onLoad();guest.page.data.tabFilters.square='following';await guest.page.loadFeed();
-  assert.equal(guest.page.data.posts.length,0);assert.equal(guest.page.data.feedLoading,false);
+  assert.equal(f.page.data.posts, posts);
+  assert.equal(f.page.data.followingPosts[0]._id, row('b')._id);
+  assert.equal(f.page.data.activeTab, 'square');
+  const guest = fixture({ following: () => assert.fail('游客不应请求关注列表') });
+  guest.page.onLoad(); await tapTab(guest.page, 'following');
+  assert.equal(guest.page.data.followingPosts.length, 0);
+  assert.equal(guest.page.data.followingLoading, false);
 });
 
 test('关注页使用真实游标继续空页，加载完成不重设图片数据',async()=>{
   const row={_id:'p_'+'e'.repeat(40),content:'图片',images:['cloud://test/photo'],author:{accountId:'87654321'}};
   const cursors=[],f=fixture({cachedUser:user,following:args=>{cursors.push(args.cursor);return Promise.resolve(args.cursor ? {items:[row],hasMore:false,nextCursor:''}:{items:[],hasMore:true,nextCursor:'cursor-1'});}});
-  f.page.onLoad();f.page.toggleTabMenu({currentTarget:{dataset:{key:'square'}}});f.page.selectTabFilter({currentTarget:{dataset:{key:'square',filter:'following'}}});await f.page._feedPromise;
-  assert.equal(f.page.data.feedHasMore,true);assert.equal(f.page.data.feedCursor,'cursor-1');await f.page.loadMoreFeed();
-  assert.deepEqual(cursors,['','cursor-1']);assert.equal(f.page.data.posts[0]._id,row._id);
-  const posts=f.page.data.posts;f.page.showFeed({items:[row],hasMore:false,nextCursor:''});assert.equal(f.page.data.posts,posts);
+  f.page.onLoad(); await tapTab(f.page, 'following');
+  assert.equal(f.page.data.followingHasMore, true);
+  assert.equal(f.page.data.followingCursor, 'cursor-1');
+  await f.page.loadMoreFeed({ currentTarget: { dataset: { feed: 'square' } } });
+  await f.page.loadMoreFeed();
+  assert.deepEqual(cursors, ['', 'cursor-1']);
+  assert.equal(f.page.data.followingPosts[0]._id, row._id);
+  const posts = f.page.data.followingPosts;
+  f.page.showFeed({ items: [row], hasMore: false, nextCursor: '' }, 'following');
+  assert.equal(f.page.data.followingPosts, posts);
+});
+
+test('关注列表同步预填当前会话，换账号清空旧动态并丢弃迟到结果', async () => {
+  const old = { _id: 'old', content: '旧账号关注内容', author: { accountId: '87654321' } };
+  const next = { _id: 'next', content: '新账号关注内容', author: { accountId: '87654320' } };
+  let finish;
+  const options = { cachedUser: user, cachedFollowing: { items: [old], hasMore: false, nextCursor: '' },
+    following: () => new Promise(resolve => { finish = resolve; }) };
+  const f = fixture(options); f.page.onLoad(); await f.page.onShow();
+  const pending = tapTab(f.page, 'following');
+  const finishOld = finish;
+  assert.equal(f.page.data.followingPosts[0]._id, old._id);
+  options.cachedUser = { ...user, _id: 'bob', accountId: '12345679' };
+  options.sessionVersion = 1;
+  options.cachedFollowing = null;
+  f.page.applyUser(options.cachedUser);
+  const refreshed = f.page.loadFeed();
+  assert.equal(f.page.data.followingPosts.length, 0);
+  finishOld({ items: [old], hasMore: false, nextCursor: '' }); await pending;
+  assert.equal(f.page.data.followingPosts.length, 0);
+  finish({ items: [next], hasMore: false, nextCursor: '' }); await refreshed;
+  assert.equal(f.page.data.followingPosts[0]._id, next._id);
 });
 
 test('首页分页只发送新增卡片和旧卡片变化字段，顺序变化后重新对齐', async () => {
@@ -76,6 +188,10 @@ test('首页头像菜单按真实头像定位，点击立即更新关注并播�
   assert.equal(f.page.data.authorMenu, null); assert.equal(f.page.data.followPreviews[id].followed, true); assert.equal(f.toasts.length, 0);
   f.page.openAuthorMenu({ detail: { id } });
   f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'profile' } } });
+  assert.equal(f.page.data.authorMenuExpanded, false);
+  assert.ok(f.page.data.authorMenu);
+  assert.equal(f.routes.length, 0);
+  await Promise.resolve();
   assert.equal(f.requests.length, 0); assert.equal(f.toasts.length, 0);
   assert.equal(f.routes[0], '/pages/profile/index?accountId=87654321'); assert.equal(f.page.data.posts, posts);
 });
@@ -94,6 +210,48 @@ test('不同作者、关闭或换账号后的迟到头像测量不重开旧菜�
   f.page.applyUser(options.cachedUser); callbacks[3]({ left: 10, bottom: 200 }); assert.equal(f.page.data.authorMenu, null);
 });
 
+test('测量到头像右下边缘后立即展开玻璃菜单，点击外部原路缩回', () => {
+  const id = 'p_' + 'b'.repeat(40);
+  const cachedFeed = { items: [{ _id: id, author: { accountId: '87654321' } }], hasMore: false, nextOffset: 1 };
+  const options = { cachedUser: user, cachedFeed, manualRefreshTimers: true, dockTransparency: 36 };
+  const f = fixture(options);
+  f.page.onLoad();
+  f.page.selectComponent = () => ({ getAvatarRect: callback => callback({ left: 8, top: 605, width: 36, bottom: 641 }) });
+  const open = () => f.page.openAuthorMenu({ detail: { id } });
+  open();
+  const menu = f.page.data.authorMenu;
+  const { glassStyle } = require('../miniprogram/utils/dock-transparency');
+  assert.equal(menu.glassStyle, glassStyle(36));
+  const edgeOffset = 18 * Math.SQRT1_2;
+  assert.ok(Math.abs(menu.left + menu.originX - (26 + edgeOffset)) < .001);
+  assert.ok(Math.abs(menu.top + menu.originY - (623 + edgeOffset)) < .001);
+  assert.ok(Math.abs(menu.startScaleX * menu.width - menu.startScaleY * menu.height) < .001);
+  assert.ok(Math.abs(menu.startShiftX + (menu.width / 2 - menu.originX) * menu.startScaleX) < .001);
+  assert.ok(Math.abs(menu.startShiftY + (menu.height / 2 - menu.originY) * menu.startScaleY) < .001);
+  assert.ok(menu.top < 605);
+  assert.equal(f.page.data.authorMenuExpanded, true);
+  assert.equal(f.delays.size, 0);
+  f.page.dismissAuthorMenu();
+  assert.equal(f.page.data.authorMenu, menu);
+  assert.equal(f.page.data.authorMenuExpanded, false);
+  f.page.dismissAuthorMenu();
+  assert.equal(f.delays.size, 1);
+  f.runTimer(200);
+  assert.equal(f.page.data.authorMenu, null);
+
+  options.dockTransparency = 72;
+  open(); assert.equal(f.page.data.authorMenu.glassStyle, glassStyle(72)); f.page.dismissAuthorMenu();
+  f.runTimer(200);
+  assert.equal(f.page.data.authorMenu, null);
+  assert.equal(f.delays.size, 0);
+  open(); f.page.dismissAuthorMenu();
+  assert.equal(f.delays.size, 1);
+  assert.ok([...f.delays.values()].includes(200));
+  f.page.onHide();
+  assert.equal(f.page.data.authorMenu, null);
+  assert.equal(f.delays.size, 0);
+});
+
 test('点击本人动态头像不测量、不弹菜单、不显示未开放提示', () => {
   const id = 'p_' + 'c'.repeat(40);
   const f = fixture({ cachedUser: user, cachedFeed: { items: [{ _id: id, author: { accountId: user.accountId }, isOwn: true }], hasMore: false, nextOffset: 1 } });
@@ -110,15 +268,20 @@ test('真实关注后两阶段动画；同作者同步，取关取消不写入�
   f.page.selectComponent = () => ({ getAvatarRect: callback => callback({ left: 8, bottom: 200 }) });
   const open = () => f.page.openAuthorMenu({ detail: { id } });
   const follow = () => f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } });
-  open(); await follow(); assert.equal(f.page.data.authorMenu, null);
+  open(); await follow();
+  assert.ok(f.page.data.authorMenu);
+  assert.equal(f.page.data.authorMenuExpanded, false);
+  f.runTimer(200); assert.equal(f.page.data.authorMenu, null);
   assert.equal(f.page.data.followPreviews[id].phase, 'following');
   assert.equal(f.page.data.followPreviews[second].followed, true);
   f.runTimer(1250); assert.equal(f.page.data.followPreviews[id].phase, 'followed');
   open(); assert.equal(f.page.data.authorMenu.following, true); await follow();
+  await follow(); assert.equal(f.page.data.unfollowTarget, null);
+  f.runTimer(200);
   assert.equal(f.page.data.unfollowTarget.nickname, '同学'); assert.equal(f.bar.authBlocked, true);
   f.page.cancelUnfollow(); assert.equal(f.page.data.unfollowClosing, true); f.runTimer(200);
   assert.equal(f.page.data.followPreviews[id].followed, true); assert.equal(f.page.data.unfollowTarget, null);
-  open(); await follow(); await f.page.confirmUnfollow();
+  open(); await follow(); f.runTimer(200); await f.page.confirmUnfollow();
   assert.equal(f.page.data.followPreviews[id].followed, false); assert.equal(f.page.data.followPreviews[second].followed, false);
   f.runTimer(200); assert.equal(f.page.data.unfollowTarget, null); assert.equal(f.bar.authBlocked, false);
   assert.equal(f.page.data.posts, posts); assert.equal(f.requests.length, 0); assert.equal(f.feedRequests.length, 0); assert.equal(f.routes.length, 0);
@@ -131,11 +294,17 @@ test('隐藏时结束关注动画并关闭确认，换账号清空显示，旧�
   f.page.onHide(); assert.equal(f.page.data.followPreviews[id].phase, 'followed');
   assert.equal([...f.delays.values()].includes(1250), false);
   f.page._visible = true; f.page.selectComponent = () => ({ getAvatarRect: callback => callback({ left: 8, bottom: 200 }) });
-  f.page.openAuthorMenu({ detail: { id } }); await f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } });
+  f.page.openAuthorMenu({ detail: { id } }); await f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'follow' } } }); f.runTimer(200);
   assert.ok(f.page.data.unfollowTarget);
   options.cachedUser = { ...user, _id: 'bob' }; options.sessionVersion = 1; f.page.applyUser(options.cachedUser);
   assert.equal(f.page.data.unfollowTarget, null); assert.equal(f.page.data.followPreviews[id].followed, false);
   assert.equal(f.page._followPreviewState.size, 0); await f.page.confirmUnfollow(); assert.equal(f.toasts.length, 0);
+  f.page.openAuthorMenu({ detail: { id } });
+  await f.page.selectAuthorAction({ currentTarget: { dataset: { action: 'profile' } } });
+  assert.ok(f.page.data.authorMenu);
+  f.page.onHide();
+  assert.equal(f.routes.length, 0);
+  assert.equal(f.timers.size, 0);
 });
 
 test('荟萃计划使用胶囊下方的导航高度，打开时隐藏底栏并在关闭后恢复侧栏', async () => {
@@ -187,7 +356,8 @@ function fixture(options = {}) {
   const square = { cachedFollowState: relation,
     getFollowStates: async ids => ids.map(relation),
     setFollow: async (id, following) => { const old=relation(id); const next={accountId:id,following,version:old.version+1}; relations.set(id,next); return next; },
-    cachedFollowingFeed: () => null, listFollowing: async args => options.following ? options.following(args) : {items:[],hasMore:false,nextCursor:''},
+    cachedFollowingFeed: () => options.cachedFollowing || null,
+    listFollowing: async args => options.following ? options.following(args) : {items:[],hasMore:false,nextCursor:''},
     cachedOwnStats: () => options.cachedOwnStats || null,
     getOwnStats: () => options.getOwnStats ? options.getOwnStats() : Promise.resolve({ receivedLikes: 0 }),
     cachedFeed: () => options.cachedFeed || null, consumePublication: () => false, list: async args => {
@@ -196,8 +366,8 @@ function fixture(options = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../miniprogram/pages/home/index.js'), 'utf8'), {
     Page: value => { definition = value; },
     setTimeout: setTimer, clearTimeout: clearTimer,
-    require: name => name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title), navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
-    wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }),
+    require: name => name.includes('post-removal-motion') ? require('../miniprogram/utils/post-removal-motion') : name.includes('post-popover') ? require('../miniprogram/utils/post-popover') : name.includes('home-scroll-chrome') ? require('../miniprogram/utils/home-scroll-chrome') : name.includes('tab-page-layout') ? require('../miniprogram/utils/tab-page-layout') : name.includes('home-refresh') ? refreshContext.module.exports : name.includes('post-actions') ? loadPostActions(service, square, { showToast: args => toasts.push(args.title), navigateTo: args => routes.push(args.url) }) : name.includes('services/square') ? square : name.includes('post-view') ? require('../miniprogram/utils/post-view') : name.includes('account-menu') ? menuConfig : name.includes('user-role') ? { describeUser } : service,
+    wx: { getWindowInfo: () => ({ statusBarHeight: 44 }), getMenuButtonBoundingClientRect: () => ({ top: 52, height: 32 }), getStorageSync: () => options.dockTransparency,
       ...(options.nextTick ? { nextTick: options.nextTick } : {}),
       navigateTo: value => { routes.push(value.url); navigation.push(value); }, switchTab: value => routes.push(value.url),
       showToast: value => toasts.push(value.title), showModal: value => modals.push(value) },
@@ -241,25 +411,27 @@ test('顶部Cui点击回到当前列表顶部，重复下滑后可再次使用�
   const f = fixture({ cachedUser: user, cachedFeed: { items: [post], hasMore: false, nextOffset: 1 } });
   f.page.onLoad(); const posts = f.page.data.posts, writes = [], update = f.page.setData.bind(f.page);
   f.page.setData = (value, callback) => { writes.push(value); update(value, callback); };
-  f.page.backToFeedTop(); assert.equal(f.page.data.squareTopTarget, 'home-square-top'); assert.equal(f.page.data.brandBouncing, true);
+  f.page.backToFeedTop(); assert.equal(f.page.data.topTargets.square, 'home-square-top'); assert.equal(f.page.data.brandBouncing, true);
   assert.equal(f.timers.size, 1);
   f.page.backToFeedTop(); assert.equal(f.timers.size, 1); // 连点不反复重置正在进行的弹性动画。
-  assert.deepEqual(writes.filter(value => Object.hasOwn(value, 'squareTopTarget')).map(value => value.squareTopTarget), ['', 'home-square-top', '', 'home-square-top']);
+  assert.deepEqual(writes.filter(value => Object.hasOwn(value, 'topTargets.square')).map(value => value['topTargets.square']), ['', 'home-square-top', '', 'home-square-top']);
   f.page.finishBrandBounce(); assert.equal(f.page.data.brandBouncing, false); assert.equal(f.timers.size, 0);
-  f.page.setData({ activeTab: 'campus' }); f.page.backToFeedTop(); assert.equal(f.page.data.campusTopTarget, 'home-campus-top');
+  for (const key of ['campus', 'following']) {
+    f.page.setData({ activeTab: key }); f.page.backToFeedTop(); assert.equal(f.page.data.topTargets[key], `home-${key}-top`);
+  }
   assert.equal(f.page.data.posts, posts); assert.equal(f.page.data.posts[0].images[0], post.images[0]);
   assert.equal(f.feedRequests.length, 0); assert.equal(f.requests.length, 0); f.page.stopBrandBounce();
 });
 
 test('顶部Cui不穿透菜单/登录/评论/发布遮罩，切页后不执行迟到回顶或保留动画计时', () => {
-  for (const state of [{ menuOpen: true }, { tabMenuKey: 'square' }, { commentPostId: 'post' }, { composerOpen: true }, { loginSheetOpen: true }, { authChecking: true }]) {
+  for (const state of [{ menuOpen: true }, { commentPostId: 'post' }, { composerOpen: true }, { loginSheetOpen: true }, { authChecking: true }]) {
     const f = fixture(); Object.assign(f.page.data, state); f.page.backToFeedTop();
-    assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.squareTopTarget, ''); assert.equal(f.timers.size, 0);
+    assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.topTargets.square, ''); assert.equal(f.timers.size, 0);
   }
   const ticks = [], f = fixture({ nextTick: fn => ticks.push(fn) }); f.page.onLoad();
   f.page.backToFeedTop(); assert.equal(f.timers.size, 1); f.page.onHide();
   for (const tick of ticks) tick();
-  assert.equal(f.timers.size, 0); assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.squareTopTarget, '');
+  assert.equal(f.timers.size, 0); assert.equal(f.page.data.brandBouncing, false); assert.equal(f.page.data.topTargets.square, '');
   f.page.backToFeedTop(); assert.equal(f.timers.size, 0);
 });
 
@@ -347,7 +519,7 @@ test('头像失败不因返回重试闪烁，更新头像或退出时即时切�
   assert.equal(f.page.data.homeAvatarReady, true);
 });
 
-test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动首页底栏并保留两个板块', async () => {
+test('首页恢复真实头像及ID，侧栏遮挡时保留当前板块', async () => {
   const f = fixture();
   f.page.onLoad();
   await f.page.onShow();
@@ -359,50 +531,34 @@ test('首页恢复真实头像及ID，头像入口与胶囊同排，菜单推动
   assert.equal(f.bar.authBlocked, false);
   assert.equal(f.page.data.followerCount, '—');
   assert.deepEqual(f.page.data.menuItems, menuConfig.menuItems);
-  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
-  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'following' } } });
+  await tapTab(f.page, 'following');
   f.page.openMenu();
   assert.equal(f.page.data.menuOpen, true);
   assert.equal(f.bar.menuOpen, true);
   f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
-  assert.equal(f.page.data.activeTab, 'square');
-  assert.equal(f.page.data.tabFilters.square, 'following');
+  assert.equal(f.page.data.activeTab, 'following');
   f.page.closeMenu();
   assert.equal(f.bar.menuOpen, false);
   f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
   assert.equal(f.page.data.activeTab, 'campus');
 });
 
-test('首页两个板块分别保留筛选，关注不读取广场流，离开关闭下拉并恢复导航', async () => {
+test('首页依次显示广场、校园圈和关注，标签重复点击不打开菜单', async () => {
   const f = fixture();
   await f.page.onShow();
   f.page.onAvatarError();
   assert.equal(f.page.data.avatarFailed, true);
-  assert.deepEqual(Array.from(f.page.data.tabs, tab => tab.key), ['square', 'campus']);
-  for (const key of ['square', 'campus']) {
-    f.page.toggleTabMenu({ currentTarget: { dataset: { key } } });
-    assert.equal(f.page.data.tabMenuKey, key);
-    f.page.selectTabFilter({ currentTarget: { dataset: { key, filter: 'following' } } });
-    assert.equal(f.page.data.activeTab, key);
-    assert.equal(f.page.data.tabFilters[key], 'following');
-    assert.equal(f.page.data.tabMenuKey, '');
-  }
+  assert.deepEqual(Array.from(f.page.data.tabs, tab => tab.key), ['square', 'campus', 'following']);
+  assert.doesNotMatch(fs.readFileSync('miniprogram/pages/home/index.wxml', 'utf8'), /tab-dropdown|home-tab-arrow/);
   const calls = f.feedRequests.length;
+  await tapTab(f.page, 'following'); await tapTab(f.page, 'following');
+  assert.equal(f.page.data.activeTab, 'following');
+  await tapTab(f.page, 'campus'); await tapTab(f.page, 'unknown');
   await f.page.refreshFeed(); await f.page.loadMoreFeed();
   assert.equal(f.feedRequests.length, calls);
-  f.page.selectTab({ currentTarget: { dataset: { key: 'square' } } });
-  assert.equal(f.page.data.tabFilters.square, 'following');
-  f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
-  f.page.selectTab({ currentTarget: { dataset: { key: 'unknown' } } });
   assert.equal(f.page.data.activeTab, 'campus');
-  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
-  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'campus' } } });
-  assert.equal(f.page.data.tabMenuKey, 'square');
-  f.page.selectTabFilter({ currentTarget: { dataset: { key: 'square', filter: 'square' } } });
-  assert.equal(f.page.isSquareFeed(), true);
-  assert.equal(f.page.data.tabFilters.campus, 'following');
-  f.page.toggleTabMenu({ currentTarget: { dataset: { key: 'square' } } });
-  f.page.closeTabMenu(); assert.equal(f.page.data.tabMenuKey, '');
+  await tapTab(f.page, 'square');
+  assert.equal(f.page.data.activeTab, 'square');
   f.page.openMenu();
   f.page.onHide();
   assert.equal(f.bar.menuOpen, false);
@@ -411,21 +567,21 @@ test('首页两个板块分别保留筛选，关注不读取广场流，离开�
   assert.equal(f.bar.menuOpen, false);
 });
 
-test('往返切换同一帧提交板块和蓝条位置，保留已有动态及各板块筛选', async () => {
+test('三个板块往返切换在同一帧提交内容位置和蓝条，保留已有动态', async () => {
   const feed = { items: [{ _id: 'retained', content: '已有动态', author: { nickname: '同学' } }], hasMore: false, nextOffset: 1 };
   const f = fixture({ cachedFeed: feed, list: () => feed }); f.page.onLoad();
   const changes = [], setData = f.page.setData.bind(f.page);
   f.page.setData = value => { if ('activeTab' in value) changes.push(value); setData(value); };
   const original = f.page.tabIndicatorState('square');
-  f.page.data.tabFilters.campus = 'following';
-  for (const key of ['campus', 'square', 'campus', 'square']) {
-    f.page.selectTab({ currentTarget: { dataset: { key } } });
+  for (const [key, direction] of [['campus', 'right'], ['following', 'right'], ['campus', 'left'], ['square', 'left']]) {
+    await tapTab(f.page, key);
     const state = changes.at(-1);
     assert.equal(state.activeTab, key);
+    assert.equal(state.tabIndicatorDirection, direction);
     assert.equal(state.tabIndicatorLeft, f.page.tabIndicatorState(key).tabIndicatorLeft);
     assert.equal(state.tabIndicatorWidth, f.page.tabIndicatorState(key).tabIndicatorWidth);
     assert.equal(f.page.data.posts[0]._id, 'retained');
-    assert.equal(f.page.data.tabFilters.campus, 'following');
+    assert.equal(state.activeTabIndex, ['square', 'campus', 'following'].indexOf(key));
   }
   assert.equal(f.page.data.tabIndicatorLeft, original.tabIndicatorLeft);
   assert.equal(f.page.data.tabIndicatorWidth, original.tabIndicatorWidth);
@@ -433,7 +589,7 @@ test('往返切换同一帧提交板块和蓝条位置，保留已有动态及�
   await Promise.resolve();
 });
 
-test('蓝条按文字与箭头实际位置测量，异步测量使用当前标签且忽略过期页面', () => {
+test('蓝条相对每个标签的实际文字居中，两端等量延长，过期测量不回写', () => {
   const f = fixture(); f.page.onLoad();
   const reads = [];
   f.page.createSelectorQuery = () => {
@@ -441,13 +597,19 @@ test('蓝条按文字与箭头实际位置测量，异步测量使用当前标�
     return query;
   };
   f.page.measureHomeTabs(); f.page.measureHomeTabs();
-  const rects = [{ left: 12 }, [{ left: 58, width: 82 }, { left: 248, width: 66 }]];
-  reads[0](rects); assert.equal(f.page.data.tabIndicatorLeft, 43.75);
-  f.page.selectTab({ currentTarget: { dataset: { key: 'campus' } } });
+  const rects = [{ left: 12 }, [{ left: 38, width: 64 }, { left: 164, width: 48 }, { left: 289, width: 32 }]];
+  reads[0](rects); assert.equal(f.page.data.tabIndicatorLeft, 22.5);
+  tapTab(f.page, 'following');
   reads[1](rects);
-  assert.equal(f.page.data.tabIndicatorLeft, 233); assert.equal(f.page.data.tabIndicatorWidth, 69);
+  for (const [index, key] of ['square', 'campus', 'following'].entries()) {
+    const label = rects[1][index];
+    const { tabIndicatorLeft, tabIndicatorWidth } = f.page.tabIndicatorState(key);
+    assert.equal(tabIndicatorLeft + tabIndicatorWidth / 2, label.left - rects[0].left + label.width / 2);
+    assert.equal(tabIndicatorWidth - label.width, 8);
+  }
+  assert.equal(f.page.data.tabIndicatorLeft, 273); assert.equal(f.page.data.tabIndicatorWidth, 40);
   f.page.onResize({ size: { windowWidth: 430 } });
-  assert.ok(Math.abs(f.page.data.tabIndicatorWidth - 138 * 430 / 750) < .001);
+  assert.ok(Math.abs(f.page.data.tabIndicatorWidth - 80 * 430 / 750) < .001);
   const before = f.page.data.tabIndicatorLeft;
   f.page.onHide(); reads[2](rects);
   assert.equal(f.page.data.tabIndicatorLeft, before);

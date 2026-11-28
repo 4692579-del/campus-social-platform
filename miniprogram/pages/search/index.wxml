@@ -1,9 +1,10 @@
 <import src="../../templates/account-avatar.wxml" />
 <import src="../../templates/account-menu.wxml" />
 <import src="../../templates/login-sheet.wxml" />
+<import src="../../templates/post-popover.wxml" />
 <wxs module="discovery" src="./discovery-motion.wxs" />
 <view class="search-shell {{menuOpen ? 'menu-open' : ''}} {{menuInstant ? 'menu-instant' : ''}}">
-<view class="tab-secondary-page" bindtap="closePlatformMenu" prop="{{ {active:searchActive, compact:chromeCompact, menu:platformMenuOpen} }}" change:prop="{{discovery.sync}}">
+<view class="tab-secondary-page" prop="{{ {active:searchActive, compact:chromeCompact, menu:!!postPopover} }}" change:prop="{{discovery.sync}}">
   <view class="tab-page-header" style="height: {{navHeight}}px;">
     <template is="account-avatar" data="{{navTop: navTop, navButtonHeight: navButtonHeight, menuOpen: menuOpen, avatarSource: avatarSource, avatarReady: avatarReady}}" />
     <view class="tab-page-title" style="top: {{navTop}}px; height: {{navButtonHeight}}px;">搜索</view>
@@ -16,20 +17,17 @@
     <view wx:if="{{searchRefreshVisible}}" class="search-refresh-anchor" aria-hidden="true">
       <cui-refresh id="search-cui" class="search-refresh-logo" bind:ready="onSearchBrandReady" />
     </view>
-    <scroll-view class="search-discovery" scroll-y="{{!menuOpen && !loginSheetOpen && !authChecking}}" enhanced bounces="{{false}}"
-      refresher-enabled="{{searchActive && (boardIndex === 0 || boardIndex === hotBoardIndex) && !menuOpen && !platformMenuOpen && !loginSheetOpen && !authChecking}}"
+    <scroll-view class="search-discovery" scroll-y="{{!menuOpen && !postPopover && !loginSheetOpen && !authChecking}}" enhanced bounces="{{false}}"
+      refresher-enabled="{{searchActive && (boardIndex === 0 || boardIndex === hotBoardIndex) && !menuOpen && !postPopover && !loginSheetOpen && !authChecking}}"
       refresher-triggered="{{searchRefreshing}}" refresher-threshold="{{searchRefreshThreshold}}" refresher-default-style="none" refresher-background="transparent"
       bindrefresherpulling="pullSearch" bindrefresherrefresh="refreshSearch" bindrefresherrestore="cancelSearchPull" bindrefresherabort="cancelSearchPull"
       bindtouchend="releaseSearchPull" bindtouchcancel="deferSearchPullCancel" show-scrollbar="{{false}}" bindscroll="{{discovery.scroll}}" bindtouchstart="{{discovery.begin}}">
       <view class="search-discovery-content">
         <view class="search-board-tabs {{boardIndex === 0 ? 'is-cui-board' : ''}}" role="tablist">
           <view wx:for="{{boardTabs}}" wx:key="*this" class="board-tab {{boardIndex === index ? 'selected' : ''}}" data-index="{{index}}" catchtap="selectBoardTab" aria-role="tab" aria-selected="{{boardIndex === index}}">
-            <view class="board-tab-label"><text>{{item}}</text><view wx:if="{{index === hotBoardIndex}}" class="board-arrow" catchtap="togglePlatformMenu" aria-role="button" aria-label="选择热榜平台" aria-expanded="{{platformMenuOpen}}"><image class="board-chevron {{platformMenuOpen ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" /></view></view>
+            <view class="board-tab-label"><text class="board-tab-text">{{item}}</text><view wx:if="{{index === hotBoardIndex}}" class="board-arrow" catchtap="togglePlatformMenu" aria-role="button" aria-label="选择热榜平台" aria-haspopup="menu" aria-expanded="{{!!postPopover && !postPopover.closing}}"><image class="board-chevron {{postPopover && !postPopover.closing ? 'expanded' : ''}}" src="/images/interface/chevron-down-muted.svg" /></view></view>
           </view>
-          <view class="board-indicator" style="left:calc({{(boardIndex + 0.5) * 100 / 3}}% - 67rpx);"></view>
-          <view wx:if="{{platformMenuOpen}}" class="board-dropdown" style="left:calc({{hotBoardIndex * 100 / 3}}% + 12rpx);" catchtap="stopSearchEvent">
-            <view wx:for="{{hotPlatforms}}" wx:key="key" class="board-option {{hotType === item.key ? 'active' : ''}}" data-type="{{item.key}}" catchtap="selectHotPlatform" aria-role="button">{{item.label}}</view>
-          </view>
+          <view class="board-indicator label-indicator {{labelIndicatorDirection ? 'moving-' + labelIndicatorDirection : ''}}" style="{{labelIndicatorStyle}}" aria-hidden="true"></view>
         </view>
         <view wx:if="{{boardsMounted}}" class="board-viewport">
           <view class="board-panels" style="left:{{-boardIndex * 100}}%;">
@@ -72,7 +70,7 @@
               </view>
             </view>
             <view class="board-panel {{boardIndex === 1 ? 'is-active' : ''}}" style="min-height:{{boardIndex === 1 ? boardMinHeight : 0}}px;"></view>
-            <view class="board-panel {{boardIndex === hotBoardIndex ? 'is-active' : ''}}" style="min-height:{{boardIndex === hotBoardIndex ? boardMinHeight : 0}}px;">
+            <view class="board-panel global-trends-panel {{boardIndex === hotBoardIndex ? 'is-active' : ''}}" style="min-height:{{boardIndex === hotBoardIndex ? boardMinHeight : 0}}px;">
               <view class="global-trends-banner {{searchActive && boardIndex === hotBoardIndex && !menuOpen ? 'is-animated' : ''}}">
                 <view class="global-trends-art" aria-hidden="true">
                   <image class="global-trends-earth" src="/images/interface/global-trends-earth.jpg" mode="aspectFill" />
@@ -108,3 +106,4 @@
 <membership-sheet wx:if="{{membershipOpen}}" top="{{navHeight}}" capsule-height="{{navButtonHeight}}" bind:close="closeMembership" />
 <template is="login-sheet" data="{{authChecking: authChecking, loginSheetOpen: loginSheetOpen, error: accountError, loading: loading, cancelText: '暂不登录'}}" />
 </view>
+<template is="post-popover" data="{{menu: postPopover, closing: postPopover.closing, options: postPopover.options, label: postPopover.label, kind: 'platform', centered: true, selectedKey: hotType}}" />

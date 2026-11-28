@@ -33,7 +33,7 @@ function refreshFixture(load = async () => {}, nextTick) {
     ...context.module.exports, data: { brandRefreshPhase: 'idle', pullRefreshing: false, nativeRefreshing: false, posts },
     setData(value, done) { writes.push(value); Object.assign(this.data, value); if (done) done(); },
     selectComponent: () => ({ setState: state => states.push(state) }),
-    interactionBlocked() { return !!this.data.composerOpen; }, isSquareFeed() { return !this.data.campus; },
+    interactionBlocked() { return !!this.data.composerOpen; }, canRefreshFeed() { return !this.data.campus; },
     stopBrandBounce() {}, loadFeed(force) { requests.push(force); return load(); },
   };
   return { page, states, writes, requests, posts, time };
@@ -113,7 +113,7 @@ test('隐藏、弹层和切账号清理动画等待；迟到原生回调及请�
   const next = f.page.refreshFeed(); ticks.at(-1)(); f.page.restoreHomePull();
   finish(); await flush(); assert.equal(f.time.timers.size, 1);
   f.page.stopHomeRefresh(); await next; assert.equal(f.time.timers.size, 0);
-  for (const blocked of [{ menuOpen: true }, { tabMenuKey: 'square' }, { commentPostId: 'post' }, { composerOpen: true }, { campus: true }]) {
+  for (const blocked of [{ menuOpen: true }, { authorMenu: {} }, { commentPostId: 'post' }, { composerOpen: true }, { campus: true }]) {
     const g = refreshFixture(); Object.assign(g.page.data, blocked);
     g.page.pullHomeFeed({ detail: { dy: 100 } }); assert.equal(g.page.refreshFeed(), undefined);
     assert.equal(g.states.length, 0); assert.equal(g.requests.length, 0);

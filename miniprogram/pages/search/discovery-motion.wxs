@@ -7,7 +7,7 @@ function scroll(event, owner) {
   var state = owner.getState(); if (!state.config || !state.config.active) return;
   var top = Math.max(0,event.detail.scrollTop || 0), delta = top - (state.top || 0);
   state.top = top;
-  if (state.config.menu) owner.callMethod('closePlatformMenu',{});
+  if (state.config.menu) return;
   if (state.baseline) {state.baseline=false;return;}
   if (top <= 1) { state.distance = 0; state.direction = 0; if (state.compact !== false) {state.compact=false;owner.callMethod('setSearchCompact',{compact:false});} return; }
   if (Math.abs(delta) < 0.5) return;

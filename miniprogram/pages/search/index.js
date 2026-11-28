@@ -7,6 +7,7 @@ const square = require('../../services/square');
 const postActions = require('../../utils/post-actions');
 const { accountMenuRoutes, menuItems, utilityMenuItems } = require('../../utils/account-menu');
 const { patchState } = require('../../utils/tab-page-layout');
+const { labelIndicator, measureIndicator } = require('../../utils/label-indicator');
 const searchRefresh = require('./refresh');
 const base = secondaryTabPage(3);
 const DEFAULT_HOT_VISIBLE = 10;
@@ -22,6 +23,11 @@ Page({
   ...base,
   ...accountMenuRoutes(wx),
   ...searchRefresh.methods,
+  openPostPopover: postActions.openPostPopover,
+  closePostPopover: postActions.closePostPopover,
+  onPostPopoverDismiss: postActions.onPostPopoverDismiss,
+  onPostPopoverSelect: postActions.onPostPopoverSelect,
+  swallowPostPopover: postActions.swallowPostPopover,
   data: { ...base.data, ...searchRefresh.data,
     user:null, avatarSource:DEFAULT_AVATAR, avatarReady:true, loading:false, accountError:'', accountHint:'未登录',
     menuOpen:false, menuInstant:false, authChecking:false, loginSheetOpen:false, confirmingLogout:false, membershipOpen:false,
@@ -32,7 +38,8 @@ Page({
     boardMinHeight:300, boardsMounted:false,
     cuiPromoSrc:'', cuiPromoError:false, cuiPromoLoading:false, cuiPromoMuted:true,
     recommendations:[],
-    boardIndex:0, boardTabs:['Cui热榜','校园热榜','探索'], hotBoardIndex:HOT_BOARD_INDEX, platformMenuOpen:false, chromeCompact:false, searchActive:false,
+    boardIndex:0, boardTabs:['Cui热榜','校园热榜','探索'], hotBoardIndex:HOT_BOARD_INDEX, postPopover:null, chromeCompact:false, searchActive:false,
+    ...labelIndicator({}, 0, 0, 3, 109),
   },
   onLoad() { base.onLoad.call(this); this._searchSession = users.searchSessionKey(); this.applyMenuUser(users.getCachedUser()); },
   onShow() {
@@ -51,7 +58,9 @@ Page({
     this._searchContentPending = true;
     this.applyMenuUser(users.getCachedUser());
     this.setData({ ...(returningFromMenu ? {} : { chromeCompact:false }), menuOpen:false, menuInstant:true,
-      platformMenuOpen:false, searchActive:true, cuiPromoMuted:true, ...(enteredFromTabBar ? { boardIndex:0 } : {}) });
+      searchActive:true, cuiPromoMuted:true, ...(enteredFromTabBar ? {
+        boardIndex:0, ...this.boardIndicatorState(0), labelIndicatorDirection:'',
+      } : {}) });
     base.onShow.call(this);
     this._stopRecommendationFollows?.();
     this._stopRecommendationFollows = square.subscribeFollow?.(({ accountId }) => {
@@ -82,12 +91,15 @@ Page({
     this._searchContentPending = false;
     patchState(this, { boardsMounted:true });
     this.measureSearchLayout();
+    this.measureBoardIndicator();
     this.refreshMenuAvatar();
     if (this.data.boardIndex === HOT_BOARD_INDEX) this.activateHotboard();
     else if (this.data.boardIndex === 0) this.activateCuiBoard();
   },
-  onResize() { base.onResize?.call(this); this.measureSearchLayout(); },
+  onResize() { this.cancelPlatformMenu(); base.onResize?.call(this); this.measureSearchLayout(); this._indicatorLabels = null; this.measureBoardIndicator(); },
   onHide() {
+    this.cancelPlatformMenu();
+    this._indicatorMeasure = (this._indicatorMeasure || 0) + 1;
     this.stopRecommendations();
     this.closeMembership();
     this.stopSearchRefresh();
@@ -99,10 +111,11 @@ Page({
     this._menuAvatarRequest = null;
     this._logoutRequest = null;
     this.setData({ hotLoading:false, cuiHotLoading:false, ...(this._menuNavigating ? {} : { menuOpen:false, chromeCompact:false }),
-      platformMenuOpen:false, searchActive:false, loading:false, loginSheetOpen:false, authChecking:false, confirmingLogout:false });
+      searchActive:false, loading:false, loginSheetOpen:false, authChecking:false, confirmingLogout:false });
     base.onHide.call(this);
   },
   onUnload() {
+    this.cancelPlatformMenu();
     this.stopRecommendations();
     this.closeMembership();
     this.stopSearchRefresh();
@@ -123,6 +136,7 @@ Page({
     this._menuAvatar = avatar;
     const session = users.searchSessionKey();
     if (this._recommendationSession !== session || changed) {
+      this.cancelPlatformMenu();
       this.syncRecommendations();
       if (!this._searchContentPending && this.data.searchActive && this.data.boardIndex === 0) this.loadRecommendations();
     }
@@ -460,14 +474,23 @@ Page({
     };
     if (typeof wx.nextTick === 'function') wx.nextTick(measure); else measure();
   },
-  stopSearchEvent() {},
+  boardIndicatorState(index = this.data.boardIndex) {
+    return labelIndicator(this, index, this.data.boardIndex, this.data.boardTabs.length,
+      [109, 128, 95][index], index === HOT_BOARD_INDEX ? 3 : 0);
+  },
+  measureBoardIndicator() {
+    measureIndicator(this, wx, '.search-board-tabs', ['.board-tab.selected .board-tab-text', '.board-tab.selected .board-chevron'],
+      this.data.boardIndex, () => this.boardIndicatorState());
+  },
   selectBoardTab(event) {
     if (this.data.menuOpen || this.interactionBlocked()) return;
     const index = Number(event.currentTarget.dataset.index);
     if (![0,1,2].includes(index)) return;
     if (index !== this.data.boardIndex) this.stopSearchRefresh();
     if (index !== 0) this.pauseCuiPromo();
-    this.setData({ boardIndex:index, platformMenuOpen:false });
+    this.cancelPlatformMenu();
+    this.setData({ boardIndex:index, ...this.boardIndicatorState(index) });
+    this.measureBoardIndicator();
     if (index === 0) this.activateCuiBoard();
     else if (index === HOT_BOARD_INDEX) this.activateHotboard();
   },
@@ -486,17 +509,48 @@ Page({
       if (!this._unloaded && this._visible !== false) wx.showToast({ title: '全球新闻打开失败，请重试', icon: 'none' });
     } });
   },
-  togglePlatformMenu() {
-    if (this.data.menuOpen || this.interactionBlocked()) return;
+  async togglePlatformMenu() {
+    if (this._unloaded || this._visible === false || this.data.menuOpen || this.interactionBlocked()) return;
+    if (this.data.postPopover || this._platformMenuMeasure) { this.closePlatformMenu(); return; }
     this.stopSearchRefresh();
     this.pauseCuiPromo();
-    this.setData({ boardIndex:HOT_BOARD_INDEX, platformMenuOpen:!this.data.platformMenuOpen });
+    this.setData({ boardIndex:HOT_BOARD_INDEX, ...this.boardIndicatorState(HOT_BOARD_INDEX) });
+    this.measureBoardIndicator();
     this.activateHotboard();
+    if (typeof this.createSelectorQuery !== 'function') return;
+    const ticket = this._platformMenuMeasure = {};
+    const session = users.searchSessionKey();
+    const current = () => !this._unloaded && this._visible !== false && this.data.boardIndex === HOT_BOARD_INDEX &&
+      !this.data.menuOpen && !this.interactionBlocked() && users.searchSessionKey() === session;
+    const [anchor, label, indicator, viewport, panel, card] = await new Promise(resolve => {
+      const query = this.createSelectorQuery();
+      query.select('.board-chevron').boundingClientRect();
+      query.select('.board-tab.selected .board-tab-text').boundingClientRect();
+      query.select('.board-indicator').boundingClientRect();
+      query.select('.board-viewport').boundingClientRect();
+      query.select('.global-trends-panel').boundingClientRect();
+      query.select('.global-trends-banner').boundingClientRect();
+      query.exec(rows => resolve(rows || []));
+    });
+    if (this._platformMenuMeasure !== ticket) return;
+    this._platformMenuMeasure = null;
+    if (!current() || !anchor?.width || !label?.width || !card?.width ||
+        ![anchor.right, label.left, label.right, indicator?.bottom, viewport?.right, panel?.right, card.right].every(Number.isFinite)) return;
+    // Use the settled tab and card positions even when their transitions are still running.
+    const centerX = (Math.min(anchor.left, label.left) + Math.max(anchor.right, label.right)) / 2;
+    const right = viewport.right - (panel.right - card.right);
+    const width = 2 * (right - centerX);
+    if (!(width > 0)) return;
+    const type = await this.openPostPopover(anchor, this.data.hotPlatforms, '选择热榜平台',
+      { placement:{ right, width, centerX, bottom:indicator.bottom } });
+    if (type && current()) return this.selectHotPlatform({ currentTarget:{ dataset:{ type } } });
   },
-  closePlatformMenu() { if (this.data.platformMenuOpen) this.setData({ platformMenuOpen:false }); },
+  closePlatformMenu() { this._platformMenuMeasure = null; this.closePostPopover(); },
+  cancelPlatformMenu() { this._platformMenuMeasure = null; this.closePostPopover(true); },
   setSearchCompact(value) {
     const bar = typeof this.getTabBar === 'function' && this.getTabBar();
-    if (this._unloaded || this._visible === false || bar?._switching || this.data.menuOpen || this.interactionBlocked()) return;
+    if (this._unloaded || this._visible === false || bar?._switching || this.data.menuOpen || this.data.postPopover ||
+        this._platformMenuMeasure || this.interactionBlocked()) return;
     if (this.data.chromeCompact !== value.compact) {
       this.setData({ chromeCompact:value.compact });
       if (typeof bar?.setDockScrollCompact === 'function') bar.setDockScrollCompact(value.compact);

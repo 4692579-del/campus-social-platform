@@ -33,11 +33,12 @@ Page({
     this.setData({ squareLoading: false, usersLoading: false, squareMoreLoading: false, usersMoreLoading: false, loginSheetOpen: false, loginLoading: false });
   },
   onUnload() { this._unloaded = true; this._visible = false; this._requests = {}; this.stopPostUpdates(); },
-  onResize() { nav(this); },
+  onResize() { this.closePostPopover(true); nav(this); },
   sessionKey() { return `${users.getCachedUser()?._id || 'guest'}:${users.getSessionVersion()}`; },
   syncViewer() {
     const key = this.sessionKey();
     if (key !== this._session) {
+      this.closePostPopover(true);
       this._session = key; this._requests = {}; this._viewVersion = (this._viewVersion || 0) + 1;
       this.closeComments(); this.closeUnfollowPrompt(true);
       this.setData({ user: users.getCachedUser(), posts: [], userRows: [], composerOpen: false, needsLogin: false });

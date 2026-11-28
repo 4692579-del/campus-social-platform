@@ -129,15 +129,19 @@ test('乐观取关立即同步状态、统计及关注流；后台失败完整�
   const viewer={...user,accountId:'12345678'},target='87654321',row=post({author:{accountId:target}}),ok=square=>({result:{success:true,square}});let fail;
   const f=client(data=>{
     if(data.action==='getSquareFollowProfile')return ok({profile:{accountId:data.accountId,followingCount:data.accountId===target?0:1,followerCount:data.accountId===target?1:0,version:5,...(data.accountId===target?{following:true,relationVersion:5}:{})}});
-    if(data.action==='listSquareFollowing')return ok({items:[row],hasMore:false,nextCursor:''});
+    if(data.action==='listSquareFollowing')return ok({items:[row],hasMore:true,nextCursor:'older'});
     if(data.action==='setSquareFollow')return new Promise((resolve,reject)=>{fail=()=>reject(new Error('offline'));});
     throw new Error('点击期间不应先读取关注状态');
   });
   f.login(viewer);await Promise.all([f.service.getFollowProfile(target),f.service.getFollowProfile(viewer.accountId)]);await f.service.listFollowing();
+  assert.equal(f.service.cachedFollowingFeed().nextCursor,'older');
   const events=[];f.service.subscribeFollow(event=>events.push(event));const pending=f.service.setFollow(target,false);
   assert.equal(f.service.cachedFollowState(target).following,false);assert.equal(f.service.cachedFollowProfile(target).followerCount,0);assert.equal(f.service.cachedFollowProfile(viewer.accountId).followingCount,0);assert.equal(f.service.cachedFollowingFeed().items.length,0);
+  assert.equal(f.service.cachedFollowingFeed().nextCursor,'');
   const calls=f.calls.length;await f.service.getFollowStates([target],{force:true});await f.service.getFollowProfile(target,{force:true});assert.equal(f.calls.length,calls);
   fail();await assert.rejects(pending);assert.equal(f.service.cachedFollowState(target).following,true);assert.equal(f.service.cachedFollowProfile(target).followerCount,1);assert.equal(f.service.cachedFollowingFeed().items.length,1);assert.equal(events.at(-1).rollback,true);
+  assert.equal(f.service.cachedFollowingFeed().hasMore,false);
+  assert.equal((await f.service.listFollowing()).nextCursor,'older');
 });
 
 test('不同目标的乐观计数合并但保存串行，一条失败只回退对应目标',async()=>{

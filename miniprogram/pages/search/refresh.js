@@ -6,7 +6,7 @@ module.exports = {
   methods: {
     canPullSearch() {
       return !this._unloaded && this._visible !== false && this.data.searchActive &&
-        !this.data.menuOpen && !this.data.platformMenuOpen && !this.interactionBlocked() &&
+        !this.data.menuOpen && !this.data.postPopover && !this.interactionBlocked() &&
         (this.data.boardIndex === 0 || this.data.boardIndex === this.data.hotBoardIndex) &&
         !this._openingSearchEntry && !this._openingResults && !this._openingCuiPromoPost;
     },

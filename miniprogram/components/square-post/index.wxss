@@ -7,6 +7,20 @@
 .post-card { display: flex; gap: 14rpx; padding: 28rpx 16rpx 24rpx; background: #fff; border-bottom: 1rpx solid #dce1e7; color: #171b20; }
 .post-avatar { display: block; width: 76rpx; height: 76rpx; flex-shrink: 0; border-radius: 50%; background: #f0f2f4; }
 .post-avatar-anchor { position: relative; flex: 0 0 76rpx; width: 76rpx; height: 76rpx; }
+.post-avatar.is-pulsing, .post-more-icon.is-pulsing { animation: post-trigger-pulse 460ms both; }
+@keyframes post-trigger-pulse {
+  0% {
+    transform: scale(1);
+    animation-timing-function: cubic-bezier(.28, .42, .42, 1);
+  }
+  46% {
+    transform: scale(1.08);
+    animation-timing-function: cubic-bezier(.36, 0, .28, 1);
+  }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .post-avatar.is-pulsing, .post-more-icon.is-pulsing { animation: post-trigger-pulse-reduced 1ms both; } }
+@keyframes post-trigger-pulse-reduced { to { transform: none; } }
 .post-avatar-follow { position: absolute; right: -7rpx; bottom: -7rpx; display: flex; align-items: center; justify-content: center; width: 36rpx; height: 36rpx; box-sizing: border-box; border: 4rpx solid #fff; border-radius: 50%; background: #4775FA; pointer-events: none; }
 .post-avatar-follow image { display: block; width: 21rpx; height: 21rpx; }
 .post-avatar-follow .follow-check { position: absolute; opacity: 0; transform: scale(.4) rotate(-20deg); }

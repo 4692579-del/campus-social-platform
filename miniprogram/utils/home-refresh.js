@@ -1,7 +1,8 @@
 const { CYCLE, REFILL, THRESHOLD, clamp } = require('./cui-refresh-drawing');
 module.exports = {
-  canPullHomeFeed() {
-    return !this._unloaded && this._visible !== false && !this.data.menuOpen && !this.data.tabMenuKey && !this.data.commentPostId && !this.interactionBlocked() && this.isSquareFeed();
+  canPullHomeFeed(event) {
+    const source = event?.currentTarget?.dataset?.feed;
+    return (!source || source === this.data.activeTab) && !this._unloaded && this._visible !== false && !this.data.menuOpen && !this.data.authorMenu && !this.data.commentPostId && !this.interactionBlocked() && this.canRefreshFeed();
   },
   paintHomeBrand(state) {
     this._brandVisual = state;
@@ -10,14 +11,16 @@ module.exports = {
   },
   onHomeBrandReady() { this.paintHomeBrand(this._brandVisual || { phase: 'idle' }); },
   pullHomeFeed(event) {
-    if (!this.canPullHomeFeed() || this.data.pullRefreshing) return;
+    if (!this.canPullHomeFeed(event) || this.data.pullRefreshing) return;
     if (this._pullReturnTimer) { clearTimeout(this._pullReturnTimer); this._pullReturnTimer = null; }
     this._pullProgress = clamp(Number(event.detail.dy) / THRESHOLD);
     if (this.data.brandRefreshPhase !== 'pulling') { this.stopBrandBounce(); this.setData({ brandRefreshPhase: 'pulling' }); }
     this.paintHomeBrand({ phase: 'pulling', progress: this._pullProgress });
   },
-  releaseHomePull() { if (this.data.brandRefreshPhase === 'pulling' && this._pullProgress < 1) this.cancelHomePull(); },
-  cancelHomePull() {
+  releaseHomePull(event) { if (this.data.brandRefreshPhase === 'pulling' && this._pullProgress < 1) this.cancelHomePull(event); },
+  cancelHomePull(event) {
+    const source = event?.currentTarget?.dataset?.feed;
+    if (source && source !== this.data.activeTab) return;
     if (this.data.pullRefreshing || this.data.brandRefreshPhase !== 'pulling') return;
     const duration = Math.max(160, Math.round((this._pullProgress || 0) * 440));
     this.setData({ brandRefreshPhase: 'returning' });
@@ -28,7 +31,9 @@ module.exports = {
       this._pullProgress = 0; this.setData({ brandRefreshPhase: 'idle' }); this.paintHomeBrand({ phase: 'idle' });
     }, duration);
   },
-  restoreHomePull() {
+  restoreHomePull(event) {
+    const source = event?.currentTarget?.dataset?.feed;
+    if (source && source !== this.data.activeTab) return;
     if (this._pullRefresh && this.data.brandRefreshPhase === 'settling') this.startHomeRefreshWave(this._pullRefresh);
     else this.cancelHomePull();
   },
@@ -47,9 +52,9 @@ module.exports = {
       refresh.waits.set(timer, resolve);
     });
   },
-  refreshFeed() {
+  refreshFeed(event) {
+    if (!this.canPullHomeFeed(event)) return;
     if (this.data.pullRefreshing) return this._pullRefreshPromise;
-    if (!this.canPullHomeFeed()) return;
     if (this._pullReturnTimer) { clearTimeout(this._pullReturnTimer); this._pullReturnTimer = null; }
     this.stopBrandBounce();
     const refresh = { startedAt: null, waits: new Map() };
@@ -64,10 +69,8 @@ module.exports = {
     };
     this.setData({ pullRefreshing: true, nativeRefreshing: true, brandRefreshPhase: 'settling' },
       () => { if (typeof wx.nextTick === 'function') wx.nextTick(collapse); else collapse(); });
-    const wasAppending = this._feedBusy && this._feedAppend;
     const request = (async () => {
       try {
-        if (wasAppending) await this._feedPromise;
         if (this._pullRefresh === refresh) await this.loadFeed(true);
         if (this._pullRefresh !== refresh) return;
         await waveReady;

@@ -48,11 +48,12 @@ Page({
     this.stopPostUpdates();
     this.prepareReturn();
   },
-  onResize() { nav(this); },
+  onResize() { this.closePostPopover(true); nav(this); },
   syncViewer() {
     const version = users.getSessionVersion();
     const changed = this._sessionVersion !== version;
     if (changed) {
+      this.closePostPopover(true);
       this._translationRequest = null;
       this.closeUnfollowPrompt(true);
       this.setData({ composerOpen: false, composerQuote: null, composerQuoteOwnerId: '' });
